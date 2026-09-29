@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import DiscoverPage from './pages/DiscoverPage';
 import LibraryPage from './pages/LibraryPage';
 import SingPage from './pages/SingPage';
 import WorkDetailPage from './pages/WorkDetailPage';
@@ -16,6 +17,12 @@ function Layout({ children }: { children: ReactNode }) {
         <div className="app-nav-links">
           <NavLink to="/" end className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`}>
             伴奏库
+          </NavLink>
+          <NavLink
+            to="/discover"
+            className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`}
+          >
+            点歌台
           </NavLink>
           <NavLink
             to="/works"
@@ -35,6 +42,7 @@ export default function App() {
     <Layout>
       <Routes>
         <Route path="/" element={<LibraryPage />} />
+        <Route path="/discover" element={<DiscoverPage />} />
         <Route path="/sing/:trackId" element={<SingPage />} />
         <Route path="/works" element={<WorksPage />} />
         <Route path="/works/:workId" element={<WorkDetailPage />} />

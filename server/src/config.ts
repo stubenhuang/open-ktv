@@ -37,7 +37,37 @@ export const TRANSCODE = {
 export const JOB_TIMEOUT_MS = {
   transcode: 30 * 60 * 1000,
   mix: 5 * 60 * 1000,
+  /**
+   * 人声/伴奏预处理（降噪、压缩、去齿音、升降调）单独限时。
+   * 不并进 mix 的预算里：预处理与混音是两次独立的 ffmpeg 调用，
+   * 混用一个总额会让「预处理慢」和「混音慢」无法区分。
+   */
+  preProcess: 5 * 60 * 1000,
 } as const;
+
+/* --------------------------------- 曲库源 --------------------------------- */
+
+/**
+ * 曲库源列表，逗号分隔。每一项是 `名字=清单URL` 或直接一个清单URL：
+ *
+ *   LIBRARY_SOURCES="我的库=https://nas.local/ktv/index.json,https://cdn.example.com/index.json"
+ *
+ * 名字可以省略（省略时用清单里的 name，再不行用主机名）。
+ * 不配置就是空的 —— 点歌台会显示配置指引，其余功能完全不受影响。
+ */
+export const LIBRARY_SOURCES: string[] = (process.env.LIBRARY_SOURCES ?? '')
+  .split(',')
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+
+/** 清单缓存时长：搜索是本地过滤，不需要每次敲字都打源站 */
+export const LIBRARY_CACHE_TTL_MS = Number(process.env.LIBRARY_CACHE_TTL_MS ?? 10 * 60 * 1000);
+/** 单次搜索里每个源的超时；超时即视为该源不可用，不影响其他源 */
+export const LIBRARY_SEARCH_TIMEOUT_MS = Number(process.env.LIBRARY_SEARCH_TIMEOUT_MS ?? 5_000);
+/** 单个伴奏的下载超时；大 MV 可能几百 MB，给得宽一些 */
+export const LIBRARY_DOWNLOAD_TIMEOUT_MS = Number(
+  process.env.LIBRARY_DOWNLOAD_TIMEOUT_MS ?? 15 * 60 * 1000,
+);
 
 export const FFMPEG_BIN = process.env.FFMPEG_BIN ?? 'ffmpeg';
 export const FFPROBE_BIN = process.env.FFPROBE_BIN ?? 'ffprobe';

@@ -41,3 +41,34 @@ export function formatDateTime(timestamp: number): string {
   const pad = (value: number) => String(value).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
+
+/* ------------------------------ 歌词滚动布局 ------------------------------ */
+
+/**
+ * 每行歌词的固定高度（px）。
+ *
+ * 滚动位置是靠「行下标 × 行高」算出来的，所以这个值必须和
+ * styles.css 里 `.lyric-line` 的高度严格一致 —— 改一边就要改另一边。
+ */
+export const LYRIC_LINE_HEIGHT = 34;
+
+/** 歌词可视区域显示的行数（奇数，当前行才能正好居中） */
+export const LYRIC_VIEW_LINES = 5;
+
+/**
+ * 歌词轨道的 translateY（px）：让 activeIndex 那一行落在可视区正中间。
+ *
+ * activeIndex 为 −1（还没进第一句）时按第 0 行定位 —— 否则整条轨道会被
+ * 推到可视区之外，开头几行全看不见。
+ */
+export function lyricTrackOffsetY(
+  activeIndex: number,
+  lineHeight: number = LYRIC_LINE_HEIGHT,
+  visibleLines: number = LYRIC_VIEW_LINES,
+): number {
+  const index = Number.isFinite(activeIndex) && activeIndex > 0 ? Math.floor(activeIndex) : 0;
+  const height = Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : LYRIC_LINE_HEIGHT;
+  const visible = Number.isFinite(visibleLines) && visibleLines >= 1 ? Math.floor(visibleLines) : 1;
+  return ((visible - 1) / 2) * height - index * height;
+}
+

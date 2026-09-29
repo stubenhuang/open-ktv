@@ -1,7 +1,14 @@
 import type {
+  LibraryItemDto,
+  LibraryItemKind,
+  LibrarySearchResult,
+  LibrarySourceStatus,
+  LibraryTaskDto,
   MixParams,
   Track,
+  TrackDetail,
   TrackListItem,
+  TrackSummary,
   Work,
   WorkListItem,
 } from '../../shared/types';
@@ -99,24 +106,54 @@ export interface CreateWorkInput {
   vocalDuration: number;
 }
 
+/** 点歌结果：要么排上了下载任务，要么这个条目已经在库里了 */
+export type LibraryDownloadResult =
+  | { taskId: string; title: string }
+  | { alreadyImported: true; track: TrackDetail };
+
+/** ffmpeg 能力：缺 rubberband 时前端要把升降调控件禁掉并说明原因 */
+export interface HealthResponse {
+  ok: boolean;
+  queue: { active: string | null; waiting: number };
+  capabilities: { rubberband: boolean };
+}
+
 export const api = {
+  health: () => request<HealthResponse>('/api/health'),
+
   listTracks: () => request<TrackListItem[]>('/api/tracks'),
 
-  getTrack: (id: string) => request<TrackListItem>(`/api/tracks/${encodeURIComponent(id)}`),
+  getTrack: (id: string) => request<TrackDetail>(`/api/tracks/${encodeURIComponent(id)}`),
 
   uploadTrack: (file: File, onProgress?: (ratio: number) => void) => {
     const form = new FormData();
     // 显式带上文件名，中文才不会被破坏
     form.append('file', file, file.name);
-    return upload<TrackListItem>('/api/tracks', form, onProgress);
+    return upload<TrackDetail>('/api/tracks', form, onProgress);
   },
 
-  updateTrack: (id: string, patch: { title?: string; artist?: string }) =>
-    request<TrackListItem>(`/api/tracks/${encodeURIComponent(id)}`, jsonInit('PATCH', patch)),
+  updateTrack: (
+    id: string,
+    patch: {
+      title?: string;
+      artist?: string;
+      /** null 或空串 = 清除歌词 */
+      lyrics?: string | null;
+      /** 歌词全局微调（ms）：正值 = 歌词更晚显示 */
+      lyricsOffsetMs?: number;
+    },
+  ) => request<TrackDetail>(`/api/tracks/${encodeURIComponent(id)}`, jsonInit('PATCH', patch)),
+
+  /** 上传 .lrc 文件设置歌词（走 multipart，服务端与 PATCH 共用一套校验） */
+  uploadLyrics: (id: string, file: File) => {
+    const form = new FormData();
+    form.append('lyrics', file, file.name);
+    return upload<TrackDetail>(`/api/tracks/${encodeURIComponent(id)}/lyrics`, form);
+  },
 
   /** 救「转码跑到一半服务重启」：原文件还在，重新排一次转码 */
   retryTrack: (id: string) =>
-    request<TrackListItem>(`/api/tracks/${encodeURIComponent(id)}/retry`, { method: 'POST' }),
+    request<TrackDetail>(`/api/tracks/${encodeURIComponent(id)}/retry`, { method: 'POST' }),
 
   deleteTrack: (id: string) =>
     request<{ ok: true }>(`/api/tracks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
@@ -142,6 +179,24 @@ export const api = {
 
   deleteWork: (id: string) =>
     request<{ ok: true }>(`/api/works/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  /* --------------------------------- 曲库点歌 --------------------------------- */
+
+  /** 当前配了哪些曲库源；空数组 = 用户还没配 LIBRARY_SOURCES */
+  listLibrarySources: () =>
+    request<{ sources: { id: string; label: string }[] }>('/api/library/sources'),
+
+  searchLibrary: (q: string, kind?: LibraryItemKind | null) => {
+    const params = new URLSearchParams({ q });
+    if (kind) params.set('kind', kind);
+    return request<LibrarySearchResult>(`/api/library/search?${params.toString()}`);
+  },
+
+  downloadFromLibrary: (providerId: string, itemId: string) =>
+    request<LibraryDownloadResult>('/api/library/download', jsonInit('POST', { providerId, itemId })),
+
+  getLibraryTask: (taskId: string) =>
+    request<LibraryTaskDto>(`/api/library/tasks/${encodeURIComponent(taskId)}`),
 };
 
 export function trackMediaUrl(trackId: string): string {
@@ -158,4 +213,16 @@ export function workVocalUrl(workId: string): string {
   return `/api/works/${encodeURIComponent(workId)}/vocal`;
 }
 
-export type { Track, TrackListItem, Work, WorkListItem };
+export type {
+  LibraryItemDto,
+  LibraryItemKind,
+  LibrarySearchResult,
+  LibrarySourceStatus,
+  LibraryTaskDto,
+  Track,
+  TrackDetail,
+  TrackListItem,
+  TrackSummary,
+  Work,
+  WorkListItem,
+};

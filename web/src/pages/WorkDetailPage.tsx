@@ -26,6 +26,27 @@ export default function WorkDetailPage() {
   const [titleDraft, setTitleDraft] = useState('');
   /** 合成请求 in-flight（按钮 loading 用）；控件不被它禁用，试听随时可调 */
   const [busy, setBusy] = useState(false);
+  /**
+   * ffmpeg 是否支持 rubberband（升降调）。缺失时把控件禁掉并说明原因，
+   * 而不是让用户拖一个服务端会忽略的滑块。默认 true：探测结果没回来之前
+   * 不该假装功能不可用。
+   */
+  const [rubberbandAvailable, setRubberbandAvailable] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .health()
+      .then((health) => {
+        if (!cancelled) setRubberbandAvailable(health.capabilities.rubberband);
+      })
+      .catch(() => {
+        // 拿不到就当支持：服务端会自己降级，不必因此吓唬用户
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /* ------------------------------ 实时试听引擎 ------------------------------ */
 
@@ -257,6 +278,7 @@ export default function WorkDetailPage() {
           busy={busy}
           onApply={(params) => void handleApply(params)}
           onParamsChange={handleParamsChange}
+          rubberbandAvailable={rubberbandAvailable}
         />
       </div>
     </div>

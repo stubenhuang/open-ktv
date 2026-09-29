@@ -1,6 +1,7 @@
 import { HOST, PORT } from './config.ts';
 import { createApp } from './app.ts';
 import { initDb, recoverInterruptedJobs } from './db.ts';
+import { detectFfmpegCapabilities } from './ffmpegCapabilities.ts';
 import { createLogger } from './logger.ts';
 import { cleanTmpDir } from './paths.ts';
 
@@ -12,6 +13,9 @@ const recovered = recoverInterruptedJobs();
 if (recovered.tracks > 0 || recovered.works > 0) {
   log.info(`已把中断的任务标记为失败：伴奏 ${recovered.tracks} 个、作品 ${recovered.works} 个`);
 }
+
+// 启动时探测一次 ffmpeg 能力（rubberband 等）；探不到就降级，不影响启动
+await detectFfmpegCapabilities();
 
 const app = createApp();
 

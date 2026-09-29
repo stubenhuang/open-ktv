@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { formatBytes, formatDateTime, formatDuration, formatTimer } from '../web/src/utils.ts';
+import {
+  formatBytes,
+  formatDateTime,
+  formatDuration,
+  formatTimer,
+  lyricTrackOffsetY,
+} from '../web/src/utils.ts';
 
 describe('formatDuration（秒 → mm:ss）', () => {
   it('正常时长', () => {
@@ -76,5 +82,34 @@ describe('formatDateTime', () => {
   it('月份/日期/小时/分钟都补零', () => {
     const text = formatDateTime(new Date(2025, 8, 9, 7, 5).getTime());
     assert.match(text, /^2025-09-09 07:05$/);
+  });
+});
+
+describe('歌词滚动布局', () => {
+  it('当前行落在可视区正中间', () => {
+    // 5 行可视区、行高 34：容器高 170，中线 85
+    // 第 0 行：轨道上移到 68，该行中心 = 68 + 17 = 85 ✓
+    assert.equal(lyricTrackOffsetY(0), 68);
+    // 第 2 行：68 − 68 = 0，该行中心 = 0 + 2*34 + 17 = 85 ✓
+    assert.equal(lyricTrackOffsetY(2), 0);
+    assert.equal(lyricTrackOffsetY(3), -34);
+  });
+
+  it('还没进第一句（−1）按第 0 行定位，不把轨道推到屏幕外', () => {
+    assert.equal(lyricTrackOffsetY(-1), lyricTrackOffsetY(0));
+  });
+
+  it('行数越多，轨道越往上移（单调递减）', () => {
+    const values = [0, 1, 2, 3, 4].map((index) => lyricTrackOffsetY(index));
+    for (let i = 1; i < values.length; i += 1) {
+      assert.ok(values[i]! < values[i - 1]!, `第 ${i} 行应比第 ${i - 1} 行更高`);
+    }
+  });
+
+  it('行高与可视行数可覆盖，脏输入回落默认', () => {
+    assert.equal(lyricTrackOffsetY(0, 40, 3), 40);
+    assert.equal(lyricTrackOffsetY(1, 40, 3), 0);
+    assert.equal(lyricTrackOffsetY(Number.NaN), lyricTrackOffsetY(0));
+    assert.equal(lyricTrackOffsetY(0, 0, 0), 0);
   });
 });

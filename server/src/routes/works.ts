@@ -9,8 +9,10 @@ import {
   MIN_RECORD_MS,
   MIX_LIMITS,
   REVERB_KINDS,
+  VOCAL_PRESETS,
   type MixParams,
   type ReverbKind,
+  type VocalPreset,
 } from '../../../shared/types.ts';
 import {
   deleteWork,
@@ -22,6 +24,7 @@ import {
   type WorkRecord,
 } from '../db.ts';
 import { mixKey, workToDto, workToListItem } from '../dto.ts';
+import { clampNumber } from '../../../shared/numbers.ts';
 import { isQueued, enqueue } from '../jobs.ts';
 import { createLogger } from '../logger.ts';
 import { sendMedia } from '../media.ts';
@@ -43,17 +46,14 @@ const MAX_VOCAL_BYTES = 256 * 1024 * 1024;
 const withWork = (handler: (req: Request, res: Response, work: WorkRecord) => void) =>
   withRecord({ load: getWork, notFound: '作品不存在', handler });
 
-function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, parsed));
-}
-
 export function sanitizeMixParams(input: unknown, base: MixParams): MixParams {
   const raw = (input ?? {}) as Record<string, unknown>;
   const reverb = REVERB_KINDS.includes(raw.reverb as ReverbKind)
     ? (raw.reverb as ReverbKind)
     : base.reverb;
+  const vocalPreset = VOCAL_PRESETS.includes(raw.vocalPreset as VocalPreset)
+    ? (raw.vocalPreset as VocalPreset)
+    : base.vocalPreset;
 
   return {
     vocalGain: clampNumber(raw.vocalGain, MIX_LIMITS.gain.min, MIX_LIMITS.gain.max, base.vocalGain),
@@ -72,6 +72,40 @@ export function sanitizeMixParams(input: unknown, base: MixParams): MixParams {
         base.userOffsetMs,
       ),
     ),
+
+    // 升降调必须是整数半音：rubberband 接受任意比值，但半音才是用户心智里的单位，
+    // 而且小数会让「+1 半音」这种显示变得很难看
+    pitchSemitones: Math.round(
+      clampNumber(
+        raw.pitchSemitones,
+        MIX_LIMITS.semitones.min,
+        MIX_LIMITS.semitones.max,
+        base.pitchSemitones,
+      ),
+    ),
+    accompSemitones: Math.round(
+      clampNumber(
+        raw.accompSemitones,
+        MIX_LIMITS.semitones.min,
+        MIX_LIMITS.semitones.max,
+        base.accompSemitones,
+      ),
+    ),
+
+    vocalPreset,
+    eqLowDb: clampNumber(raw.eqLowDb, MIX_LIMITS.eqDb.min, MIX_LIMITS.eqDb.max, base.eqLowDb),
+    eqMidDb: clampNumber(raw.eqMidDb, MIX_LIMITS.eqDb.min, MIX_LIMITS.eqDb.max, base.eqMidDb),
+    eqHighDb: clampNumber(raw.eqHighDb, MIX_LIMITS.eqDb.min, MIX_LIMITS.eqDb.max, base.eqHighDb),
+    compression: clampNumber(
+      raw.compression,
+      MIX_LIMITS.amount.min,
+      MIX_LIMITS.amount.max,
+      base.compression,
+    ),
+    deEss: clampNumber(raw.deEss, MIX_LIMITS.amount.min, MIX_LIMITS.amount.max, base.deEss),
+    // 布尔开关：只认真正的 true / false，字符串 'false' 不该被当成开启
+    noiseReduction:
+      typeof raw.noiseReduction === 'boolean' ? raw.noiseReduction : base.noiseReduction,
   };
 }
 

@@ -1,27 +1,27 @@
-import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Router } from 'express';
 import type { Request, Response } from 'express';
-import { MAX_UPLOAD_BYTES } from '../../../shared/types.ts';
-import { findAudioStream } from '../classify.ts';
+import { LRC_LIMITS, MAX_UPLOAD_BYTES } from '../../../shared/types.ts';
+import { hasLrcTimeline, normalizeLrc } from '../../../shared/lrc.ts';
+import { clampInt } from '../../../shared/numbers.ts';
 import {
   countWorksForTrack,
   deleteTrack,
   getTrack,
-  insertTrack,
   listTracks,
   updateTrack,
   type TrackRecord,
 } from '../db.ts';
-import { transcodeKey, trackToListItem } from '../dto.ts';
-import { isQueued, enqueue } from '../jobs.ts';
+import { transcodeKey, trackToDetail, trackToListItem } from '../dto.ts';
+import { isQueued } from '../jobs.ts';
 import { createLogger } from '../logger.ts';
-import { forgetTrackLoudness } from '../mixJob.ts';
-import { decodeOriginalName, parseNameParts, safeExtension } from '../naming.ts';
-import { ORIGINALS_DIR, PROXIES_DIR } from '../paths.ts';
+import { forgetTrackLoudness, forgetTrackPreProcess } from '../mixJob.ts';
+import { decodeOriginalName } from '../naming.ts';
+import { PROXIES_DIR } from '../paths.ts';
 import { probeAndClassify } from '../probe.ts';
-import { proxyPathFor, transcodeToProxy, type ProxyTarget } from '../transcode.ts';
+import type { ProxyTarget } from '../transcode.ts';
+import { ingestFile, startTranscode } from '../tracks/ingest.ts';
 import { uploadEndpoint } from '../upload.ts';
 import { withRecord } from './guard.ts';
 
@@ -32,28 +32,6 @@ const router = Router();
 /** 「取伴奏 → 404 → 业务处理」；404 文案只在这里写一份 */
 const withTrack = (handler: (req: Request, res: Response, track: TrackRecord) => void) =>
   withRecord({ load: getTrack, notFound: '伴奏不存在', handler });
-
-function startTranscode(trackId: string, sourcePath: string, durationSec: number | null, target: ProxyTarget): void {
-  const outputPath = proxyPathFor(trackId, target);
-
-  enqueue(
-    transcodeKey(trackId),
-    async (report) => {
-      await fs.promises.rm(outputPath, { force: true });
-      await transcodeToProxy({ sourcePath, outputPath, target, durationSec, onProgress: report });
-      updateTrack(trackId, {
-        status: 'ready',
-        error: null,
-        playablePath: outputPath,
-        proxyKind: target,
-      });
-    },
-    (error) => {
-      updateTrack(trackId, { status: 'failed', error: error.message });
-      void fs.promises.rm(outputPath, { force: true });
-    },
-  );
-}
 
 router.post(
   '/',
@@ -66,58 +44,19 @@ router.post(
     errorLabel: '上传失败',
     logMessage: '上传处理失败',
     handle: async (req, res, file) => {
-      // multipart 的 filename 默认按 latin1 解出来，中文必须先还原
-      const originalName = decodeOriginalName(file.originalname);
-      const probed = await probeAndClassify(file.path, {
-        extension: path.extname(originalName).toLowerCase(),
-      });
-
-      if (!findAudioStream(probed.raw)) {
-        res.status(400).json({ error: '这个文件里没有音频轨，无法作为伴奏使用' });
-        return;
-      }
-
-      const { title: parsedTitle, artist: parsedArtist } = parseNameParts(originalName);
-      const id = randomUUID();
-      const extension = safeExtension(originalName, probed.kind === 'video' ? '.mp4' : '.mp3');
-      const originalPath = path.join(ORIGINALS_DIR, `${id}${extension}`);
-      await fs.promises.rename(file.path, originalPath);
-
       const body = req.body as Record<string, string | undefined>;
-      const title = (body.title ?? '').trim() || parsedTitle;
-      const artist = (body.artist ?? '').trim() || parsedArtist;
-
-      const target: ProxyTarget = probed.kind === 'video' ? 'video' : 'audio';
-      const needsProxy = !probed.playable;
-
-      insertTrack({
-        id,
-        title,
-        artist,
-        kind: probed.kind,
-        originalName,
-        originalPath,
-        playablePath: needsProxy ? proxyPathFor(id, target) : originalPath,
-        proxyKind: needsProxy ? target : 'none',
+      // 探测 / 命名 / 入库 / 按需转码全在 ingestFile 里 ——
+      // 与「曲库点歌下载」共用同一条链路，两条入口的行为不会分叉
+      const result = await ingestFile({
+        tmpPath: file.path,
+        originalName: file.originalname,
+        title: body.title ?? null,
+        artist: body.artist ?? null,
         mime: file.mimetype || null,
         size: file.size,
-        duration: probed.durationSec,
-        status: needsProxy ? 'processing' : 'ready',
-        error: null,
+        source: 'upload',
       });
-
-      if (needsProxy) {
-        startTranscode(id, originalPath, probed.durationSec, target);
-      }
-
-      const record = getTrack(id)!;
-      log.info(`${title}（${probed.kind}）→ ${needsProxy ? `转码 ${target}` : '直接可用'}：${probed.reason}`, {
-        id,
-        artist: artist ?? undefined,
-        durationSec: probed.durationSec ?? undefined,
-        size: file.size,
-      });
-      res.status(201).json(trackToListItem(record));
+      res.status(201).json(trackToDetail(result.track));
     },
   }),
 );
@@ -129,7 +68,7 @@ router.get('/', (_req, res) => {
 router.get(
   '/:id',
   withTrack((_req, res, record) => {
-    res.json(trackToListItem(record));
+    res.json(trackToDetail(record));
   }),
 );
 
@@ -169,7 +108,7 @@ router.post(
             proxyKind: 'none',
             duration: probed.durationSec,
           });
-          res.json(trackToListItem(getTrack(record.id)!));
+          res.json(trackToDetail(getTrack(record.id)!));
           return;
         }
 
@@ -182,7 +121,7 @@ router.post(
         });
         startTranscode(record.id, record.originalPath, probed.durationSec, target);
         log.info(`重试伴奏 ${record.id}（${record.title}）→ 转码 ${target}`);
-        res.status(202).json(trackToListItem(getTrack(record.id)!));
+        res.status(202).json(trackToDetail(getTrack(record.id)!));
       } catch (error) {
         const message = error instanceof Error ? error.message : '未知错误';
         updateTrack(record.id, { status: 'failed', error: message });
@@ -193,11 +132,50 @@ router.post(
   }),
 );
 
+/**
+ * 解析并校验要入库的歌词文本。
+ *
+ * 返回 `{ ok: true, lyrics }` 或 `{ ok: false, error }`。
+ * 空串 / null 表示「清除歌词」，是合法操作。
+ */
+function parseLyricsInput(
+  raw: unknown,
+): { ok: true; lyrics: string | null } | { ok: false; error: string } {
+  // 显式清空：null 或空串
+  if (raw === null || (typeof raw === 'string' && raw.trim() === '')) {
+    return { ok: true, lyrics: null };
+  }
+  if (typeof raw !== 'string') {
+    return { ok: false, error: '歌词必须是文本' };
+  }
+  if (raw.length > LRC_LIMITS.maxChars) {
+    return { ok: false, error: `歌词太长了（最多 ${LRC_LIMITS.maxChars} 字）` };
+  }
+
+  const normalized = normalizeLrc(raw);
+  // 规范化后一行时间戳都不剩 → 这不是 LRC，是纯文本歌词。
+  // 不静默降级成「静态歌词」：演唱页要按时间轴滚动，存进去也放不出来。
+  if (!hasLrcTimeline(normalized)) {
+    return {
+      ok: false,
+      error:
+        '这看起来不是 LRC 歌词：至少要有一行 [mm:ss] 或 [mm:ss.xx] 时间戳。' +
+        '纯文本歌词无法跟唱，请先给每行加上时间戳。',
+    };
+  }
+  return { ok: true, lyrics: normalized };
+}
+
 router.patch(
   '/:id',
   withTrack((req, res, record) => {
-    const body = req.body as { title?: unknown; artist?: unknown };
-    const patch: { title?: string; artist?: string | null } = {};
+    const body = req.body as { title?: unknown; artist?: unknown; lyrics?: unknown; lyricsOffsetMs?: unknown };
+    const patch: {
+      title?: string;
+      artist?: string | null;
+      lyrics?: string | null;
+      lyricsOffsetMs?: number;
+    } = {};
 
     if (body.title !== undefined) {
       const title = String(body.title).trim();
@@ -217,10 +195,91 @@ router.patch(
       patch.artist = artist || null;
     }
 
+    if (body.lyrics !== undefined) {
+      const parsed = parseLyricsInput(body.lyrics);
+      if (!parsed.ok) {
+        res.status(400).json({ error: parsed.error });
+        return;
+      }
+      patch.lyrics = parsed.lyrics;
+    }
+
+    if (body.lyricsOffsetMs !== undefined) {
+      patch.lyricsOffsetMs = clampInt(
+        body.lyricsOffsetMs,
+        LRC_LIMITS.offsetMs.min,
+        LRC_LIMITS.offsetMs.max,
+        record.lyricsOffsetMs,
+      );
+    }
+
     updateTrack(record.id, patch);
-    res.json(trackToListItem(getTrack(record.id)!));
+    res.json(trackToDetail(getTrack(record.id)!));
   }),
 );
+
+/** 路由参数里的 id（通配路由下可能是数组，只取第一段） */
+function readId(req: Request): string {
+  const raw = req.params.id;
+  return Array.isArray(raw) ? (raw[0] ?? '') : (raw ?? '');
+}
+
+/**
+ * 上传 .lrc 文件设置歌词。
+ *
+ * 单独一个端点（而不是塞进 PATCH）是因为它要走 multipart ——
+ * 复用 uploadEndpoint 就能白拿「临时文件 + 大小上限 + 失败清理」那一整套。
+ * 校验逻辑与 PATCH 共用 parseLyricsInput，两条路的口径不会分叉。
+ *
+ * multer 实例在模块加载时建一次即可，不能每个请求都 new 一个。
+ */
+const receiveLyrics = uploadEndpoint({
+  field: 'lyrics',
+  maxBytes: LRC_LIMITS.maxBytes,
+  tmpPrefix: 'lrc',
+  sizeLimitMessage: `歌词文件超过 ${Math.round(LRC_LIMITS.maxBytes / 1024)}KB 上限`,
+  missingFileMessage: '没有收到歌词文件（表单字段名应为 lyrics）',
+  errorLabel: '上传歌词失败',
+  logMessage: '上传歌词失败',
+  handle: async (uploadReq, uploadRes, file) => {
+    // 上传期间伴奏可能被删掉，这里重新取一次
+    const record = getTrack(readId(uploadReq));
+    if (!record) {
+      uploadRes.status(404).json({ error: '伴奏不存在' });
+      return;
+    }
+
+    const extension = path.extname(decodeOriginalName(file.originalname)).toLowerCase();
+    if (extension && extension !== '.lrc' && extension !== '.txt') {
+      uploadRes.status(400).json({ error: '只支持 .lrc / .txt 歌词文件' });
+      return;
+    }
+
+    // LRC 一律按 UTF-8 读（UTF-8 是 LRC 的事实标准，BOM 由 parseLrc 剥掉）
+    const text = await fs.promises.readFile(file.path, 'utf8');
+    const parsed = parseLyricsInput(text);
+    if (!parsed.ok) {
+      uploadRes.status(400).json({ error: parsed.error });
+      return;
+    }
+
+    updateTrack(record.id, { lyrics: parsed.lyrics });
+    log.info(`伴奏 ${record.id} 的歌词已更新（来自文件）`, {
+      id: record.id,
+      bytes: file.size,
+    });
+    uploadRes.json(trackToDetail(getTrack(record.id)!));
+  },
+});
+
+router.post('/:id/lyrics', (req, res) => {
+  // 先判 404 再收文件：给不存在的伴奏传几十 KB 上去纯属浪费
+  if (!getTrack(readId(req))) {
+    res.status(404).json({ error: '伴奏不存在' });
+    return;
+  }
+  receiveLyrics(req, res);
+});
 
 router.delete(
   '/:id',
@@ -235,6 +294,7 @@ router.delete(
 
     deleteTrack(record.id);
     forgetTrackLoudness(record.id);
+    forgetTrackPreProcess(record.id);
     void fs.promises.rm(record.originalPath, { force: true });
     if (record.playablePath !== record.originalPath) {
       void fs.promises.rm(record.playablePath, { force: true });

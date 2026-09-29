@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { MAX_RECORD_MS, MIN_RECORD_MS } from '../../../shared/types';
-import { api, trackMediaUrl, type TrackListItem } from '../api';
+import { LRC_LIMITS, MAX_RECORD_MS, MIN_RECORD_MS } from '../../../shared/types';
+import { api, trackMediaUrl, type TrackDetail } from '../api';
 import { LevelMeter } from '../components/LevelMeter';
+import { LyricsView } from '../components/LyricsView';
 import { KtvEngine, isMicSupported } from '../audio/engine';
 import { useMicDevices } from '../hooks/useMicDevices';
 import { errorMessage, formatDuration, formatTimer } from '../utils';
@@ -13,7 +14,7 @@ export default function SingPage() {
   const { trackId = '' } = useParams();
   const navigate = useNavigate();
 
-  const [track, setTrack] = useState<TrackListItem | null>(null);
+  const [track, setTrack] = useState<TrackDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mediaEl, setMediaEl] = useState<HTMLMediaElement | null>(null);
   const [engine, setEngine] = useState<KtvEngine | null>(null);
@@ -65,6 +66,46 @@ export default function SingPage() {
       cancelled = true;
     };
   }, [trackId]);
+
+  /* ------------------------------ 歌词对轴微调 ------------------------------ */
+
+  /**
+   * 歌词微调：本地立刻生效（滚动马上跟着变），停手 400ms 后才写库。
+   * 每拖一格就发一次 PATCH 会把接口刷爆，而且拖动过程中每毫秒都在变。
+   */
+  const [lyricsOffsetMs, setLyricsOffsetMs] = useState(0);
+  const persistTimer = useRef<number | null>(null);
+  /** 只在本曲首次加载时同步一次，别让写库回包把用户拖到一半的值弹回去 */
+  const lyricsSyncedTrackRef = useRef('');
+
+  useEffect(() => {
+    if (!track || lyricsSyncedTrackRef.current === track.id) return;
+    lyricsSyncedTrackRef.current = track.id;
+    setLyricsOffsetMs(track.lyricsOffsetMs);
+  }, [track]);
+
+  const applyLyricsOffset = useCallback(
+    (next: number) => {
+      setLyricsOffsetMs(next);
+      if (!track) return;
+      if (persistTimer.current !== null) window.clearTimeout(persistTimer.current);
+      persistTimer.current = window.setTimeout(() => {
+        persistTimer.current = null;
+        void api.updateTrack(track.id, { lyricsOffsetMs: next }).catch((err: unknown) => {
+          setActionError(`歌词微调保存失败：${errorMessage(err)}`);
+        });
+      }, 400);
+    },
+    [track],
+  );
+
+  // 卸载时丢掉待发的写库请求
+  useEffect(
+    () => () => {
+      if (persistTimer.current !== null) window.clearTimeout(persistTimer.current);
+    },
+    [],
+  );
 
   /* -------------------------------- 麦克风 -------------------------------- */
 
@@ -353,21 +394,31 @@ export default function SingPage() {
                 preload="auto"
               />
             ) : (
-              <>
-                <div className="stage-audio-visual">
-                  <div className="big">🎵</div>
-                  <div>{track.title}</div>
-                  <div className="small faint">音频伴奏（无画面）</div>
-                </div>
-                <audio
-                  ref={mediaCallbackRef}
-                  src={mediaUrl}
-                  controls={!recording}
-                  preload="auto"
-                  style={{ position: 'absolute', left: 16, right: 16, bottom: 12 }}
-                />
-              </>
+              <audio
+                ref={mediaCallbackRef}
+                src={mediaUrl}
+                controls={!recording}
+                preload="auto"
+                style={{ position: 'absolute', left: 16, right: 16, bottom: 12 }}
+              />
             )}
+
+            {/* 有歌词就跟唱（视频伴奏叠在画面上，音频伴奏直接铺满舞台） */}
+            {track.hasLyrics ? (
+              <LyricsView
+                lyrics={track.lyrics}
+                lyricsOffsetMs={lyricsOffsetMs}
+                mediaEl={mediaEl}
+                canSeek={!recording}
+                overlay={track.kind === 'video'}
+              />
+            ) : track.kind !== 'video' ? (
+              <div className="stage-audio-visual">
+                <div className="big">🎵</div>
+                <div>{track.title}</div>
+                <div className="small faint">音频伴奏（无画面）</div>
+              </div>
+            ) : null}
 
             {recording && (
               <div className="record-overlay">
@@ -503,6 +554,41 @@ export default function SingPage() {
               </label>
             </div>
           </div>
+
+          {track.hasLyrics && (
+            <div className="card">
+              <div className="field">
+                <div className="field-label">
+                  <span>歌词对轴微调</span>
+                  <span className="field-value">
+                    {lyricsOffsetMs > 0 ? '+' : ''}
+                    {lyricsOffsetMs} ms
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={LRC_LIMITS.offsetMs.min}
+                  max={LRC_LIMITS.offsetMs.max}
+                  step={LRC_LIMITS.offsetMs.step}
+                  value={lyricsOffsetMs}
+                  onChange={(event) => applyLyricsOffset(Number(event.target.value))}
+                />
+                <div className="row" style={{ justifyContent: 'space-between', marginTop: 6 }}>
+                  <span className="small faint">
+                    正值 = 歌词更晚出现。歌词跑在前面就往正拖，改完自动保存。
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    disabled={lyricsOffsetMs === 0}
+                    onClick={() => applyLyricsOffset(0)}
+                  >
+                    归零
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="card small muted">
             <strong style={{ color: 'var(--text)' }}>录音说明</strong>

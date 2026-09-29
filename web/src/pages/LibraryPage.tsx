@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { LRC_LIMITS } from '../../../shared/types';
 import { api, trackMediaUrl, type TrackListItem } from '../api';
 import { usePolling } from '../hooks/usePolling';
 import { errorMessage, formatBytes, formatDuration } from '../utils';
@@ -24,9 +25,18 @@ export default function LibraryPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editArtist, setEditArtist] = useState('');
+  const [editLyrics, setEditLyrics] = useState('');
+  const [editLyricsOffsetMs, setEditLyricsOffsetMs] = useState(0);
+  /**
+   * 歌词框是否被用户动过。
+   * 列表接口不下发歌词正文（省流量），编辑时要单独拉一次详情；
+   * 拉取失败或还没回来时绝不能拿空串去覆盖 —— 那等于把歌词删了。
+   */
+  const [lyricsDirty, setLyricsDirty] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const lyricsInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     try {
@@ -115,23 +125,64 @@ export default function LibraryPage() {
     }
   };
 
-  const startEdit = (track: TrackListItem) => {
+  const startEdit = async (track: TrackListItem) => {
     setEditingId(track.id);
     setEditTitle(track.title);
     setEditArtist(track.artist ?? '');
+    setEditLyrics('');
+    setEditLyricsOffsetMs(track.lyricsOffsetMs);
+    setLyricsDirty(false);
+
+    // 歌词正文不在列表里，要单独拉一次详情
+    if (!track.hasLyrics) return;
+    setBusyId(track.id);
+    try {
+      const detail = await api.getTrack(track.id);
+      // 用户可能已经切到别的伴奏了，别把歌词塞错地方
+      if (detail.id === track.id) setEditLyrics(detail.lyrics ?? '');
+    } catch (err) {
+      setError(errorMessage(err, '加载歌词失败'));
+    } finally {
+      setBusyId(null);
+    }
   };
 
   const saveEdit = async () => {
     if (!editingId) return;
     setBusyId(editingId);
     try {
-      await api.updateTrack(editingId, { title: editTitle, artist: editArtist });
+      await api.updateTrack(editingId, {
+        title: editTitle,
+        artist: editArtist,
+        // 只有用户真的动过歌词才提交，避免用空框把已有歌词冲掉
+        ...(lyricsDirty ? { lyrics: editLyrics } : {}),
+        lyricsOffsetMs: editLyricsOffsetMs,
+      });
       setEditingId(null);
+      setLyricsDirty(false);
       await load();
     } catch (err) {
       setError(errorMessage(err, '保存失败'));
     } finally {
       setBusyId(null);
+    }
+  };
+
+  /** 选一个 .lrc 直接入库；成功后就地回填文本框，方便继续微调 */
+  const handleLyricsFile = async (file: File) => {
+    if (!editingId) return;
+    setBusyId(editingId);
+    setError(null);
+    try {
+      const updated = await api.uploadLyrics(editingId, file);
+      setEditLyrics(updated.lyrics ?? '');
+      setLyricsDirty(false);
+      await load();
+    } catch (err) {
+      setError(errorMessage(err, '上传歌词失败'));
+    } finally {
+      setBusyId(null);
+      if (lyricsInputRef.current) lyricsInputRef.current.value = '';
     }
   };
 
@@ -230,37 +281,114 @@ export default function LibraryPage() {
 
                 <div className="track-main">
                   {isEditing ? (
-                    <div className="edit-form">
-                      <input
-                        className="text-input"
-                        style={{ flex: '1 1 200px' }}
-                        value={editTitle}
-                        placeholder="歌名"
-                        onChange={(event) => setEditTitle(event.target.value)}
-                        autoFocus
-                      />
-                      <input
-                        className="text-input"
-                        style={{ flex: '0 1 150px' }}
-                        value={editArtist}
-                        placeholder="歌手"
-                        onChange={(event) => setEditArtist(event.target.value)}
-                      />
-                      <button
-                        type="button"
-                        className="btn btn-primary btn-sm"
-                        disabled={busyId === track.id}
-                        onClick={() => void saveEdit()}
-                      >
-                        保存
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        onClick={() => setEditingId(null)}
-                      >
-                        取消
-                      </button>
+                    <div className="edit-form edit-form-stack">
+                      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                        <input
+                          className="text-input"
+                          style={{ flex: '1 1 200px' }}
+                          value={editTitle}
+                          placeholder="歌名"
+                          onChange={(event) => setEditTitle(event.target.value)}
+                          autoFocus
+                        />
+                        <input
+                          className="text-input"
+                          style={{ flex: '0 1 150px' }}
+                          value={editArtist}
+                          placeholder="歌手"
+                          onChange={(event) => setEditArtist(event.target.value)}
+                        />
+                      </div>
+
+                      <div className="field" style={{ marginTop: 10 }}>
+                        <div className="field-label">
+                          <span>歌词（LRC）</span>
+                          <span className="faint small">
+                            {track.hasLyrics ? '已有歌词，改动会覆盖' : '还没有歌词'}
+                          </span>
+                        </div>
+                        <textarea
+                          className="text-input lyrics-textarea"
+                          value={editLyrics}
+                          placeholder={'每行都要带时间戳，例如：\n[00:12.00]第一句\n[00:16.50]第二句'}
+                          onChange={(event) => {
+                            setEditLyrics(event.target.value);
+                            setLyricsDirty(true);
+                          }}
+                        />
+                        <div className="row" style={{ gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            disabled={busyId === track.id}
+                            onClick={() => lyricsInputRef.current?.click()}
+                          >
+                            选择 .lrc 文件
+                          </button>
+                          {track.hasLyrics && (
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => {
+                                setEditLyrics('');
+                                setLyricsDirty(true);
+                              }}
+                            >
+                              清空歌词
+                            </button>
+                          )}
+                          <input
+                            ref={lyricsInputRef}
+                            type="file"
+                            accept=".lrc,.txt"
+                            style={{ display: 'none' }}
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              if (file) void handleLyricsFile(file);
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="field" style={{ marginTop: 10 }}>
+                        <div className="field-label">
+                          <span>歌词对轴微调</span>
+                          <span className="field-value">
+                            {editLyricsOffsetMs > 0 ? '+' : ''}
+                            {editLyricsOffsetMs} ms
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={LRC_LIMITS.offsetMs.min}
+                          max={LRC_LIMITS.offsetMs.max}
+                          step={LRC_LIMITS.offsetMs.step}
+                          value={editLyricsOffsetMs}
+                          onChange={(event) => setEditLyricsOffsetMs(Number(event.target.value))}
+                        />
+                        <div className="small faint">正值 = 歌词更晚显示（歌词跑在伴奏前面时用）。</div>
+                      </div>
+
+                      <div className="row" style={{ gap: 8, marginTop: 12 }}>
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          disabled={busyId === track.id}
+                          onClick={() => void saveEdit()}
+                        >
+                          保存
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => {
+                            setEditingId(null);
+                            setLyricsDirty(false);
+                          }}
+                        >
+                          取消
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <>
@@ -270,6 +398,8 @@ export default function LibraryPage() {
                         <span className="mono">{formatDuration(track.duration)}</span>
                         <span>{formatBytes(track.size)}</span>
                         {track.proxyKind !== 'none' && <span className="badge badge-kind">已转码</span>}
+                        {track.hasLyrics && <span className="badge badge-ok">有歌词</span>}
+                        {track.source === 'library' && <span className="badge badge-kind">点歌</span>}
                         {track.status === 'processing' && (
                           <span className="badge badge-work">
                             转码中 {Math.round((track.progress ?? 0) * 100)}%
@@ -310,7 +440,7 @@ export default function LibraryPage() {
                     <button
                       type="button"
                       className="btn btn-ghost btn-sm"
-                      onClick={() => startEdit(track)}
+                      onClick={() => void startEdit(track)}
                     >
                       编辑
                     </button>

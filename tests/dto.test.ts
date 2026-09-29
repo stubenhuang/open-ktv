@@ -1,9 +1,26 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { mixKey, trackToDto, trackToListItem, transcodeKey, workToDto, workToListItem } from '../server/src/dto.ts';
+import {
+  mixKey,
+  trackToDetail,
+  trackToDto,
+  trackToListItem,
+  transcodeKey,
+  workToDto,
+  workToListItem,
+} from '../server/src/dto.ts';
 import type { TrackRecord, WorkRecord } from '../server/src/db.ts';
 import { enqueue } from '../server/src/jobs.ts';
-import type { MixParams, ProxyKind, TrackKind, TrackStatus, WorkStatus } from '../shared/types.ts';
+import {
+  DEFAULT_MIX_PARAMS,
+  type MixParams,
+  type ProxyKind,
+  type TrackKind,
+  type TrackStatus,
+  type WorkStatus,
+} from '../shared/types.ts';
+
+const LYRICS = '[00:01.00]甲\n[00:05.00]乙';
 
 function makeTrack(overrides: Partial<TrackRecord> = {}): TrackRecord {
   return {
@@ -21,12 +38,16 @@ function makeTrack(overrides: Partial<TrackRecord> = {}): TrackRecord {
     status: 'ready' as TrackStatus,
     error: null,
     createdAt: 1000,
+    lyrics: null,
+    lyricsOffsetMs: 0,
+    source: 'upload',
+    libraryRef: null,
     ...overrides,
   };
 }
 
 function makeWork(overrides: Partial<WorkRecord> = {}): WorkRecord {
-  const mixParams: MixParams = { vocalGain: 1, accompGain: 1, reverb: 'room', userOffsetMs: 0 };
+  const mixParams: MixParams = { ...DEFAULT_MIX_PARAMS };
   return {
     id: 'w1',
     trackId: 't1',
@@ -45,15 +66,44 @@ function makeWork(overrides: Partial<WorkRecord> = {}): WorkRecord {
   };
 }
 
-describe('trackToDto / trackToListItem', () => {
+describe('trackToDto / trackToListItem / trackToDetail', () => {
   it('不泄露磁盘路径', () => {
     const dto = trackToDto(makeTrack());
     assert.equal('originalPath' in dto, false);
     assert.equal('playablePath' in dto, false);
+    assert.equal('libraryRef' in dto, false, '曲库内部键不下发');
     assert.equal(dto.title, '晴天');
     assert.equal(dto.artist, '周杰伦');
     assert.equal(dto.size, 1024);
     assert.equal(dto.duration, 215.5);
+    assert.equal(dto.source, 'upload');
+  });
+
+  it('hasLyrics 跟着歌词走，列表不下发歌词正文', () => {
+    const withoutLyrics = trackToListItem(makeTrack());
+    assert.equal(withoutLyrics.hasLyrics, false);
+    assert.equal('lyrics' in withoutLyrics, false, '列表项不该带歌词正文');
+
+    const withLyrics = trackToListItem(makeTrack({ lyrics: LYRICS }));
+    assert.equal(withLyrics.hasLyrics, true);
+    assert.equal('lyrics' in withLyrics, false);
+
+    // 空串按「没有歌词」处理，避免前端显示一个空歌词页
+    assert.equal(trackToListItem(makeTrack({ lyrics: '' })).hasLyrics, false);
+  });
+
+  it('详情同时带歌词正文与进度', () => {
+    const detail = trackToDetail(makeTrack({ lyrics: LYRICS, lyricsOffsetMs: -250 }));
+    assert.equal(detail.lyrics, LYRICS);
+    assert.equal(detail.lyricsOffsetMs, -250);
+    assert.equal(detail.hasLyrics, true);
+    assert.equal(detail.progress, null);
+  });
+
+  it('曲库来源透传', () => {
+    const item = trackToListItem(makeTrack({ source: 'library', libraryRef: 'http-index:abc' }));
+    assert.equal(item.source, 'library');
+    assert.equal('libraryRef' in item, false);
   });
 
   it('非 processing 状态 progress 为 null', () => {
@@ -84,7 +134,7 @@ describe('workToDto / workToListItem', () => {
     assert.equal(dto.trackId, 't1');
     assert.equal(dto.vocalDuration, 180.25);
     assert.equal(dto.autoOffsetMs, 150);
-    assert.deepEqual(dto.mixParams, { vocalGain: 1, accompGain: 1, reverb: 'room', userOffsetMs: 0 });
+    assert.deepEqual(dto.mixParams, DEFAULT_MIX_PARAMS);
     assert.equal(dto.levels, null);
     assert.equal(dto.status, 'mixing');
     assert.equal(dto.createdAt, 2000);

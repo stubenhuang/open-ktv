@@ -1,6 +1,9 @@
 import type { MixParams, PreviewParams, ReverbKind, WorkLevels } from '../../../shared/types';
 import {
+  EQ_BANDS,
   REVERB_PREVIEW,
+  compressorParams,
+  deEssGainDb,
   mixTimeline,
   previewDurationSec,
   previewLinearGains,
@@ -18,17 +21,28 @@ import { errorMessage } from '../utils';
  *
  * 音频图（与服务端 buildMixFilter 同构）：
  *
- *   vocalBufferSource ──> vocalGain ──> highpass(80Hz) ──┬── dryGain ──────────┐
- *                                                        └──> convolver ──> wetGain ─┤
- *   accompBufferSource ──> accompGain ──────────────────────────────────────────────┼──> limiter ──> destination
+ *   vocalBufferSource ──> vocalGain ──> highpass(80) ──> eqLow ──> eqMid ──> eqHigh
+ *                                     ──> compressor ──> deEss ──┬── dryGain ─────────────┐
+ *                                                                └──> convolver ──> wetGain ─┤
+ *   accompBufferSource ──> accompGain ──────────────────────────────────────────────────────┼──> limiter ──> destination
  *
- *  - highpass=80Hz：和服务端一致，砍掉隆隆低频；
- *  - vocalGain/accompGain：实测归一化增益 × 用户滑块（shared/mix.ts 的公式）；
+ *  - highpass=80Hz / eqLow·Mid·High：和服务端一致（共用 shared/mix.ts 的 EQ_BANDS）；
+ *  - compressor：与服务端 acompressor 同参数（共用 compressorParams）；
+ *    压缩的 makeup 已经并进 vocalGain（见 vocalChainLinearGain），这里不再补一次；
+ *  - deEss：静态高架下压，对服务端 deesser 的听感近似；
+ *  - vocalGain/accompGain：实测归一化增益 × 用户滑块 × 压缩补偿（shared/mix.ts 的公式）；
  *  - convolver：程序生成的指数衰减噪声 IR，对服务端 aecho 四档混响的听感近似；
  *  - limiter：DynamicsCompressor，近似服务端末端 alimiter=0.95，防预览削波；
  *  - 对齐偏移不用 DelayNode（改 delayTime 会有爆音），改用「晚到的一轨晚起播」
  *    的调度方式（与服务端 mixTimeline 同一套符号规则：offset ≥ 0 人声晚进，
  *    offset < 0 伴奏晚进）；偏移变化时按当前位置重排两轨。
+ *
+ * **预览不支持的两个处理**（都在 UI 里明确标注，别让用户以为是 bug）：
+ *  1. 升降调 —— Web Audio 对 AudioBufferSourceNode 的 detune 是**同时改变音高与时长**的
+ *     （等价于变速播放），会让人声与伴奏立刻错位，比不预览更糟；
+ *     真正的变速不变调需要相位声码器，代价远超收益。所以预览按原调播放，
+ *     升降调只在「合成」后的成品里生效。
+ *  2. 降噪（afftdn）—— 没有对应的 Web Audio 节点。
  *
  * 已知限制：整曲 decodeAudioData 进内存，接近 15 分钟的录音解码后约几百 MB
  * Float32（单机自用可接受）。
@@ -85,6 +99,12 @@ export class PreviewEngine {
   private readonly vocalGain: GainNode;
   private readonly accompGain: GainNode;
   private readonly highpass: BiquadFilterNode;
+  private readonly eqLow: BiquadFilterNode;
+  private readonly eqMid: BiquadFilterNode;
+  private readonly eqHigh: BiquadFilterNode;
+  private readonly compressor: DynamicsCompressorNode;
+  /** 去齿音近似：高频高架下压；服务端用的是动态 deesser */
+  private readonly deEss: BiquadFilterNode;
   private readonly dryGain: GainNode;
   private readonly wetGain: GainNode;
   private readonly convolver: ConvolverNode;
@@ -101,6 +121,14 @@ export class PreviewEngine {
     reverb: 'room',
     offsetMs: 0,
     levels: null,
+    pitchSemitones: 0,
+    accompSemitones: 0,
+    eqLowDb: 0,
+    eqMidDb: 0,
+    eqHighDb: 0,
+    compression: 0,
+    deEss: 0,
+    noiseReduction: false,
   };
 
   /** 播放时：本次起播的 context 时间；暂停时：null */
@@ -126,6 +154,29 @@ export class PreviewEngine {
     this.highpass.type = 'highpass';
     this.highpass.frequency.value = 80;
 
+    // 均衡三段：类型与频率必须和服务端 buildEqChain 一致（共用 EQ_BANDS）
+    this.eqLow = this.context.createBiquadFilter();
+    this.eqLow.type = 'lowshelf';
+    this.eqLow.frequency.value = EQ_BANDS.low.frequency;
+
+    this.eqMid = this.context.createBiquadFilter();
+    this.eqMid.type = 'peaking';
+    this.eqMid.frequency.value = EQ_BANDS.mid.frequency;
+    this.eqMid.Q.value = EQ_BANDS.mid.q;
+
+    this.eqHigh = this.context.createBiquadFilter();
+    this.eqHigh.type = 'highshelf';
+    this.eqHigh.frequency.value = EQ_BANDS.high.frequency;
+
+    this.compressor = this.context.createDynamicsCompressor();
+    this.compressor.knee.value = 6;
+    this.compressor.attack.value = 0.01;
+    this.compressor.release.value = 0.2;
+
+    this.deEss = this.context.createBiquadFilter();
+    this.deEss.type = 'highshelf';
+    this.deEss.frequency.value = 6000;
+
     this.dryGain = this.context.createGain();
     this.wetGain = this.context.createGain();
     this.convolver = this.context.createConvolver();
@@ -139,10 +190,15 @@ export class PreviewEngine {
     this.limiter.attack.value = 0.003;
     this.limiter.release.value = 0.25;
 
-    // 人声链：gain → 高通 → 干/湿双路
+    // 人声链：gain → 高通 → 均衡 → 压缩 → 去齿音 → 干/湿双路
     this.vocalGain.connect(this.highpass);
-    this.highpass.connect(this.dryGain);
-    this.highpass.connect(this.convolver);
+    this.highpass.connect(this.eqLow);
+    this.eqLow.connect(this.eqMid);
+    this.eqMid.connect(this.eqHigh);
+    this.eqHigh.connect(this.compressor);
+    this.compressor.connect(this.deEss);
+    this.deEss.connect(this.dryGain);
+    this.deEss.connect(this.convolver);
     this.convolver.connect(this.wetGain);
     // 伴奏链：gain 直达
     this.accompGain.connect(this.limiter);
@@ -238,6 +294,11 @@ export class PreviewEngine {
     this.vocalGain.disconnect();
     this.accompGain.disconnect();
     this.highpass.disconnect();
+    this.eqLow.disconnect();
+    this.eqMid.disconnect();
+    this.eqHigh.disconnect();
+    this.compressor.disconnect();
+    this.deEss.disconnect();
     this.dryGain.disconnect();
     this.wetGain.disconnect();
     this.convolver.disconnect();
@@ -252,6 +313,19 @@ export class PreviewEngine {
     const { vocalLinear, accompLinear } = previewLinearGains(this.params, this.params.levels);
     this.vocalGain.gain.setTargetAtTime(vocalLinear, now, GAIN_SMOOTHING);
     this.accompGain.gain.setTargetAtTime(accompLinear, now, GAIN_SMOOTHING);
+
+    // 均衡：三段各自平滑过渡，拖动时不会有爆音
+    this.eqLow.gain.setTargetAtTime(this.params.eqLowDb, now, GAIN_SMOOTHING);
+    this.eqMid.gain.setTargetAtTime(this.params.eqMidDb, now, GAIN_SMOOTHING);
+    this.eqHigh.gain.setTargetAtTime(this.params.eqHighDb, now, GAIN_SMOOTHING);
+
+    // 压缩：阈值与压缩比与服务端 acompressor 同源（shared/mix.ts）
+    const comp = compressorParams(this.params.compression);
+    this.compressor.threshold.setTargetAtTime(comp.enabled ? comp.thresholdDb : 0, now, GAIN_SMOOTHING);
+    this.compressor.ratio.setTargetAtTime(comp.enabled ? comp.ratio : 1, now, GAIN_SMOOTHING);
+
+    // 去齿音：静态高架下压（服务端是动态 deesser，属听感近似）
+    this.deEss.gain.setTargetAtTime(deEssGainDb(this.params.deEss), now, GAIN_SMOOTHING);
 
     const reverb = this.params.reverb;
     if (reverb !== 'dry') {

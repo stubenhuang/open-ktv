@@ -3,6 +3,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { after, before, describe, it } from 'node:test';
 import { effectiveOffsetMs } from '../shared/mix.ts';
+import { DEFAULT_MIX_PARAMS } from '../shared/types.ts';
 import { createIsolatedDataDir, removeIsolatedDataDir, sleep } from './isolated.ts';
 
 /**
@@ -49,7 +50,7 @@ function newWork(id: string, trackId: string, overrides: Partial<Parameters<type
     vocalPath: `/tmp/${id}.wav`,
     vocalDuration: 60,
     autoOffsetMs: 150,
-    mixParams: { vocalGain: 1, accompGain: 1, reverb: 'room' as const, userOffsetMs: 0 },
+    mixParams: { ...DEFAULT_MIX_PARAMS },
     status: 'mixing' as const,
     ...overrides,
   };
@@ -101,6 +102,90 @@ describe('tracks 表', () => {
   });
 });
 
+describe('tracks 歌词与曲库来源', () => {
+  it('新伴奏默认：无歌词、微调 0、来源 upload', () => {
+    db.insertTrack(newTrack('lyr-default'));
+    const record = db.getTrack('lyr-default')!;
+    assert.equal(record.lyrics, null);
+    assert.equal(record.lyricsOffsetMs, 0);
+    assert.equal(record.source, 'upload');
+    assert.equal(record.libraryRef, null);
+  });
+
+  it('歌词与微调往返，可显式清除', () => {
+    const lyrics = '[00:01.00]甲\n[00:05.00]乙';
+    db.insertTrack(newTrack('lyr1', { lyrics }));
+
+    assert.equal(db.getTrack('lyr1')!.lyrics, lyrics);
+    assert.equal(db.getTrack('lyr1')!.lyricsOffsetMs, 0);
+
+    db.updateTrack('lyr1', { lyricsOffsetMs: -450 });
+    assert.equal(db.getTrack('lyr1')!.lyricsOffsetMs, -450);
+
+    db.updateTrack('lyr1', { lyrics: null });
+    assert.equal(db.getTrack('lyr1')!.lyrics, null, '允许显式清空歌词');
+    assert.equal(db.getTrack('lyr1')!.lyricsOffsetMs, -450, '清歌词不该动微调');
+  });
+
+  it('leaves offset 为 0 时不会被误写', () => {
+    db.insertTrack(newTrack('lyr2', { lyrics: '[00:01.00]甲' }));
+    db.updateTrack('lyr2', { lyrics: '[00:02.00]乙' });
+    assert.equal(db.getTrack('lyr2')!.lyricsOffsetMs, 0);
+  });
+
+  it('libraryRef 可查回，且同一曲库条目只能入库一次', () => {
+    db.insertTrack(newTrack('lib1', { source: 'library', libraryRef: 'http-index:qingtian' }));
+    const found = db.getTrackByLibraryRef('http-index:qingtian')!;
+    assert.equal(found.id, 'lib1');
+    assert.equal(found.source, 'library');
+
+    assert.equal(db.getTrackByLibraryRef('http-index:没这个'), undefined);
+
+    // 唯一索引挡住重复点歌
+    assert.throws(
+      () => db.insertTrack(newTrack('lib1-dup', { source: 'library', libraryRef: 'http-index:qingtian' })),
+      /UNIQUE|constraint/i,
+    );
+  });
+
+  it('手动上传的 libraryRef 都是 null，不受唯一索引约束', () => {
+    // 局部唯一索引（WHERE library_ref IS NOT NULL）的意义就在这里：
+    // 一堆 NULL 不该互相冲突
+    db.insertTrack(newTrack('up1'));
+    db.insertTrack(newTrack('up2'));
+    db.insertTrack(newTrack('up3'));
+    assert.equal(db.getTrack('up3')!.libraryRef, null);
+  });
+
+  it('老库迁移：补上歌词/来源列，老数据回落默认值', () => {
+    db.insertTrack(newTrack('mig-track'));
+    exec('DROP INDEX IF EXISTS idx_tracks_library_ref');
+    exec('ALTER TABLE tracks DROP COLUMN library_ref');
+    exec('ALTER TABLE tracks DROP COLUMN source');
+    exec('ALTER TABLE tracks DROP COLUMN lyrics');
+    exec('ALTER TABLE tracks DROP COLUMN lyrics_offset_ms');
+
+    db.initDb();
+
+    const record = db.getTrack('mig-track')!;
+    assert.equal(record.lyrics, null);
+    assert.equal(record.lyricsOffsetMs, 0, '老行补列后取默认 0');
+    assert.equal(record.source, 'upload', '老行补列后取默认 upload');
+    assert.equal(record.libraryRef, null);
+
+    // 迁移后唯一索引重新建起来了
+    db.insertTrack(newTrack('lib-mig', { source: 'library', libraryRef: 'http-index:x' }));
+    assert.throws(
+      () => db.insertTrack(newTrack('lib-mig-dup', { source: 'library', libraryRef: 'http-index:x' })),
+      /UNIQUE|constraint/i,
+    );
+
+    // 重复 initDb 幂等
+    db.initDb();
+    assert.equal(db.getTrack('mig-track')!.source, 'upload');
+  });
+});
+
 describe('works 表', () => {
   it('外键生效：伴奏不存在时插入作品会抛错', () => {
     assert.throws(() => db.insertWork(newWork('w-fk', '不存在的伴奏')));
@@ -114,7 +199,7 @@ describe('works 表', () => {
     assert.equal(work.trackId, 'wt');
     assert.equal(work.vocalDuration, 60);
     assert.equal(work.autoOffsetMs, 320);
-    assert.deepEqual(work.mixParams, { vocalGain: 1, accompGain: 1, reverb: 'room', userOffsetMs: 0 });
+    assert.deepEqual(work.mixParams, DEFAULT_MIX_PARAMS);
     assert.equal(work.mp3Path, null);
     assert.equal(work.levels, null);
     assert.equal(work.createdAt > 0, true);
@@ -131,7 +216,7 @@ describe('works 表', () => {
     exec(`UPDATE works SET levels = '不是 JSON' WHERE id = 'w2'`);
 
     const work = db.getWork('w2')!;
-    assert.deepEqual(work.mixParams, { vocalGain: 1, accompGain: 1, reverb: 'room', userOffsetMs: 0 });
+    assert.deepEqual(work.mixParams, DEFAULT_MIX_PARAMS);
     assert.equal(work.levels, null, '解析不出 levels 时按没有实测增益处理');
   });
 
@@ -173,7 +258,7 @@ describe('works 表', () => {
     db.insertWork(
       newWork('mig-w', 'mig-t', {
         autoOffsetMs: 200,
-        mixParams: { vocalGain: 1, accompGain: 1, reverb: 'room', userOffsetMs: 0 },
+        mixParams: { ...DEFAULT_MIX_PARAMS },
       }),
     );
 

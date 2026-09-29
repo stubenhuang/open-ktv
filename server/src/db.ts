@@ -1,11 +1,15 @@
 import { DatabaseSync } from 'node:sqlite';
 import {
   DEFAULT_MIX_PARAMS,
+  REVERB_KINDS,
+  VOCAL_PRESETS,
   type MixParams,
   type ProxyKind,
   type ReverbKind,
   type TrackKind,
+  type TrackSource,
   type TrackStatus,
+  type VocalPreset,
   type Work,
   type WorkLevels,
   type WorkStatus,
@@ -30,6 +34,10 @@ interface TrackRow {
   status: string;
   error: string | null;
   created_at: number;
+  lyrics: string | null;
+  lyrics_offset_ms: number;
+  source: string;
+  library_ref: string | null;
 }
 
 interface WorkRow {
@@ -66,6 +74,14 @@ export interface TrackRecord {
   status: TrackStatus;
   error: string | null;
   createdAt: number;
+  lyrics: string | null;
+  lyricsOffsetMs: number;
+  source: TrackSource;
+  /**
+   * 曲库来源标识，形如 `providerId:itemId`；手动上传的为 null。
+   * 只走服务端内部：前端判「是否已在库」由接口直接回答，不下发这个内部键。
+   */
+  libraryRef: string | null;
 }
 
 /** 完整作品记录（含磁盘路径） */
@@ -102,7 +118,11 @@ export function initDb(): void {
       duration      REAL,
       status        TEXT NOT NULL,
       error         TEXT,
-      created_at    INTEGER NOT NULL
+      created_at    INTEGER NOT NULL,
+      lyrics         TEXT,
+      lyrics_offset_ms INTEGER NOT NULL DEFAULT 0,
+      source        TEXT NOT NULL DEFAULT 'upload',
+      library_ref   TEXT
     );
 
     CREATE TABLE IF NOT EXISTS works (
@@ -124,19 +144,66 @@ export function initDb(): void {
     CREATE INDEX IF NOT EXISTS idx_works_created ON works(created_at DESC);
   `);
 
-  // 轻量迁移：老库补 levels 列（实时预览用的实测增益，允许为空）
-  const workColumns = db
-    .prepare('PRAGMA table_info(works)')
+  // 轻量迁移：老库按需补列。新增一列就在这里加一行 ——
+  // 为一个小项目引入全量迁移框架是净负担，这些 ALTER 都是可安全重复执行的。
+  ensureColumns(db, 'works', [
+    // levels：实时预览用的实测增益，允许为空（老作品没有）
+    { name: 'levels', ddl: 'ALTER TABLE works ADD COLUMN levels TEXT' },
+  ]);
+  const addedAlignVer = ensureColumns(db, 'works', [
+    {
+      name: 'align_ver',
+      ddl: 'ALTER TABLE works ADD COLUMN align_ver INTEGER NOT NULL DEFAULT 1',
+    },
+  ]);
+  // 只有真的补过 align_ver（老库）才需要换算，新库插的就是版本 2
+  if (addedAlignVer) migrateLegacyAlignment(db);
+
+  ensureColumns(db, 'tracks', [
+    { name: 'lyrics', ddl: 'ALTER TABLE tracks ADD COLUMN lyrics TEXT' },
+    {
+      name: 'lyrics_offset_ms',
+      ddl: 'ALTER TABLE tracks ADD COLUMN lyrics_offset_ms INTEGER NOT NULL DEFAULT 0',
+    },
+    {
+      name: 'source',
+      ddl: `ALTER TABLE tracks ADD COLUMN source TEXT NOT NULL DEFAULT 'upload'`,
+    },
+    { name: 'library_ref', ddl: 'ALTER TABLE tracks ADD COLUMN library_ref TEXT' },
+  ]);
+
+  // 点歌去重的底座：同一个曲库条目只允许入库一次。
+  // 必须在 tracks 迁移之后建 —— 老库这列是刚补上的，提前建会报 no such column。
+  // 局部唯一索引（WHERE library_ref IS NOT NULL）让手动上传的那一堆 NULL 不受约束。
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_tracks_library_ref
+       ON tracks(library_ref) WHERE library_ref IS NOT NULL`,
+  );
+}
+
+/**
+ * 按需给表补列，返回是否真的补过。
+ *
+ * @param table 表名；只接受代码里写死的字面量（PRAGMA 不支持参数绑定）
+ */
+function ensureColumns(
+  connection: DatabaseSync,
+  table: string,
+  columns: { name: string; ddl: string }[],
+): boolean {
+  const existing = connection
+    .prepare(`PRAGMA table_info(${table})`)
     .all() as unknown as { name: string }[];
-  if (!workColumns.some((column) => column.name === 'levels')) {
-    db.exec('ALTER TABLE works ADD COLUMN levels TEXT');
-    log.info('老库迁移：works 表已补上 levels 列');
+  const present = new Set(existing.map((column) => column.name));
+
+  let changed = false;
+  for (const column of columns) {
+    if (present.has(column.name)) continue;
+    connection.exec(column.ddl);
+    log.info(`老库迁移：${table} 表已补上 ${column.name} 列`);
+    changed = true;
   }
-  if (!workColumns.some((column) => column.name === 'align_ver')) {
-    db.exec('ALTER TABLE works ADD COLUMN align_ver INTEGER NOT NULL DEFAULT 1');
-    log.info('老库迁移：works 表已补上 align_ver 列');
-    migrateLegacyAlignment(db);
-  }
+  return changed;
 }
 
 /**
@@ -209,17 +276,55 @@ function toTrack(row: TrackRow): TrackRecord {
     status: row.status as TrackStatus,
     error: row.error,
     createdAt: Number(row.created_at),
+    lyrics: row.lyrics,
+    lyricsOffsetMs: Number.isFinite(Number(row.lyrics_offset_ms))
+      ? Number(row.lyrics_offset_ms)
+      : 0,
+    // 老库只有 'upload' 一种来源；脏值一律回落到 upload
+    source: row.source === 'library' ? 'library' : 'upload',
+    libraryRef: row.library_ref,
   };
 }
 
+/**
+ * 解析落库的 mix_params JSON。
+ *
+ * 每个字段都以 DEFAULT_MIX_PARAMS 为回落 —— **这是老作品零回归的关键**：
+ * 它们的 JSON 里根本没有升降调 / 均衡 / 压缩这些键，回落成中性值之后，
+ * 重新合成的出声与本次改动前逐字节一致（有测试守着）。
+ * 解析不出数字（手改库、脏数据）也走同一条回落路径，不静默变成 0。
+ */
 function parseMixParams(raw: string): MixParams {
+  const fallback = DEFAULT_MIX_PARAMS;
   try {
     const parsed = JSON.parse(raw) as Partial<MixParams>;
+
+    const num = (value: unknown, base: number): number =>
+      Number.isFinite(Number(value)) ? Number(value) : base;
+
     return {
-      vocalGain: Number(parsed.vocalGain ?? 1),
-      accompGain: Number(parsed.accompGain ?? 1),
-      reverb: (parsed.reverb ?? 'room') as ReverbKind,
-      userOffsetMs: Number(parsed.userOffsetMs ?? 0),
+      vocalGain: num(parsed.vocalGain, fallback.vocalGain),
+      accompGain: num(parsed.accompGain, fallback.accompGain),
+      reverb: REVERB_KINDS.includes(parsed.reverb as ReverbKind)
+        ? (parsed.reverb as ReverbKind)
+        : fallback.reverb,
+      userOffsetMs: num(parsed.userOffsetMs, fallback.userOffsetMs),
+
+      pitchSemitones: num(parsed.pitchSemitones, fallback.pitchSemitones),
+      accompSemitones: num(parsed.accompSemitones, fallback.accompSemitones),
+      vocalPreset: VOCAL_PRESETS.includes(parsed.vocalPreset as VocalPreset)
+        ? (parsed.vocalPreset as VocalPreset)
+        : fallback.vocalPreset,
+
+      eqLowDb: num(parsed.eqLowDb, fallback.eqLowDb),
+      eqMidDb: num(parsed.eqMidDb, fallback.eqMidDb),
+      eqHighDb: num(parsed.eqHighDb, fallback.eqHighDb),
+      compression: num(parsed.compression, fallback.compression),
+      deEss: num(parsed.deEss, fallback.deEss),
+      noiseReduction:
+        typeof parsed.noiseReduction === 'boolean'
+          ? parsed.noiseReduction
+          : fallback.noiseReduction,
     };
   } catch {
     return { ...DEFAULT_MIX_PARAMS };
@@ -297,14 +402,20 @@ export interface NewTrack {
   duration: number | null;
   status: TrackStatus;
   error: string | null;
+  /** 默认 'upload'：除点歌下载外都是手动上传 */
+  source?: TrackSource;
+  /** 曲库来源 `providerId:itemId`；手动上传留空 */
+  libraryRef?: string | null;
+  lyrics?: string | null;
 }
 
 export function insertTrack(input: NewTrack): void {
   connection()
     .prepare(
       `INSERT INTO tracks (id, title, artist, kind, original_name, original_path, playable_path,
-                           proxy_kind, mime, size, duration, status, error, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                           proxy_kind, mime, size, duration, status, error, created_at,
+                           lyrics, lyrics_offset_ms, source, library_ref)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
     )
     .run(
       input.id,
@@ -321,6 +432,9 @@ export function insertTrack(input: NewTrack): void {
       input.status,
       input.error,
       Date.now(),
+      input.lyrics ?? null,
+      input.source ?? 'upload',
+      input.libraryRef ?? null,
     );
 }
 
@@ -338,6 +452,14 @@ export function getTrack(id: string): TrackRecord | undefined {
   return row ? toTrack(row) : undefined;
 }
 
+/** 按曲库来源键找伴奏；点歌去重用（唯一索引保证最多一条） */
+export function getTrackByLibraryRef(libraryRef: string): TrackRecord | undefined {
+  const row = connection()
+    .prepare('SELECT * FROM tracks WHERE library_ref = ?')
+    .get(libraryRef) as TrackRow | undefined;
+  return row ? toTrack(row) : undefined;
+}
+
 export interface TrackPatch {
   title?: string;
   artist?: string | null;
@@ -346,6 +468,9 @@ export interface TrackPatch {
   duration?: number | null;
   status?: TrackStatus;
   error?: string | null;
+  /** null = 清除歌词 */
+  lyrics?: string | null;
+  lyricsOffsetMs?: number;
 }
 
 export function updateTrack(id: string, patch: TrackPatch): void {
@@ -358,6 +483,8 @@ export function updateTrack(id: string, patch: TrackPatch): void {
   if (patch.duration !== undefined) builder.set('duration', patch.duration);
   if (patch.status !== undefined) builder.set('status', patch.status);
   if (patch.error !== undefined) builder.set('error', patch.error);
+  if (patch.lyrics !== undefined) builder.set('lyrics', patch.lyrics);
+  if (patch.lyricsOffsetMs !== undefined) builder.set('lyrics_offset_ms', patch.lyricsOffsetMs);
 
   builder.run(id);
 }

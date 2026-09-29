@@ -441,6 +441,40 @@ async function main() {
   const trackId = audioTrack.id;
   pass(`上传走通了：${audioTrack.title}（${trackId}）`);
 
+  /* ------------------------------ 1.5 贴歌词 ------------------------------ */
+  step('给伴奏贴一份 LRC 歌词');
+  const lyricsSaved = await evaluate(
+    page,
+    `(async () => {
+      const lrc = ['[00:00.00]第一句歌词', '[00:01.00]第二句歌词', '[00:02.00]第三句歌词'].join('\\n');
+      const response = await fetch('/api/tracks/${trackId}', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lyrics: lrc }),
+      });
+      if (!response.ok) return 'HTTP ' + response.status;
+      const track = await response.json();
+      if (!track.hasLyrics) return 'hasLyrics 还是 false';
+      return track.lyrics.includes('第一句歌词') ? 'ok' : '歌词内容不对：' + track.lyrics;
+    })()`,
+    'PATCH 歌词',
+  );
+  if (lyricsSaved !== 'ok') throw new Error(`歌词没存上：${lyricsSaved}`);
+  pass('歌词已入库（经过服务端规范化）');
+
+  // 纯文本歌词必须被拒（不能被静默降级成静态歌词）。
+  // 这一步刻意从 Node 发起而不是页面：400 会被 Chrome 记成控制台报错，
+  // 而本脚本最后会断言「控制台无报错」——不该让一条预期内的 400 把整轮判失败。
+  const plainTextRejected = await fetch(`${BASE_URL}/api/tracks/${trackId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lyrics: '这是一段没有时间戳的歌词' }),
+  });
+  if (plainTextRejected.status !== 400) {
+    throw new Error(`纯文本歌词应返回 400，实际 ${plainTextRejected.status}`);
+  }
+  pass('纯文本歌词被拒（400），没有静默降级');
+
   /* ------------------------------ 2. 演唱录音 ------------------------------ */
   step('进入演唱页，等麦克风就绪');
 
@@ -485,7 +519,36 @@ async function main() {
   });
   pass('已经进入录音状态，伴奏在播');
 
-  await sleep(3000);
+  // 跟唱歌词：三行都要渲染出来，且当前行随伴奏推进（这一探本身也花掉一部分录音时间）
+  const lyricsProbe = await evaluate(
+    page,
+    `(async () => {
+      const view = document.querySelector('.lyrics-view');
+      if (!view) return JSON.stringify({ error: '没有 .lyrics-view' });
+      const lines = [...view.querySelectorAll('.lyric-line')];
+      const activeText = () => {
+        const active = view.querySelector('.lyric-active');
+        return active ? active.textContent.trim() : null;
+      };
+      const first = activeText();
+      await new Promise((r) => setTimeout(r, 1400));
+      const second = activeText();
+      return JSON.stringify({ count: lines.length, first, second });
+    })()`,
+    '检查歌词跟唱',
+  );
+  const lyricsState = JSON.parse(lyricsProbe);
+  if (lyricsState.error) throw new Error(`歌词没渲染：${lyricsProbe}`);
+  if (lyricsState.count !== 3) throw new Error(`歌词行数不对：${lyricsProbe}`);
+  if (!lyricsState.first || !lyricsState.second) {
+    throw new Error(`歌词没有高亮行（滚动/时钟没接上）：${lyricsProbe}`);
+  }
+  if (lyricsState.first === lyricsState.second) {
+    throw new Error(`歌词没有随播放推进：${lyricsProbe}`);
+  }
+  pass(`歌词跟唱正常：「${lyricsState.first}」→「${lyricsState.second}」`);
+
+  await sleep(1600);
 
   step('点「结束演唱」，等合成');
   const stopped = await evaluate(page, clickByText('结束演唱'), '点结束演唱');
@@ -525,6 +588,40 @@ async function main() {
   pass(`成品 MP3 可播放（${audioInfo.type}，${audioInfo.bytes} 字节）`);
 
   /* ------------------------------ 3.4 实时试听 ------------------------------ */
+  /* --------------------- 3.4 混音面板：分组 / 预设 / 升降调 -------------------- */
+  step('混音面板：分组建在、点预设会写进参数');
+  const panel = await evaluate(
+    page,
+    `(async () => {
+      const groups = [...document.querySelectorAll('.mix-group-head')].map((n) => n.textContent);
+      const needed = ['音量', '音调', '音效', '修音'];
+      const missing = needed.filter((name) => !groups.some((g) => g.includes(name)));
+      if (missing.length) return JSON.stringify({ error: '缺少分组：' + missing.join(',') });
+
+      // 预设只是「一组具名参数」，点一下应该把数值写进滑块
+      const eqBefore = [...document.querySelectorAll('.mix-panel input[type=range]')]
+        .map((s) => s.value).join(',');
+      const magnetic = [...document.querySelectorAll('.reverb-option')]
+        .find((b) => b.textContent.includes('磁性'));
+      if (!magnetic) return JSON.stringify({ error: '找不到「磁性」预设' });
+      magnetic.click();
+      await new Promise((r) => setTimeout(r, 250));
+      const eqAfter = [...document.querySelectorAll('.mix-panel input[type=range]')]
+        .map((s) => s.value).join(',');
+
+      const stillActive = [...document.querySelectorAll('.reverb-option.active')]
+        .some((b) => b.textContent.includes('磁性'));
+
+      return JSON.stringify({ changed: eqBefore !== eqAfter, stillActive });
+    })()`,
+    '检查混音面板',
+  );
+  const panelState = JSON.parse(panel);
+  if (panelState.error) throw new Error(`混音面板不对：${panel}`);
+  if (!panelState.changed) throw new Error('点预设没有改变任何参数');
+  if (!panelState.stillActive) throw new Error('点了预设但按钮没有高亮');
+  pass('混音分组齐全，预设能写进参数并正确高亮');
+
   step('实时试听：点播放 + 拖滑块，不点「合成」也立即生效');
 
   const previewStart = await evaluate(
@@ -819,7 +916,144 @@ async function main() {
     `转码后的视频能播：${videoPlayback.width}x${videoPlayback.height}，${videoPlayback.bytes} 字节`,
   );
 
-  /* -------------------------------- 5. 收尾 -------------------------------- */
+  /* ------------------------------ 5. 点歌台渲染 ----------------------------- */
+  step('打开点歌台（曲库源没配也要能正常渲染）');
+  await page.send('Page.navigate', { url: `${BASE_URL}/discover` });
+  await waitFor(page, `document.body.innerText.includes('点歌台')`, {
+    timeoutMs: 20_000,
+    label: '点歌台渲染',
+  });
+
+  // 没配 LIBRARY_SOURCES 时应该给出配置指引，而不是空页面或报错；
+  // 配了源就应该出现搜索框。两种都算通过 —— 这个用例只保证页面不炸。
+  const discover = await evaluate(
+    page,
+    `(() => ({
+      hasGuide: document.body.innerText.includes('还没有配置任何曲库源'),
+      hasSearch: Boolean(document.querySelector('.library-search-bar')),
+      navHasLink: [...document.querySelectorAll('.app-nav-link')].some((a) => a.textContent.includes('点歌台')),
+    }))()`,
+    '检查点歌台',
+  );
+  if (!discover.hasGuide && !discover.hasSearch) {
+    throw new Error(`点歌台既没有配置指引也没有搜索框：${JSON.stringify(discover)}`);
+  }
+  if (!discover.navHasLink) throw new Error('导航里没有「点歌台」入口');
+  pass(discover.hasGuide ? '点歌台渲染正常（未配置源 → 显示配置指引）' : '点歌台渲染正常（已配置源 → 显示搜索框）');
+
+  // 只有配了曲库源的时候才跑这段（默认不配，避免 e2e 依赖外部资源）。
+  // 用 E2E_LIBRARY_SOURCE=1 打开，同时服务端要带 LIBRARY_SOURCES 启动。
+  if (process.env.E2E_LIBRARY_SOURCE === '1') {
+    step('点歌台：搜索 → 点歌 → 自动入库 → 去演唱');
+
+    const searched = await evaluate(
+      page,
+      `(async () => {
+        const input = document.querySelector('.library-search-bar input');
+        if (!input) return '没有搜索框';
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(input, '晴天');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        return 'ok';
+      })()`,
+      '输入搜索词',
+    );
+    if (searched !== 'ok') throw new Error(`搜索框不可用：${searched}`);
+
+    await waitFor(
+      page,
+      `[...document.querySelectorAll('.track-item .track-title')].some((n) => n.textContent.includes('晴天'))`,
+      { timeoutMs: 20_000, label: '搜索结果出现' },
+    );
+    pass('搜索命中「晴天」（关键词过滤走的是本地清单缓存）');
+
+    const requested = await evaluate(
+      page,
+      `(() => {
+        const item = [...document.querySelectorAll('.track-item')].find((n) => n.innerText.includes('晴天'));
+        if (!item) return '没有结果卡片';
+        const button = [...item.querySelectorAll('button')].find((b) => b.textContent.includes('点歌'));
+        if (!button) return '没有点歌按钮';
+        button.click();
+        return 'ok';
+      })()`,
+      '点歌',
+    );
+    if (requested !== 'ok') throw new Error(`点歌没触发：${requested}`);
+
+    // 卡片从「下载中…」翻成「已入库」才算真的走完下载 + 入库
+    await waitFor(
+      page,
+      `(() => {
+        const item = [...document.querySelectorAll('.track-item')].find((n) => n.innerText.includes('晴天'));
+        return Boolean(item && item.innerText.includes('已入库'));
+      })()`,
+      { timeoutMs: 90_000, label: '点歌入库完成' },
+    );
+    pass('点歌完成，卡片显示「已入库」');
+
+    const imported = await evaluate(
+      page,
+      `(async () => {
+        const tracks = await (await fetch('/api/tracks')).json();
+        const track = tracks.find((t) => t.title === '晴天' && t.source === 'library');
+        if (!track) return JSON.stringify({ error: '库里没有 source=library 的晴天' });
+        const detail = await (await fetch('/api/tracks/' + track.id)).json();
+        return JSON.stringify({ hasLyrics: detail.hasLyrics, lyrics: detail.lyrics });
+      })()`,
+      '核对入库结果',
+    );
+    const importedState = JSON.parse(imported);
+    if (importedState.error) throw new Error(importedState.error);
+    if (!importedState.hasLyrics) throw new Error(`点歌没有带上源站歌词：${imported}`);
+    pass('入库来源标成 library，且源站歌词自动带了出来');
+
+    const dedupe = await evaluate(
+      page,
+      `(async () => {
+        const countLibrary = async () => (await (await fetch('/api/tracks')).json())
+          .filter((t) => t.source === 'library').length;
+        const before = await countLibrary();
+        const sources = await (await fetch('/api/library/sources')).json();
+        const response = await fetch('/api/library/download', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ providerId: sources.sources[0].id, itemId: 'qingtian' }),
+        });
+        const body = await response.json();
+        return JSON.stringify({
+          status: response.status,
+          alreadyImported: body.alreadyImported === true,
+          before,
+          after: await countLibrary(),
+        });
+      })()`,
+      '重复点歌',
+    );
+    const dedupeState = JSON.parse(dedupe);
+    if (dedupeState.status !== 200 || !dedupeState.alreadyImported) {
+      throw new Error(`重复点歌没有复用已有条目：${dedupe}`);
+    }
+    if (dedupeState.after !== dedupeState.before) {
+      throw new Error(`重复点歌产生了重复条目：${dedupe}`);
+    }
+    pass(`重复点歌直接复用已有条目（库里仍为 ${dedupeState.after} 条）`);
+
+    await evaluate(
+      page,
+      `(async () => {
+        const tracks = await (await fetch('/api/tracks')).json();
+        for (const track of tracks) {
+          if (track.source === 'library') await fetch('/api/tracks/' + track.id, { method: 'DELETE' });
+        }
+        return true;
+      })()`,
+      '清理点歌数据',
+    );
+    pass('已清理点歌产生的伴奏');
+  }
+
+  /* -------------------------------- 6. 收尾 -------------------------------- */
   step('清理测试数据');
   await evaluate(
     page,
@@ -869,9 +1103,29 @@ async function run() {
     try {
       const diagnostics = await evaluate(
         client,
-        `(() => ({
+        `(async () => ({
           url: location.href,
           alerts: [...document.querySelectorAll('.alert')].map((n) => n.innerText.trim()),
+          // 麦克风到底怎么了：把 enumerateDevices / getUserMedia 的真实结果摊开，
+          // 否则「未检测到设备」既可能是权限、也可能是 Chrome 的假设备没生效
+          micProbe: await (async () => {
+            const out = { hasApi: Boolean(navigator.mediaDevices?.getUserMedia) };
+            try {
+              const devices = await navigator.mediaDevices.enumerateDevices();
+              out.inputs = devices.filter((d) => d.kind === 'audioinput').length;
+              out.kinds = devices.map((d) => d.kind);
+            } catch (err) {
+              out.enumerateError = String(err);
+            }
+            try {
+              const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              out.gum = 'ok:' + stream.getAudioTracks().length;
+              for (const track of stream.getTracks()) track.stop();
+            } catch (err) {
+              out.gum = 'failed:' + (err && err.name) + ':' + (err && err.message);
+            }
+            return out;
+          })(),
           startButtonDisabled:
             document.querySelector('button.btn-primary.btn-lg')?.disabled ?? null,
           micSelectOptions: [...document.querySelectorAll('select option')].map((o) => o.textContent),

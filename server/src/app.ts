@@ -2,14 +2,25 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
-import { WEB_DIST_DIR } from './config.ts';
+import { LIBRARY_SOURCES, WEB_DIST_DIR } from './config.ts';
+import { getFfmpegCapabilities } from './ffmpegCapabilities.ts';
+import { createRegistry, type LibraryRegistry } from './library/registry.ts';
 import { queueState } from './jobs.ts';
 import { createLogger, type LogLevel } from './logger.ts';
+import { createLibraryRouter } from './routes/library.ts';
 import mediaRouter from './routes/media.ts';
 import tracksRouter from './routes/tracks.ts';
 import worksRouter from './routes/works.ts';
 
 const httpLog = createLogger('http');
+
+export interface CreateAppOptions {
+  /**
+   * 曲库源注册表。生产从 LIBRARY_SOURCES 构建；测试注入指向本地清单源的实例，
+   * 从而完全不依赖外网。
+   */
+  library?: LibraryRegistry;
+}
 
 /**
  * 组装 Express 应用（不监听端口、不碰数据库）。
@@ -17,10 +28,11 @@ const httpLog = createLogger('http');
  * index.ts 负责 initDb / 启动 / 信号收尾；测试直接把 createApp() 挂到临时端口上，
  * 配 DATA_DIR 指向临时目录即可整条 API 链路跑起来。
  */
-export function createApp(): express.Express {
+export function createApp(options: CreateAppOptions = {}): express.Express {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '2mb' }));
+  const library = options.library ?? createRegistry(LIBRARY_SOURCES);
 
   // 请求日志：谁、什么路径、什么状态码、花了多久。
   // 轮询类接口（健康检查、媒体流）和非 api 请求降到 debug，否则前端一刷就是一片。
@@ -44,11 +56,14 @@ export function createApp(): express.Express {
   });
 
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, queue: queueState() });
+    // capabilities 下发给前端：缺 rubberband 时把升降调控件禁掉并说明原因，
+    // 而不是等用户点了合成才失败
+    res.json({ ok: true, queue: queueState(), capabilities: getFfmpegCapabilities() });
   });
 
   app.use('/api/tracks', tracksRouter);
   app.use('/api/works', worksRouter);
+  app.use('/api/library', createLibraryRouter(library));
   app.use('/api/media', mediaRouter);
 
   app.use('/api', (_req, res) => {

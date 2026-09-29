@@ -25,6 +25,8 @@ before(async () => {
 
   db.initDb();
   cleanTmpDir();
+  // 同 index.ts 的启动流程：先探测 ffmpeg 能力，/api/health 才会如实上报
+  await (await import('../server/src/ffmpegCapabilities.ts')).detectFfmpegCapabilities();
 
   const app = createApp();
   server = http.createServer(app);
@@ -59,9 +61,15 @@ describe('HTTP API（真实 Express + 临时数据目录）', () => {
   it('健康检查', async () => {
     const response = await fetch(`${baseUrl}/api/health`);
     assert.equal(response.status, 200);
-    const body = (await response.json()) as { ok: boolean; queue: { active: null } };
+    const body = (await response.json()) as {
+      ok: boolean;
+      queue: { active: null };
+      capabilities: { rubberband: boolean };
+    };
     assert.equal(body.ok, true);
     assert.deepEqual(body.queue, { active: null, waiting: 0 });
+    // 只断言形状：不同机器的 ffmpeg 构建不一定都带 rubberband
+    assert.equal(typeof body.capabilities.rubberband, 'boolean');
   });
 
   it('未知接口 404 JSON', async () => {
@@ -138,6 +146,125 @@ describe('HTTP API（真实 Express + 临时数据目录）', () => {
     const body = (await ok.json()) as { title: string; artist: null };
     assert.equal(body.title, '新歌名');
     assert.equal(body.artist, null, '空字符串清空歌手');
+  });
+
+  it('歌词：贴 LRC 文本入库并规范化，详情带正文、列表只带 hasLyrics', async () => {
+    const messy = ['[00:30]丙', '[by:某人]', '[00:10.5]甲'].join('\n');
+    const response = await fetch(`${baseUrl}/api/tracks/${trackId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lyrics: messy }),
+    });
+    assert.equal(response.status, 200);
+
+    const body = (await response.json()) as { lyrics: string; hasLyrics: boolean };
+    assert.equal(body.lyrics, ['[00:10.50]甲', '[00:30.00]丙'].join('\n'), '服务端存的是规范化后的文本');
+    assert.equal(body.hasLyrics, true);
+
+    // 详情带歌词正文
+    const detail = (await (await fetch(`${baseUrl}/api/tracks/${trackId}`)).json()) as {
+      lyrics: string;
+      hasLyrics: boolean;
+      lyricsOffsetMs: number;
+    };
+    assert.equal(detail.lyrics, body.lyrics);
+    assert.equal(detail.hasLyrics, true);
+
+    // 列表不带歌词正文，只给布尔值 —— 几百首的库不该每次轮询都传全部歌词
+    const list = (await (await fetch(`${baseUrl}/api/tracks`)).json()) as Record<string, unknown>[];
+    const item = list.find((entry) => entry.id === trackId)!;
+    assert.equal(item.hasLyrics, true);
+    assert.equal('lyrics' in item, false);
+  });
+
+  it('歌词：纯文本没有时间戳 → 400，不被静默降级', async () => {
+    const response = await fetch(`${baseUrl}/api/tracks/${trackId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lyrics: '这是一段没有时间戳的歌词\n第二行' }),
+    });
+    assert.equal(response.status, 400);
+    assert.match(((await response.json()) as { error: string }).error, /\[mm:ss\]/);
+  });
+
+  it('歌词：lyricsOffsetMs 被钳制到 ±30000 并取整', async () => {
+    const over = (await (
+      await fetch(`${baseUrl}/api/tracks/${trackId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lyricsOffsetMs: 999_999 }),
+      })
+    ).json()) as { lyricsOffsetMs: number };
+    assert.equal(over.lyricsOffsetMs, 30_000);
+
+    const under = (await (
+      await fetch(`${baseUrl}/api/tracks/${trackId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lyricsOffsetMs: -999_999.6 }),
+      })
+    ).json()) as { lyricsOffsetMs: number };
+    assert.equal(under.lyricsOffsetMs, -30_000);
+
+    const rounded = (await (
+      await fetch(`${baseUrl}/api/tracks/${trackId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lyricsOffsetMs: -120.6 }),
+      })
+    ).json()) as { lyricsOffsetMs: number };
+    assert.equal(rounded.lyricsOffsetMs, -121);
+  });
+
+  it('歌词：空串清除歌词，但不动微调', async () => {
+    const before = (await (await fetch(`${baseUrl}/api/tracks/${trackId}`)).json()) as {
+      lyricsOffsetMs: number;
+    };
+    const response = await fetch(`${baseUrl}/api/tracks/${trackId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lyrics: '' }),
+    });
+    assert.equal(response.status, 200);
+
+    const body = (await response.json()) as { lyrics: null; hasLyrics: boolean; lyricsOffsetMs: number };
+    assert.equal(body.lyrics, null);
+    assert.equal(body.hasLyrics, false);
+    assert.equal(body.lyricsOffsetMs, before.lyricsOffsetMs, '清歌词不该顺带重置微调');
+  });
+
+  it('歌词：上传 .lrc 文件，非法内容 / 错误扩展名 / 不存在的伴奏都被拒', async () => {
+    const upload = async (content: string, fileName: string, id = trackId) => {
+      const form = new FormData();
+      form.append('lyrics', new Blob([content], { type: 'text/plain' }), fileName);
+      return fetch(`${baseUrl}/api/tracks/${id}/lyrics`, { method: 'POST', body: form });
+    };
+
+    const ok = await upload('[ti:晴天]\n[00:01.00]第一句\n[00:05.00]第二句', '晴天.lrc');
+    assert.equal(ok.status, 200);
+    const body = (await ok.json()) as { lyrics: string };
+    assert.equal(body.lyrics, ['[ti:晴天]', '[00:01.00]第一句', '[00:05.00]第二句'].join('\n'));
+
+    const badContent = await upload('没有时间戳的歌词', 'bad.lrc');
+    assert.equal(badContent.status, 400);
+
+    const badExtension = await upload('[00:01.00]甲', '歌词.docx');
+    assert.equal(badExtension.status, 400);
+    assert.match(((await badExtension.json()) as { error: string }).error, /\.lrc/);
+
+    const missingTrack = await upload('[00:01.00]甲', 'x.lrc', '不存在的id');
+    assert.equal(missingTrack.status, 404);
+  });
+
+  it('歌词：缺文件字段 → 400', async () => {
+    const form = new FormData();
+    form.append('notlyrics', 'x');
+    const response = await fetch(`${baseUrl}/api/tracks/${trackId}/lyrics`, {
+      method: 'POST',
+      body: form,
+    });
+    assert.equal(response.status, 400);
+    assert.match(((await response.json()) as { error: string }).error, /表单字段名应为 lyrics/);
   });
 
   it('伴奏媒体可流式播放（audio/mpeg）', async () => {

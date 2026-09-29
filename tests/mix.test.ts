@@ -4,7 +4,7 @@ import { after, before, describe, it } from 'node:test';
 import { runFfmpeg } from '../server/src/ffmpeg.ts';
 import { measureLoudness, normalizeGainDb } from '../server/src/loudness.ts';
 import { buildMixArgs, buildMixFilter, computeLevels } from '../server/src/mix.ts';
-import { effectiveOffsetMs, mixTimeline } from '../shared/mix.ts';
+import { EQ_BANDS, effectiveOffsetMs, mixTimeline } from '../shared/mix.ts';
 import { MIX_LIMITS } from '../shared/types.ts';
 import { cleanupDir, ffmpegOk, makeTempDir, sineArgs, summarize } from './helpers.ts';
 
@@ -24,18 +24,29 @@ after(async () => {
   if (workDir) await cleanupDir(workDir);
 });
 
+/** buildMixFilter 的完整输入：用例只覆盖自己关心的字段，其余给中性值 */
+function filterInput(overrides: Partial<Parameters<typeof buildMixFilter>[0]> = {}) {
+  return {
+    offsetMs: 0,
+    levels: { vocalLinear: 1, accompLinear: 1 },
+    reverb: 'dry' as const,
+    eqLowDb: 0,
+    eqMidDb: 0,
+    eqHighDb: 0,
+    ...overrides,
+  };
+}
+
 async function mixTo(outputName: string, offsetMs: number, vocalGain = 1, reverb: 'dry' | 'room' | 'hall' | 'stage' = 'dry') {
   const output = path.join(workDir, outputName);
-  const levels = computeLevels({ vocalGain, accompGain: 1 }, 0, 0);
+  const levels = computeLevels({ vocalGain, accompGain: 1, compression: 0 }, 0, 0);
   await runFfmpeg({
     args: buildMixArgs({
+      ...filterInput({ offsetMs, levels, reverb }),
       vocalPath: vocal,
       accompanimentPath: accompaniment,
       outputPath: output,
       title: '测试作品',
-      offsetMs,
-      levels,
-      reverb,
     }),
     timeoutMs: 120_000,
     label: '测试混音',
@@ -73,23 +84,22 @@ describe('混音纯逻辑', () => {
 
   it('用户音量滑块乘在归一化增益之上', () => {
     // +6dB ≈ ×2
-    const levels = computeLevels({ vocalGain: 0.5, accompGain: 2 }, 6.0206, -6.0206);
+    const levels = computeLevels({ vocalGain: 0.5, accompGain: 2, compression: 0 }, 6.0206, -6.0206);
     assert.ok(Math.abs(levels.vocalLinear - 1) < 0.001, `实际 ${levels.vocalLinear}`);
     assert.ok(Math.abs(levels.accompLinear - 1) < 0.001, `实际 ${levels.accompLinear}`);
   });
 
   it('音量被夹在 0–4 之间，不会因为脏参数炸掉', () => {
-    assert.equal(computeLevels({ vocalGain: 100, accompGain: 100 }, 30, 30).vocalLinear, 4);
-    assert.equal(computeLevels({ vocalGain: -5, accompGain: -5 }, 0, 0).vocalLinear, 0);
-    assert.equal(computeLevels({ vocalGain: Number.NaN, accompGain: 1 }, 0, 0).vocalLinear, 1);
+    assert.equal(computeLevels({ vocalGain: 100, accompGain: 100, compression: 0 }, 30, 30).vocalLinear, 4);
+    assert.equal(computeLevels({ vocalGain: -5, accompGain: -5, compression: 0 }, 0, 0).vocalLinear, 0);
+    assert.equal(
+      computeLevels({ vocalGain: Number.NaN, accompGain: 1, compression: 0 }, 0, 0).vocalLinear,
+      1,
+    );
   });
 
   it('正偏移：adelay 挂人声分支（挂错地方等于没对齐）', () => {
-    const filter = buildMixFilter({
-      offsetMs: 500,
-      levels: { vocalLinear: 1, accompLinear: 1 },
-      reverb: 'dry',
-    });
+    const filter = buildMixFilter(filterInput({ offsetMs: 500 }));
     const [vocalBranch, accompBranch] = filter.split(';');
 
     assert.match(vocalBranch!, /^\[0:a\]/);
@@ -100,11 +110,7 @@ describe('混音纯逻辑', () => {
   });
 
   it('负偏移：adelay 挂伴奏分支（延后伴奏 ≡ 把人声提前）', () => {
-    const filter = buildMixFilter({
-      offsetMs: -350,
-      levels: { vocalLinear: 1, accompLinear: 1 },
-      reverb: 'dry',
-    });
+    const filter = buildMixFilter(filterInput({ offsetMs: -350 }));
     const [vocalBranch, accompBranch] = filter.split(';');
 
     assert.doesNotMatch(vocalBranch!, /adelay/, '人声分支不该被延迟');
@@ -115,12 +121,29 @@ describe('混音纯逻辑', () => {
   });
 
   it('偏移为 0 时不加 adelay；混响按档次切换', () => {
-    const dry = buildMixFilter({ offsetMs: 0, levels: { vocalLinear: 1, accompLinear: 1 }, reverb: 'dry' });
+    const dry = buildMixFilter(filterInput());
     assert.doesNotMatch(dry, /adelay/);
     assert.doesNotMatch(dry, /aecho/);
 
-    const hall = buildMixFilter({ offsetMs: 0, levels: { vocalLinear: 1, accompLinear: 1 }, reverb: 'hall' });
+    const hall = buildMixFilter(filterInput({ reverb: 'hall' }));
     assert.match(hall, /aecho=/);
+  });
+
+  it('均衡三段只在非中性时挂上，且频率与前端 BiquadFilterNode 一致', () => {
+    const neutral = buildMixFilter(filterInput());
+    assert.doesNotMatch(neutral, /equalizer=/, '全 0 不该挂均衡滤镜');
+
+    const shaped = buildMixFilter(filterInput({ eqLowDb: 3, eqMidDb: -2, eqHighDb: 2.5 }));
+    const vocalBranch = shaped.split(';')[0]!;
+    // 三段频率必须来自共享的 EQ_BANDS（前端高/中/低架用的是同一组数值）
+    assert.match(vocalBranch, new RegExp(`equalizer=f=${EQ_BANDS.low.frequency}:`));
+    assert.match(vocalBranch, new RegExp(`equalizer=f=${EQ_BANDS.mid.frequency}:`));
+    assert.match(vocalBranch, new RegExp(`equalizer=f=${EQ_BANDS.high.frequency}:`));
+    assert.match(vocalBranch, /g=3\.00/);
+    assert.match(vocalBranch, /g=-2\.00/);
+    assert.match(vocalBranch, /g=2\.50/);
+    // 均衡是零延迟的 biquad，必须留在混音图内（带延迟的处理才去预处理 pass）
+    assert.doesNotMatch(shaped.split(';')[1]!, /equalizer=/, '伴奏不该被均衡');
   });
 });
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
-import type { Request, RequestHandler, Response } from 'express';
+import type { Request, Response } from 'express';
 import multer from 'multer';
 import { createLogger } from './logger.ts';
 import { TMP_DIR } from './paths.ts';
@@ -45,7 +45,7 @@ async function discardUpload(file?: Express.Multer.File): Promise<void> {
  * 临时目录 + 随机文件名、单文件大小上限、字段缺失、临时文件清理、业务异常 → 400。
  * 单机自用不需要多文件上传，所以只支持 single(field)。
  */
-export function uploadEndpoint(options: UploadEndpointOptions): RequestHandler {
+export function uploadEndpoint(options: UploadEndpointOptions): (req: Request, res: Response) => void {
   const receive = multer({
     storage: multer.diskStorage({
       destination: (_req, _file, callback) => callback(null, TMP_DIR),
@@ -79,10 +79,15 @@ export function uploadEndpoint(options: UploadEndpointOptions): RequestHandler {
         try {
           await options.handle(req, res, file);
         } catch (error) {
-          // 先把临时文件清干净再回 400，避免 tmp 里留下一份半成品
+          // 先把临时文件清干净再回错，避免 tmp 里留下一份半成品
           await discardUpload(file);
           log.error(options.logMessage, { error });
-          res.status(400).json({ error: error instanceof Error ? error.message : '未知错误' });
+          // 业务层可以用 status 指定状态码（例如入库时的 400 / 404）；
+          // 没有就按 400 —— 上传路径上的失败基本都是「你给的文件有问题」
+          const status = (error as { status?: number } | null)?.status ?? 400;
+          res
+            .status(status)
+            .json({ error: error instanceof Error ? error.message : '未知错误' });
           return;
         }
         await discardUpload(file);

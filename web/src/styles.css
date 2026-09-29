@@ -478,6 +478,24 @@ select {
   width: 100%;
 }
 
+/* 歌词编辑区要纵向排开，不能再按单行铺 */
+.edit-form-stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.lyrics-textarea {
+  width: 100%;
+  min-height: 132px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+
 .text-input,
 .select-input {
   background: var(--bg-input);
@@ -792,4 +810,160 @@ input[type='range']:disabled::-webkit-slider-thumb {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ------------------------------ 跟唱歌词 ------------------------------ */
+
+/*
+ * 行高 34px 与 web/src/components/LyricsView.tsx 的 LYRIC_LINE_HEIGHT 必须一致 ——
+ * 滚动位置是按「行下标 × 行高」算出来的，改一边就要改另一边。
+ */
+.lyrics-view {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  /* 上下淡出，歌词进出画面不生硬 */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    #000 22%,
+    #000 78%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 78%, transparent 100%);
+}
+
+/* 视频伴奏时叠在画面上：半透明底 + 底部渐变压暗，保证字看得清 */
+.lyrics-view-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 12px;
+  background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, 0.72));
+  padding: 6px 0;
+}
+
+.lyrics-track {
+  display: flex;
+  flex-direction: column;
+  /* 行切换时的平滑滚动；offsets 变化靠这个 transition 而不是 JS 补间 */
+  transition: transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: transform;
+}
+
+.lyric-line {
+  height: 34px;
+  font-size: 17px;
+  font-weight: 500;
+  text-align: center;
+  padding: 0 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  transition: color 180ms ease, transform 180ms ease, font-size 180ms ease;
+}
+
+.lyric-future {
+  color: var(--text-faint);
+  opacity: 0.7;
+}
+
+.lyric-past {
+  color: var(--text-dim);
+  opacity: 0.55;
+}
+
+/* 当前行：放大 + 主色高亮，一眼能看到唱到哪了 */
+.lyric-active {
+  color: var(--accent-2);
+  font-size: 21px;
+  font-weight: 700;
+  text-shadow: 0 0 18px rgba(56, 217, 255, 0.45);
+}
+
+.lyric-seekable {
+  cursor: pointer;
+}
+
+.lyric-seekable:hover {
+  color: var(--text);
+}
+
+.lyric-gap {
+  color: var(--text-faint);
+  letter-spacing: 4px;
+  opacity: 0.6;
+}
+
+/* --------------------------------- 点歌台 --------------------------------- */
+
+.library-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.library-source-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.library-config-sample {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin: 10px 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  color: var(--accent-2);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* ------------------------------ 混音面板分组 ------------------------------ */
+
+.mix-group {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 4px;
+}
+
+.mix-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 4px 0;
+  list-style: none;
+  user-select: none;
+}
+
+/* 去掉默认三角，换一个随展开状态旋转的小箭头 */
+.mix-group-head::-webkit-details-marker {
+  display: none;
+}
+
+.mix-group-head::before {
+  content: '▸';
+  color: var(--text-faint);
+  margin-right: 6px;
+  transition: transform 150ms ease;
+  display: inline-block;
+}
+
+.mix-group[open] > .mix-group-head::before {
+  transform: rotate(90deg);
+}
+
+.mix-group-body {
+  padding: 8px 0 12px;
 }
