@@ -3,7 +3,8 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { runFfmpeg } from '../server/src/ffmpeg.ts';
 import { measureLoudness, normalizeGainDb } from '../server/src/loudness.ts';
-import { buildMixArgs, buildMixFilter, computeLevels, effectiveOffsetMs } from '../server/src/mix.ts';
+import { buildMixArgs, buildMixFilter, computeLevels } from '../server/src/mix.ts';
+import { effectiveOffsetMs, mixTimeline } from '../shared/mix.ts';
 import { MIX_LIMITS } from '../shared/types.ts';
 import { cleanupDir, ffmpegOk, makeTempDir, sineArgs, summarize } from './helpers.ts';
 
@@ -43,20 +44,31 @@ async function mixTo(outputName: string, offsetMs: number, vocalGain = 1, reverb
 }
 
 describe('混音纯逻辑', () => {
-  it('对齐偏移被夹在合理范围内', () => {
-    assert.equal(effectiveOffsetMs(300, 0), 300);
-    assert.equal(effectiveOffsetMs(300, -500), 0, '负偏移夹到 0');
+  it('对齐偏移 = 用户微调 − 自动间隔，夹在 ±30s（负偏移是正常用法）', () => {
+    // 旧公式是 auto + user 且钳到 [0, 30s]：负修正永远无效，拖拍修不好
+    assert.equal(effectiveOffsetMs(300, 0), -300, '自动间隔要从人声头部扣掉');
+    assert.equal(effectiveOffsetMs(300, -500), -800, '负偏移叠加，不再钳到 0');
     assert.equal(effectiveOffsetMs(0, 250), 250);
-    assert.equal(effectiveOffsetMs(29_900, 500), 30_000, '上限夹到 30s');
+    assert.equal(effectiveOffsetMs(0, 60_000), 30_000, '上限夹到 30s');
+    assert.equal(effectiveOffsetMs(29_900, -500), -30_000, '下限夹到 -30s');
+    assert.equal(effectiveOffsetMs(500, -60_000), -30_000, '下限钳制');
     assert.equal(effectiveOffsetMs(Number.NaN, 100), 100, 'NaN 当成 0 处理');
+    assert.equal(effectiveOffsetMs(300, Number.NaN), -300, 'user NaN 也当成 0');
   });
 
   it('人工微调范围是 ±1000ms', () => {
     assert.equal(MIX_LIMITS.userOffsetMs.min, -1000);
     assert.equal(MIX_LIMITS.userOffsetMs.max, 1000);
     assert.equal(effectiveOffsetMs(0, 1000), 1000, '+1000ms 微调要生效');
-    assert.equal(effectiveOffsetMs(1000, 1000), 2000, '自动值 + 人工微调叠加');
-    assert.equal(effectiveOffsetMs(0, -1000), 0, '负偏移仍夹到 0');
+    assert.equal(effectiveOffsetMs(1000, 1000), 0, '自动值 − 人工微调');
+    assert.equal(effectiveOffsetMs(0, -1000), -1000, '负偏移不再被钳掉');
+  });
+
+  it('mixTimeline：正偏移延后人声，负偏移延后伴奏（ffmpeg 没有负 adelay）', () => {
+    assert.deepEqual(mixTimeline(0), { vocalDelayMs: 0, accompDelayMs: 0 });
+    assert.deepEqual(mixTimeline(500), { vocalDelayMs: 500, accompDelayMs: 0 });
+    assert.deepEqual(mixTimeline(-500), { vocalDelayMs: 0, accompDelayMs: 500 });
+    assert.deepEqual(mixTimeline(Number.NaN), { vocalDelayMs: 0, accompDelayMs: 0 });
   });
 
   it('用户音量滑块乘在归一化增益之上', () => {
@@ -72,7 +84,7 @@ describe('混音纯逻辑', () => {
     assert.equal(computeLevels({ vocalGain: Number.NaN, accompGain: 1 }, 0, 0).vocalLinear, 1);
   });
 
-  it('adelay 挂在人声分支上（挂错地方等于没对齐）', () => {
+  it('正偏移：adelay 挂人声分支（挂错地方等于没对齐）', () => {
     const filter = buildMixFilter({
       offsetMs: 500,
       levels: { vocalLinear: 1, accompLinear: 1 },
@@ -85,6 +97,21 @@ describe('混音纯逻辑', () => {
     assert.doesNotMatch(accompBranch!, /adelay/, '伴奏分支不该被延迟');
     assert.match(filter, /amix=inputs=2:duration=first:normalize=0/);
     assert.match(filter, /alimiter=limit=0\.95/);
+  });
+
+  it('负偏移：adelay 挂伴奏分支（延后伴奏 ≡ 把人声提前）', () => {
+    const filter = buildMixFilter({
+      offsetMs: -350,
+      levels: { vocalLinear: 1, accompLinear: 1 },
+      reverb: 'dry',
+    });
+    const [vocalBranch, accompBranch] = filter.split(';');
+
+    assert.doesNotMatch(vocalBranch!, /adelay/, '人声分支不该被延迟');
+    assert.match(accompBranch!, /^\[1:a\]/);
+    assert.match(accompBranch!, /adelay=delays=350:all=1/);
+    // 人声仍是 amix 第一路：duration=first 的长度口径不变
+    assert.match(filter, /\[v\]\[a\]amix=inputs=2:duration=first/);
   });
 
   it('偏移为 0 时不加 adelay；混响按档次切换', () => {
@@ -123,6 +150,17 @@ describe('混音端到端（真实 ffmpeg）', () => {
     assert.ok(
       durationSec! > 2.2 && durationSec! < 2.9,
       `人声 2s + 偏移 0.5s 应约为 2.5s，实际 ${durationSec}s`,
+    );
+  });
+
+  it('负偏移：延后伴奏，成品长度仍跟人声走（duration=first）', async () => {
+    // 伴奏 3s、人声 2s、偏移 -0.5s → 伴奏晚 0.5s 进场，成品仍约 2s
+    const output = await mixTo('out-neg-offset.mp3', -500, 1, 'dry');
+    const { durationSec } = await summarize(output);
+
+    assert.ok(
+      durationSec! > 1.7 && durationSec! < 2.4,
+      `负偏移不该拉长成品，应约为 2s，实际 ${durationSec}s`,
     );
   });
 

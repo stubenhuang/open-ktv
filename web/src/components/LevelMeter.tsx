@@ -5,7 +5,6 @@ interface Props {
   /** 传 null 表示引擎还没建好 */
   engine: KtvEngine | null;
   active: boolean;
-  height?: number;
 }
 
 /**

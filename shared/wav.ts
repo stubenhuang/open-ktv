@@ -3,22 +3,10 @@
  *
  * 为什么不用 MediaRecorder 出 webm/opus：opus 编码器有固有的前导延迟，
  * 而我们要靠「采样点」跟伴奏对齐，WAV 是无损且采样点精确的。
+ *
+ * 采集链路本身必然是单声道（AudioWorkletNode 用 channelCount: 1 显式下混，
+ * pcm-capture 也只取 inputs[0][0]），所以这里没有多声道下混的分支。
  */
-
-/** 多声道下混成单声道（麦克风采集基本都是单声道，这里只是兜底） */
-export function downmixToMono(channels: Float32Array[]): Float32Array {
-  if (channels.length === 1) return channels[0]!;
-  if (channels.length === 0) return new Float32Array(0);
-
-  const length = Math.min(...channels.map((channel) => channel.length));
-  const output = new Float32Array(length);
-  for (let i = 0; i < length; i += 1) {
-    let sum = 0;
-    for (const channel of channels) sum += channel[i]!;
-    output[i] = sum / channels.length;
-  }
-  return output;
-}
 
 /** 拼接多个分片（AudioWorklet 是一块一块吐出来的） */
 export function concatFloat32(chunks: Float32Array[]): Float32Array {
@@ -76,17 +64,4 @@ export function encodeWavBytes(samples: Float32Array, sampleRate: number): Uint8
 
 export function encodeWavBlob(samples: Float32Array, sampleRate: number): Blob {
   return new Blob([encodeWavBytes(samples, sampleRate)], { type: 'audio/wav' });
-}
-
-/** 把 WAV 数据解回 Float32，主要给测试做往返校验 */
-export function decodeWavBytes(bytes: Uint8Array): { samples: Float32Array; sampleRate: number } {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const sampleRate = view.getUint32(24, true);
-  const dataSize = view.getUint32(40, true);
-  const count = dataSize / 2;
-  const samples = new Float32Array(count);
-  for (let i = 0; i < count; i += 1) {
-    samples[i] = view.getInt16(44 + i * 2, true) / 0x8000;
-  }
-  return { samples, sampleRate };
 }

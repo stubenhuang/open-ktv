@@ -82,8 +82,8 @@ describe('mixWorkToMp3', () => {
     assert.equal(result.outputPath, mixJob.workMp3Path(workId));
     assert.equal(result.outputPath, path.join(paths.WORKS_DIR, `${workId}.mp3`));
 
-    // offsetMs = autoOffsetMs + userOffsetMs
-    assert.equal(result.offsetMs, 150);
+    // offsetMs = userOffsetMs − autoOffsetMs（负偏移：人声提前 150ms）
+    assert.equal(result.offsetMs, -150);
 
     // 增益是有限数（正弦波样本响度可测）
     assert.ok(Number.isFinite(result.vocalGainDb), `vocalGainDb=${result.vocalGainDb}`);

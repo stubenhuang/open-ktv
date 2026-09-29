@@ -297,12 +297,6 @@ select {
   border-color: rgba(255, 181, 46, 0.35);
 }
 
-.alert-info {
-  color: #b8e9ff;
-  background: var(--accent-2-soft);
-  border-color: rgba(56, 217, 255, 0.3);
-}
-
 .muted {
   color: var(--text-dim);
 }
@@ -771,17 +765,17 @@ input[type='range']:disabled::-webkit-slider-thumb {
   font-weight: 600;
 }
 
-.detail-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+/* 作品编辑页：单列列表式排版（实时试听 → 混音调整） */
+.detail-stack {
+  display: flex;
+  flex-direction: column;
   gap: 20px;
-  align-items: start;
 }
 
-@media (max-width: 940px) {
-  .detail-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
+/* 从详情页点「合成」跳回作品库时，目标卡片的高亮 */
+.work-card-focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .spin {

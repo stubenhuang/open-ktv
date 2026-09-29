@@ -15,7 +15,10 @@ export type ProxyKind = 'none' | 'video' | 'audio';
 
 export type WorkStatus = 'mixing' | 'ready' | 'failed';
 
-export type ReverbKind = 'dry' | 'room' | 'hall' | 'stage';
+/** 混响档位；数组本身就是唯一来源，前后端都从这里取顺序（服务端另用它做白名单） */
+export const REVERB_KINDS = ['dry', 'room', 'hall', 'stage'] as const;
+
+export type ReverbKind = (typeof REVERB_KINDS)[number];
 
 /**
  * 最近一次成功混音时实测的两轨归一化增益（dB）。
@@ -31,7 +34,7 @@ export interface PreviewParams {
   vocalGain: number;
   accompGain: number;
   reverb: ReverbKind;
-  /** 合成后的总对齐偏移（autoOffsetMs + userOffsetMs，已钳制），ms */
+  /** 合成后的总对齐偏移（userOffsetMs − autoOffsetMs，已钳制），ms；可正可负 */
   offsetMs: number;
   /** 服务端实测归一化增益；null = 老作品，按 0dB 基准 */
   levels: WorkLevels | null;
@@ -43,7 +46,7 @@ export interface MixParams {
   /** 伴奏音量 0–2 */
   accompGain: number;
   reverb: ReverbKind;
-  /** 人声对齐微调 -1000–1000 ms */
+  /** 人声对齐微调 -1000–1000 ms：正值=人声更晚（抢拍时用），负值=人声更早（拖拍时用） */
   userOffsetMs: number;
 }
 
@@ -74,6 +77,11 @@ export interface Work {
   title: string;
   /** 秒 */
   vocalDuration: number;
+  /**
+   * 自动测得的「起录 → 伴奏真正起播」间隔（ms，恒为正数 G）。
+   * 干声 WAV 的 t=0 是起录时刻，混音时人声要提前 G 才对得上伴奏时间轴，
+   * 因此最终偏移 = mixParams.userOffsetMs − autoOffsetMs（可为负）。
+   */
   autoOffsetMs: number;
   mixParams: MixParams;
   /** 最近一次成功混音的实测增益；实时预览对齐成品电平用，老作品为 null */

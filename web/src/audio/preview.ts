@@ -1,11 +1,13 @@
 import type { MixParams, PreviewParams, ReverbKind, WorkLevels } from '../../../shared/types';
 import {
   REVERB_PREVIEW,
-  effectiveOffsetMs,
+  mixTimeline,
   previewDurationSec,
   previewLinearGains,
+  toPreviewParams,
 } from '../../../shared/mix';
 import { getAudioContext } from './engine';
+import { errorMessage } from '../utils';
 
 /**
  * 实时试听引擎（纯客户端，零网络请求）。
@@ -24,8 +26,9 @@ import { getAudioContext } from './engine';
  *  - vocalGain/accompGain：实测归一化增益 × 用户滑块（shared/mix.ts 的公式）；
  *  - convolver：程序生成的指数衰减噪声 IR，对服务端 aecho 四档混响的听感近似；
  *  - limiter：DynamicsCompressor，近似服务端末端 alimiter=0.95，防预览削波；
- *  - 对齐偏移不用 DelayNode（改 delayTime 会有爆音），改用「人声晚
- *    offsetMs 秒起播」的调度方式；偏移变化时按当前位置重排两轨。
+ *  - 对齐偏移不用 DelayNode（改 delayTime 会有爆音），改用「晚到的一轨晚起播」
+ *    的调度方式（与服务端 mixTimeline 同一套符号规则：offset ≥ 0 人声晚进，
+ *    offset < 0 伴奏晚进）；偏移变化时按当前位置重排两轨。
  *
  * 已知限制：整曲 decodeAudioData 进内存，接近 15 分钟的录音解码后约几百 MB
  * Float32（单机自用可接受）。
@@ -100,8 +103,8 @@ export class PreviewEngine {
     levels: null,
   };
 
-  /** 播放时：伴奏起播的 context 时间；暂停时：null */
-  private accompStartCtxTime: number | null = null;
+  /** 播放时：本次起播的 context 时间；暂停时：null */
+  private passStartCtxTime: number | null = null;
   /** 起播时所在的混音时间轴位置（秒） */
   private startPositionSec = 0;
   /** 自然播完 vs 手动停止：onended 两种都会触发，靠这个区分 */
@@ -154,31 +157,27 @@ export class PreviewEngine {
   static async create(options: PreviewEngineOptions): Promise<PreviewEngine> {
     const [vocalBuffer, accompBuffer] = await Promise.all([
       fetchDecode(options.vocalUrl, '干声').catch((error: unknown) => {
-        throw new Error(
-          `干声解码失败：${error instanceof Error ? error.message : String(error)}`,
-        );
+        throw new Error(`干声解码失败：${errorMessage(error)}`);
       }),
       fetchDecode(options.accompUrl, '伴奏').catch((error: unknown) => {
-        throw new Error(
-          `伴奏解码失败：${error instanceof Error ? error.message : String(error)}`,
-        );
+        throw new Error(`伴奏解码失败：${errorMessage(error)}`);
       }),
     ]);
     return new PreviewEngine(vocalBuffer, accompBuffer);
   }
 
   get playing(): boolean {
-    return this.accompStartCtxTime !== null;
+    return this.passStartCtxTime !== null;
   }
 
   /** 混音时间轴位置（秒）：0 = 伴奏起点 */
   get positionSec(): number {
-    if (this.accompStartCtxTime === null) return this.startPositionSec;
-    const elapsed = this.context.currentTime - this.accompStartCtxTime;
+    if (this.passStartCtxTime === null) return this.startPositionSec;
+    const elapsed = this.context.currentTime - this.passStartCtxTime;
     return Math.min(this.durationSec, Math.max(0, this.startPositionSec + elapsed));
   }
 
-  /** 总时长 = 对齐偏移 + 干声时长（与服务端 duration=first 一致） */
+  /** 总时长 = 干声时长 + max(0, 对齐偏移)（与服务端 duration=first 一致） */
   get durationSec(): number {
     return previewDurationSec(this.vocalBuffer.duration, this.params.offsetMs);
   }
@@ -212,17 +211,13 @@ export class PreviewEngine {
    * 更新混音参数（实时，不发请求）。
    *  - 音量/混响：立即平滑生效，不打断播放；
    *  - 对齐偏移：播放中防抖重排两轨（重排 seam < 50ms）。
+   *
+   * 参数合成走共享的 toPreviewParams，和服务端用同一套偏移/增益公式。
    */
   setParams(params: MixParams, autoOffsetMs: number, levels: WorkLevels | null): void {
-    const nextOffsetMs = effectiveOffsetMs(autoOffsetMs, params.userOffsetMs);
-    const offsetChanged = nextOffsetMs !== this.params.offsetMs;
-    this.params = {
-      vocalGain: params.vocalGain,
-      accompGain: params.accompGain,
-      reverb: params.reverb,
-      offsetMs: nextOffsetMs,
-      levels,
-    };
+    const next = toPreviewParams(params, autoOffsetMs, levels);
+    const offsetChanged = next.offsetMs !== this.params.offsetMs;
+    this.params = next;
     this.applyAudioParams();
 
     if (offsetChanged && this.playing) {
@@ -282,31 +277,42 @@ export class PreviewEngine {
 
   /**
    * 从混音时间轴 position 处起播两轨。
-   * 伴奏从 position 处续；人声在 time = offsetMs/1000 处进入，
-   * 所以当前已在人声区间内时人声也跟着续，还没到则延后起播。
+   *
+   * 符号规则与服务端 mixTimeline 一致（shared/mix.ts）：
+   *  - offset ≥ 0：人声晚 V0 = offset 秒进入，伴奏从 position 处续；
+   *  - offset < 0：伴奏晚 A0 = |offset| 秒进入，人声从 position 处续。
+   * 任一点还没到就延后起播，已经过了就按对应 buffer 偏移续播。
    */
   private startSources(positionSec: number): void {
     this.stopSources();
 
     const now = this.context.currentTime + START_LEAD_SEC;
-    const vocalLeadSec = this.params.offsetMs / 1000;
+    // 谁进得晚由共享的 mixTimeline 决定（服务端 adelay 用的是同一套规则）
+    const { vocalDelayMs, accompDelayMs } = mixTimeline(this.params.offsetMs);
+    const vocalEnterSec = vocalDelayMs / 1000;
+    const accompEnterSec = accompDelayMs / 1000;
 
-    this.accompStartCtxTime = now;
+    this.passStartCtxTime = now;
     this.startPositionSec = positionSec;
 
     const accompSource = this.context.createBufferSource();
     accompSource.buffer = this.accompBuffer;
     accompSource.connect(this.accompGain);
-    accompSource.start(now, Math.min(positionSec, this.accompBuffer.duration));
+    accompSource.start(
+      now + Math.max(0, accompEnterSec - positionSec),
+      Math.min(Math.max(0, positionSec - accompEnterSec), this.accompBuffer.duration),
+    );
     this.accompSource = accompSource;
 
-    // 人声起播时刻 = max(now, 人声起点)；buffer 偏移 = 已经播过人声的部分
     const vocalSource = this.context.createBufferSource();
     vocalSource.buffer = this.vocalBuffer;
     vocalSource.connect(this.vocalGain);
     this.stopping = false;
     vocalSource.onended = () => this.handleVocalEnded();
-    vocalSource.start(now + Math.max(0, vocalLeadSec - positionSec), Math.max(0, positionSec - vocalLeadSec));
+    vocalSource.start(
+      now + Math.max(0, vocalEnterSec - positionSec),
+      Math.min(Math.max(0, positionSec - vocalEnterSec), this.vocalBuffer.duration),
+    );
     this.vocalSource = vocalSource;
   }
 
@@ -318,7 +324,7 @@ export class PreviewEngine {
     this.vocalSource?.disconnect();
     this.vocalSource?.stop();
     this.vocalSource = null;
-    this.accompStartCtxTime = null;
+    this.passStartCtxTime = null;
   }
 
   /** 干声播完 = 成品播完（duration=first）：整体停下并通知 UI */

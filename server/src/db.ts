@@ -1,13 +1,14 @@
 import { DatabaseSync } from 'node:sqlite';
-import type {
-  MixParams,
-  ProxyKind,
-  ReverbKind,
-  TrackKind,
-  TrackStatus,
-  Work,
-  WorkLevels,
-  WorkStatus,
+import {
+  DEFAULT_MIX_PARAMS,
+  type MixParams,
+  type ProxyKind,
+  type ReverbKind,
+  type TrackKind,
+  type TrackStatus,
+  type Work,
+  type WorkLevels,
+  type WorkStatus,
 } from '../../shared/types.ts';
 import { createLogger } from './logger.ts';
 import { DB_FILE, ensureDirs } from './paths.ts';
@@ -45,6 +46,8 @@ interface WorkRow {
   error: string | null;
   created_at: number;
   updated_at: number;
+  /** 对齐公式版本：1 = 旧公式（offset = auto + user，人声被 adelay 推后）；2 = 新公式（offset = user − auto，可为负） */
+  align_ver: number;
 }
 
 /** 完整伴奏记录（含磁盘路径，只在服务端内部使用） */
@@ -129,6 +132,46 @@ export function initDb(): void {
     db.exec('ALTER TABLE works ADD COLUMN levels TEXT');
     log.info('老库迁移：works 表已补上 levels 列');
   }
+  if (!workColumns.some((column) => column.name === 'align_ver')) {
+    db.exec('ALTER TABLE works ADD COLUMN align_ver INTEGER NOT NULL DEFAULT 1');
+    log.info('老库迁移：works 表已补上 align_ver 列');
+    migrateLegacyAlignment(db);
+  }
+}
+
+/**
+ * 对齐公式迁移（一次性，只处理 align_ver = 1 的老作品）。
+ *
+ * 旧公式把干声**推后** `auto + userOld` 毫秒（符号搞反了，人声整体拖拍约 2×auto，
+ * 且总量钳在 [0, MAX]——往负方向拖最多拖到 0，拖拍永远修不好）；
+ * 新公式是 `user − auto`（人声提前 auto，可为负）。老作品的 auto_offset_ms
+ * 本身就是「起录 → 伴奏起播」间隔的近似值，沿用它，userOffsetMs 这样换算：
+ *
+ *  · `auto + userOld ≥ 0`（没被钳过）：相对微调原样保留，
+ *    `E_new = userOld − auto`——userOld = 0 的常见情况正好落在 −auto（正确对齐）；
+ *  · `auto + userOld < 0`（当时已被拖拍逼着拖到下限）：直接给满自动修正，
+ *    `userNew = 0 → E_new = −auto`——这正是他们当时想要而够不着的位置。
+ *
+ * 换算后 align_ver 置 2，之后按新公式读写。
+ */
+function migrateLegacyAlignment(db: DatabaseSync): void {
+  const rows = db
+    .prepare('SELECT id, auto_offset_ms, mix_params FROM works WHERE align_ver = 1')
+    .all() as unknown as { id: string; auto_offset_ms: number; mix_params: string }[];
+  const update = db.prepare('UPDATE works SET mix_params = ?, align_ver = 2 WHERE id = ?');
+  for (const row of rows) {
+    const params = parseMixParams(row.mix_params);
+    const auto = Number.isFinite(Number(row.auto_offset_ms)) ? Number(row.auto_offset_ms) : 0;
+    const userOld = Number.isFinite(params.userOffsetMs) ? params.userOffsetMs : 0;
+    const userNew = auto + userOld < 0 ? 0 : Math.round(userOld);
+    update.run(JSON.stringify({ ...params, userOffsetMs: userNew }), row.id);
+  }
+  db.exec('UPDATE works SET align_ver = 2 WHERE align_ver = 1');
+  if (rows.length > 0) {
+    log.info(`对齐公式迁移完成：${rows.length} 个老作品已换算到新公式`, {
+      ids: rows.map((row) => row.id),
+    });
+  }
 }
 
 /**
@@ -179,7 +222,7 @@ function parseMixParams(raw: string): MixParams {
       userOffsetMs: Number(parsed.userOffsetMs ?? 0),
     };
   } catch {
-    return { vocalGain: 1, accompGain: 1, reverb: 'room', userOffsetMs: 0 };
+    return { ...DEFAULT_MIX_PARAMS };
   }
 }
 
@@ -211,6 +254,30 @@ function toWork(row: WorkRow): WorkRecord {
     error: row.error,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
+  };
+}
+
+/**
+ * 累积一次「列 = 值」的 UPDATE。
+ * tracks / works 的 patch 都是「只更新传进来的字段」，拼装逻辑没有区别。
+ */
+function updateBuilder(table: 'tracks' | 'works') {
+  const sets: string[] = [];
+  const values: (string | number | null)[] = [];
+
+  return {
+    set(column: string, value: string | number | null): void {
+      sets.push(`${column} = ?`);
+      values.push(value);
+    },
+    /** 一个字段都没设置就什么都不做（避免生成空的 SET） */
+    run(id: string): void {
+      if (sets.length === 0) return;
+      values.push(id);
+      connection()
+        .prepare(`UPDATE ${table} SET ${sets.join(', ')} WHERE id = ?`)
+        .run(...values);
+    },
   };
 }
 
@@ -282,26 +349,17 @@ export interface TrackPatch {
 }
 
 export function updateTrack(id: string, patch: TrackPatch): void {
-  const sets: string[] = [];
-  const values: (string | number | null)[] = [];
-  const push = (column: string, value: string | number | null) => {
-    sets.push(`${column} = ?`);
-    values.push(value);
-  };
+  const builder = updateBuilder('tracks');
 
-  if (patch.title !== undefined) push('title', patch.title);
-  if (patch.artist !== undefined) push('artist', patch.artist);
-  if (patch.playablePath !== undefined) push('playable_path', patch.playablePath);
-  if (patch.proxyKind !== undefined) push('proxy_kind', patch.proxyKind);
-  if (patch.duration !== undefined) push('duration', patch.duration);
-  if (patch.status !== undefined) push('status', patch.status);
-  if (patch.error !== undefined) push('error', patch.error);
+  if (patch.title !== undefined) builder.set('title', patch.title);
+  if (patch.artist !== undefined) builder.set('artist', patch.artist);
+  if (patch.playablePath !== undefined) builder.set('playable_path', patch.playablePath);
+  if (patch.proxyKind !== undefined) builder.set('proxy_kind', patch.proxyKind);
+  if (patch.duration !== undefined) builder.set('duration', patch.duration);
+  if (patch.status !== undefined) builder.set('status', patch.status);
+  if (patch.error !== undefined) builder.set('error', patch.error);
 
-  if (sets.length === 0) return;
-  values.push(id);
-  connection()
-    .prepare(`UPDATE tracks SET ${sets.join(', ')} WHERE id = ?`)
-    .run(...values);
+  builder.run(id);
 }
 
 export function deleteTrack(id: string): void {
@@ -333,8 +391,8 @@ export function insertWork(input: NewWork): void {
   connection()
     .prepare(
       `INSERT INTO works (id, track_id, title, vocal_path, vocal_duration, auto_offset_ms,
-                          mix_params, mp3_path, status, error, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?)`,
+                          mix_params, mp3_path, status, error, created_at, updated_at, align_ver)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, 2)`,
     )
     .run(
       input.id,
@@ -374,27 +432,19 @@ export interface WorkPatch {
 }
 
 export function updateWork(id: string, patch: WorkPatch): void {
-  const sets: string[] = [];
-  const values: (string | number | null)[] = [];
-  const push = (column: string, value: string | number | null) => {
-    sets.push(`${column} = ?`);
-    values.push(value);
-  };
+  const builder = updateBuilder('works');
 
-  if (patch.title !== undefined) push('title', patch.title);
-  if (patch.mixParams !== undefined) push('mix_params', JSON.stringify(patch.mixParams));
+  if (patch.title !== undefined) builder.set('title', patch.title);
+  if (patch.mixParams !== undefined) builder.set('mix_params', JSON.stringify(patch.mixParams));
   if (patch.levels !== undefined) {
-    push('levels', patch.levels ? JSON.stringify(patch.levels) : null);
+    builder.set('levels', patch.levels ? JSON.stringify(patch.levels) : null);
   }
-  if (patch.mp3Path !== undefined) push('mp3_path', patch.mp3Path);
-  if (patch.status !== undefined) push('status', patch.status);
-  if (patch.error !== undefined) push('error', patch.error);
+  if (patch.mp3Path !== undefined) builder.set('mp3_path', patch.mp3Path);
+  if (patch.status !== undefined) builder.set('status', patch.status);
+  if (patch.error !== undefined) builder.set('error', patch.error);
 
-  push('updated_at', Date.now());
-  values.push(id);
-  connection()
-    .prepare(`UPDATE works SET ${sets.join(', ')} WHERE id = ?`)
-    .run(...values);
+  builder.set('updated_at', Date.now());
+  builder.run(id);
 }
 
 export function deleteWork(id: string): void {

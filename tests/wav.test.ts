@@ -1,11 +1,22 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import {
-  concatFloat32,
-  decodeWavBytes,
-  downmixToMono,
-  encodeWavBytes,
-} from '../shared/wav.ts';
+import { concatFloat32, encodeWavBytes } from '../shared/wav.ts';
+
+/**
+ * 把 WAV 解回 Float32，只服务于本文件的往返校验。
+ * 生产代码只需要「编码」这一个方向（见 shared/wav.ts 的说明）。
+ */
+function decodeWavBytes(bytes: Uint8Array): { samples: Float32Array; sampleRate: number } {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const sampleRate = view.getUint32(24, true);
+  const dataSize = view.getUint32(40, true);
+  const count = dataSize / 2;
+  const samples = new Float32Array(count);
+  for (let i = 0; i < count; i += 1) {
+    samples[i] = view.getInt16(44 + i * 2, true) / 0x8000;
+  }
+  return { samples, sampleRate };
+}
 
 describe('WAV 编码', () => {
   it('写出合法的 44 字节头', () => {
@@ -67,22 +78,5 @@ describe('PCM 分片处理', () => {
       new Float32Array([4, 5]),
     ]);
     assert.deepEqual(Array.from(merged), [1, 2, 3, 4, 5]);
-  });
-
-  it('downmixToMono 对多声道取平均、长度取最短', () => {
-    const mono = downmixToMono([
-      new Float32Array([1, 0]),
-      new Float32Array([0, 1]),
-      new Float32Array([1, 1]),
-    ]);
-    assert.equal(mono.length, 2);
-    // Float32 精度，用近似比较
-    assert.ok(Math.abs(mono[0]! - 2 / 3) < 1e-6);
-    assert.ok(Math.abs(mono[1]! - 2 / 3) < 1e-6);
-  });
-
-  it('downmixToMono 单声道原样返回', () => {
-    const single = new Float32Array([0.1, 0.2]);
-    assert.equal(downmixToMono([single]), single);
   });
 });

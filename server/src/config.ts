@@ -26,13 +26,12 @@ export const AUDIO = {
   mp3Bitrate: '192k',
 } as const;
 
-/** 代理转码参数 */
+/** 代理转码参数（音频代理的 mp3 规格走 AUDIO，见 ffmpeg.ts 的 MP3_OUTPUT_ARGS） */
 export const TRANSCODE = {
   videoPreset: 'veryfast',
   videoCrf: 23,
   maxVideoWidth: 1920,
   videoAudioBitrate: '192k',
-  audioBitrate: '192k',
 } as const;
 
 export const JOB_TIMEOUT_MS = {

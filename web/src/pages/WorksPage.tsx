@@ -1,20 +1,25 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { api, workAudioUrl, type WorkListItem } from '../api';
 import { usePolling } from '../hooks/usePolling';
-import { formatDateTime, formatDuration } from '../utils';
+import { errorMessage, formatDateTime, formatDuration } from '../utils';
 
 export default function WorksPage() {
+  const location = useLocation();
   const [works, setWorks] = useState<WorkListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** 从详情页点「合成」跳回来时要定位的作品 id */
+  const focusWorkId =
+    (location.state as { focusWorkId?: string } | null | undefined)?.focusWorkId ?? null;
+  const focusedRef = useRef(false);
 
   const load = useCallback(async () => {
     try {
       setWorks(await api.listWorks());
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载作品失败');
+      setError(errorMessage(err, '加载作品失败'));
     } finally {
       setLoading(false);
     }
@@ -23,6 +28,18 @@ export default function WorksPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // 定位到目标作品：滚动到视口中央 + 高亮几秒（合成后跳回来用）
+  useEffect(() => {
+    if (!focusWorkId || focusedRef.current || loading || works.length === 0) return;
+    const card = document.querySelector(`[data-work-id="${focusWorkId}"]`);
+    if (!card) return;
+    focusedRef.current = true;
+    card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    card.classList.add('work-card-focus');
+    const timer = window.setTimeout(() => card.classList.remove('work-card-focus'), 2600);
+    return () => window.clearTimeout(timer);
+  }, [focusWorkId, loading, works]);
 
   const hasMixing = works.some((work) => work.status === 'mixing');
   usePolling(() => void load(), 1500, hasMixing);
@@ -33,7 +50,7 @@ export default function WorksPage() {
       await api.deleteWork(work.id);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '删除失败');
+      setError(errorMessage(err, '删除失败'));
     }
   };
 
@@ -60,7 +77,7 @@ export default function WorksPage() {
       ) : (
         <div className="work-list">
           {works.map((work) => (
-            <div key={work.id} className="work-card">
+            <div key={work.id} className="work-card" data-work-id={work.id}>
               <div>
                 <div className="work-card-title" title={work.title}>
                   {work.title}
@@ -89,7 +106,7 @@ export default function WorksPage() {
 
               <div className="row" style={{ gap: 8 }}>
                 <Link className="btn btn-sm" to={`/works/${work.id}`}>
-                  详情与混音
+                  调混音
                 </Link>
                 <a
                   className="btn btn-sm"

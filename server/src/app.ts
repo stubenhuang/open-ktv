@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
-import type { NextFunction, Request, Response } from 'express';
+import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { WEB_DIST_DIR } from './config.ts';
 import { queueState } from './jobs.ts';
 import { createLogger, type LogLevel } from './logger.ts';
@@ -55,24 +55,27 @@ export function createApp(): express.Express {
     res.status(404).json({ error: '接口不存在' });
   });
 
-  // 生产模式：直接托管 vite build 出来的前端
+  // 生产模式：直接托管 vite build 出来的前端；没有 dist 时同一个兜底路由给出提示
   const hasBuiltWeb = fs.existsSync(path.join(WEB_DIST_DIR, 'index.html'));
+  const serveAppShell: RequestHandler = hasBuiltWeb
+    ? // SPA 兜底：非 /api 的 GET 一律交给前端路由
+      (_req, res) => {
+        res.sendFile(path.join(WEB_DIST_DIR, 'index.html'));
+      }
+    : (_req, res) => {
+        res
+          .status(503)
+          .type('text/plain; charset=utf-8')
+          .send('前端还没构建。开发时请用 npm run dev（Vite 在 5173）；生产请先 npm run build。');
+      };
+
   if (hasBuiltWeb) {
     app.use(express.static(WEB_DIST_DIR, { index: false }));
-    // SPA 兜底：非 /api 的 GET 一律交给前端路由
-    app.get(/^\/(?!api\/).*/, (_req, res) => {
-      res.sendFile(path.join(WEB_DIST_DIR, 'index.html'));
-    });
     httpLog.debug('检测到 web/dist，静态托管已开启');
   } else {
-    app.get(/^\/(?!api\/).*/, (_req, res) => {
-      res
-        .status(503)
-        .type('text/plain; charset=utf-8')
-        .send('前端还没构建。开发时请用 npm run dev（Vite 在 5173）；生产请先 npm run build。');
-    });
     httpLog.warn('未检测到 web/dist，页面请求会返回 503（开发模式请访问 Vite）');
   }
+  app.get(/^\/(?!api\/).*/, serveAppShell);
 
   // 统一错误出口：JSON 解析失败、multer 之外漏出的异常都在这里收口
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {

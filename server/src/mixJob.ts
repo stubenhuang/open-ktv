@@ -1,16 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { effectiveOffsetMs, previewDurationSec } from '../../shared/mix.ts';
 import { JOB_TIMEOUT_MS } from './config.ts';
 import type { TrackRecord, WorkRecord } from './db.ts';
 import { runFfmpeg } from './ffmpeg.ts';
 import { createLogger } from './logger.ts';
 import { measureLoudness, normalizeGainDb } from './loudness.ts';
-import {
-  buildMixArgs,
-  computeLevels,
-  effectiveOffsetMs,
-  LOUDNESS_TARGET,
-} from './mix.ts';
+import { buildMixArgs, computeLevels, LOUDNESS_TARGET, type MixLevels } from './mix.ts';
 import { TMP_DIR, WORKS_DIR } from './paths.ts';
 
 const log = createLogger('mix');
@@ -43,7 +39,7 @@ export function forgetTrackLoudness(trackId: string): void {
 export interface MixResult {
   outputPath: string;
   offsetMs: number;
-  levels: { vocalLinear: number; accompLinear: number };
+  levels: MixLevels;
   vocalGainDb: number;
   accompGainDb: number;
 }
@@ -97,7 +93,9 @@ export async function mixWorkToMp3(input: {
         reverb: work.mixParams.reverb,
       }),
       timeoutMs: JOB_TIMEOUT_MS.mix,
-      totalDurationSec: Math.max(1, work.vocalDuration + offsetMs / 1000),
+      // 成品时长 = 干声时长 + max(0, 偏移)；负偏移延后的是伴奏，人声没被推后
+      // （与 duration=first 一致，公式与前端预览共用 shared/mix.ts）
+      totalDurationSec: Math.max(1, previewDurationSec(work.vocalDuration, offsetMs)),
       onProgress,
       label: '混音',
     });

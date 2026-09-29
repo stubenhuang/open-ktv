@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ApiError, api, trackMediaUrl, type TrackListItem } from '../api';
+import { api, trackMediaUrl, type TrackListItem } from '../api';
 import { usePolling } from '../hooks/usePolling';
-import { formatBytes, formatDuration } from '../utils';
+import { errorMessage, formatBytes, formatDuration } from '../utils';
 
 interface UploadItem {
   key: string;
@@ -34,7 +34,7 @@ export default function LibraryPage() {
       setTracks(list);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载伴奏列表失败');
+      setError(errorMessage(err, '加载伴奏列表失败'));
     } finally {
       setLoading(false);
     }
@@ -78,9 +78,7 @@ export default function LibraryPage() {
           await api.uploadTrack(file, (ratio) => patchUpload(item.key, { progress: ratio }));
           patchUpload(item.key, { progress: 1, done: true });
         } catch (err) {
-          const message =
-            err instanceof ApiError ? err.message : err instanceof Error ? err.message : '上传失败';
-          patchUpload(item.key, { error: message });
+          patchUpload(item.key, { error: errorMessage(err, '上传失败') });
         }
         void load();
       }
@@ -98,7 +96,7 @@ export default function LibraryPage() {
       if (previewId === track.id) setPreviewId(null);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '删除失败');
+      setError(errorMessage(err, '删除失败'));
     } finally {
       setBusyId(null);
     }
@@ -111,7 +109,7 @@ export default function LibraryPage() {
       await api.retryTrack(track.id);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '重试失败');
+      setError(errorMessage(err, '重试失败'));
     } finally {
       setBusyId(null);
     }
@@ -131,7 +129,7 @@ export default function LibraryPage() {
       setEditingId(null);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存失败');
+      setError(errorMessage(err, '保存失败'));
     } finally {
       setBusyId(null);
     }

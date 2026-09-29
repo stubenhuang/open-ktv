@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { listMicDevices, type MicDeviceInfo } from '../audio/engine';
+import { errorMessage } from '../utils';
 
 export type MicPermission = 'unknown' | 'requesting' | 'granted' | 'denied';
 
@@ -11,7 +12,6 @@ export interface UseMicDevicesResult {
   selectDevice: (deviceId: string) => void;
   /** 申请一次权限并列出设备 */
   request: () => Promise<void>;
-  refresh: () => Promise<void>;
 }
 
 /**
@@ -37,7 +37,7 @@ export function useMicDevices(): UseMicDevicesResult {
         setDeviceId(fallback);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '读取麦克风设备失败');
+      setError(errorMessage(err, '读取麦克风设备失败'));
     }
   }, []);
 
@@ -68,7 +68,7 @@ export function useMicDevices(): UseMicDevicesResult {
       } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
         setError('没有检测到任何麦克风设备，请插上耳麦后重试。');
       } else {
-        setError(`打开麦克风失败：${err instanceof Error ? err.message : String(err)}`);
+        setError(`打开麦克风失败：${errorMessage(err)}`);
       }
     }
   }, [refresh]);
@@ -82,5 +82,5 @@ export function useMicDevices(): UseMicDevicesResult {
     return () => navigator.mediaDevices?.removeEventListener?.('devicechange', handler);
   }, [refresh]);
 
-  return { devices, deviceId, permission, error, selectDevice, request, refresh };
+  return { devices, deviceId, permission, error, selectDevice, request };
 }

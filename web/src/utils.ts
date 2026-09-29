@@ -1,3 +1,13 @@
+/**
+ * 从 catch 到的任意值里取出可展示的文案。
+ * 后端返回的 ApiError（继承 Error）会带上服务端的中文提示，直接透出即可。
+ */
+export function errorMessage(error: unknown, fallback = '未知错误'): string {
+  if (error instanceof Error) return error.message || fallback;
+  const text = String(error ?? '').trim();
+  return text || fallback;
+}
+
 /** 秒 → mm:ss（超过一小时给 h:mm:ss） */
 export function formatDuration(seconds: number | null | undefined): string {
   if (!seconds || !Number.isFinite(seconds) || seconds < 0) return '--:--';

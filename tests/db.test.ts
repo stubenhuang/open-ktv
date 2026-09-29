@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { after, before, describe, it } from 'node:test';
+import { effectiveOffsetMs } from '../shared/mix.ts';
 import { createIsolatedDataDir, removeIsolatedDataDir, sleep } from './isolated.ts';
 
 /**
@@ -165,6 +166,47 @@ describe('works 表', () => {
 
     db.deleteWork('a');
     assert.equal(db.countWorksForTrack('wt4'), 1);
+  });
+
+  it('老库迁移：align_ver=1 的旧公式作品换算到新公式', () => {
+    db.insertTrack(newTrack('mig-t'));
+    db.insertWork(
+      newWork('mig-w', 'mig-t', {
+        autoOffsetMs: 200,
+        mixParams: { vocalGain: 1, accompGain: 1, reverb: 'room', userOffsetMs: 0 },
+      }),
+    );
+
+    // 模拟老库：抹掉 align_ver 列（作品随之回到版本 1），再重新初始化触发迁移
+    exec('ALTER TABLE works DROP COLUMN align_ver');
+    db.initDb();
+
+    const work = db.getWork('mig-w')!;
+    assert.equal(work.autoOffsetMs, 200, 'auto 间隔原样保留');
+    // 没拖过滑块的常见情况：userOld=0 原样保留，E_new = 0 − 200 = −200（旧公式是 +200）
+    assert.equal(work.mixParams.userOffsetMs, 0);
+    assert.equal(effectiveOffsetMs(work.autoOffsetMs, work.mixParams.userOffsetMs), -200);
+
+    // 当时被拖拍逼着拖到下限的老作品（auto + userOld < 0，被旧公式钳到 0）：
+    // 直接给满自动修正 —— E_new = −auto，正是当时够不着的位置
+    exec('ALTER TABLE works DROP COLUMN align_ver');
+    exec(
+      `UPDATE works SET mix_params = '{"vocalGain":1,"accompGain":1,"reverb":"room","userOffsetMs":-1000}' WHERE id = 'mig-w'`,
+    );
+    db.initDb();
+    const clamped = db.getWork('mig-w')!;
+    assert.equal(clamped.mixParams.userOffsetMs, 0);
+    assert.equal(effectiveOffsetMs(clamped.autoOffsetMs, clamped.mixParams.userOffsetMs), -200);
+
+    // 拖过但没触下限的老微调：相对位置原样保留（E_new = userOld − auto）
+    exec('ALTER TABLE works DROP COLUMN align_ver');
+    exec(
+      `UPDATE works SET mix_params = '{"vocalGain":1,"accompGain":1,"reverb":"room","userOffsetMs":-100}' WHERE id = 'mig-w'`,
+    );
+    db.initDb();
+    const tuned = db.getWork('mig-w')!;
+    assert.equal(tuned.mixParams.userOffsetMs, -100);
+    assert.equal(effectiveOffsetMs(tuned.autoOffsetMs, tuned.mixParams.userOffsetMs), -300);
   });
 });
 

@@ -1,13 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { MixParams } from '../../../shared/types';
-import { api, trackMediaUrl, workAudioUrl, workVocalUrl, type WorkListItem } from '../api';
+import { api, trackMediaUrl, workVocalUrl, type WorkListItem } from '../api';
 import { PreviewEngine } from '../audio/preview';
 import { LivePreview, type PreviewStatus } from '../components/LivePreview';
 import { MixPanel } from '../components/MixPanel';
 import { usePolling } from '../hooks/usePolling';
-import { formatDateTime, formatDuration } from '../utils';
+import { errorMessage, formatDateTime, formatDuration } from '../utils';
 
+/**
+ * 作品编辑页：单列列表式排版 —— 实时试听 → 混音调整。
+ *
+ * 成品 MP3 的播放/下载都在作品库列表页；这里只负责「试听 + 调参 + 合成」，
+ * 点「合成」发一次混音请求后直接返回作品库（定位到这首作品），
+ * 在列表里等「正在合成… → 已就绪」即可。
+ */
 export default function WorkDetailPage() {
   const { workId = '' } = useParams();
   const navigate = useNavigate();
@@ -17,8 +24,8 @@ export default function WorkDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
+  /** 合成请求 in-flight（按钮 loading 用）；控件不被它禁用，试听随时可调 */
   const [busy, setBusy] = useState(false);
-  const [showVocal, setShowVocal] = useState(false);
 
   /* ------------------------------ 实时试听引擎 ------------------------------ */
 
@@ -74,7 +81,7 @@ export default function WorkDetailPage() {
       previewRef.current = null;
       setPreviewEngine(null);
       setPreviewStatus('error');
-      setPreviewError(err instanceof Error ? err.message : String(err));
+      setPreviewError(errorMessage(err));
       return null;
     }
   };
@@ -91,7 +98,7 @@ export default function WorkDetailPage() {
       setWork(await api.getWork(workId));
       setLoadError(null);
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : '加载作品失败');
+      setLoadError(errorMessage(err, '加载作品失败'));
     }
   }, [workId]);
 
@@ -99,19 +106,20 @@ export default function WorkDetailPage() {
     void load();
   }, [load]);
 
+  // 只在等待初始混音（唱完刚落页）时轮询；点「合成」后已经回列表页，不等结果
   usePolling(() => void load(), 1500, work?.status === 'mixing');
 
+  /** 点「合成」：发一次混音请求，成功即返回作品库并定位到这首作品 */
   const handleApply = async (params: MixParams) => {
     if (!work) return;
     setBusy(true);
     setActionError(null);
     try {
-      const updated = await api.remixWork(work.id, params);
-      setWork((previous) => (previous ? { ...previous, ...updated } : previous));
-      // 让轮询接手，等 status 变回 ready
-      await load();
+      await api.remixWork(work.id, params);
+      navigate('/works', { state: { focusWorkId: work.id } });
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : '重新生成失败');
+      // 失败留在本页，让用户改完参数再点一次
+      setActionError(errorMessage(err, '合成失败'));
     } finally {
       setBusy(false);
     }
@@ -125,7 +133,7 @@ export default function WorkDetailPage() {
       setEditing(false);
       await load();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : '重命名失败');
+      setActionError(errorMessage(err, '重命名失败'));
     } finally {
       setBusy(false);
     }
@@ -138,7 +146,7 @@ export default function WorkDetailPage() {
       await api.deleteWork(work.id);
       navigate('/works');
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : '删除失败');
+      setActionError(errorMessage(err, '删除失败'));
     }
   };
 
@@ -199,6 +207,17 @@ export default function WorkDetailPage() {
               >
                 改名
               </button>
+              {/* 成品 MP3 的徽章跟着状态走：唱完刚落页时能看到初始混音的进度 */}
+              {mixing ? (
+                <span className="badge badge-work" style={{ marginLeft: 8, verticalAlign: 'middle' }}>
+                  <span className="spin" style={{ borderTopColor: 'var(--accent-2)' }} />
+                  正在合成…
+                </span>
+              ) : work.status === 'ready' ? (
+                <span className="badge badge-ok" style={{ marginLeft: 8, verticalAlign: 'middle' }}>
+                  已就绪
+                </span>
+              ) : null}
             </h1>
           )}
           <p className="page-sub">
@@ -222,86 +241,23 @@ export default function WorkDetailPage() {
         <div className="alert alert-error">
           合成失败：{work.error ?? '未知原因'}
           <br />
-          常见原因：伴奏文件被删了、磁盘写满、或者干声文件损坏。可以调一下参数再点「重新生成」试试。
+          常见原因：伴奏文件被删了、磁盘写满、或者干声文件损坏。可以调一下参数再点「合成」试试。
         </div>
       )}
 
-      <div className="detail-grid">
-        <div className="card">
-          <div className="row-between" style={{ marginBottom: 14 }}>
-            <strong>成品 MP3</strong>
-            {mixing ? (
-              <span className="badge badge-work">
-                <span className="spin" style={{ borderTopColor: 'var(--accent-2)' }} />
-                正在合成…
-              </span>
-            ) : (
-              work.status === 'ready' && <span className="badge badge-ok">已就绪</span>
-            )}
-          </div>
-
-          {work.status === 'ready' ? (
-            <audio
-              controls
-              preload="auto"
-              style={{ width: '100%' }}
-              src={workAudioUrl(work.id, work.updatedAt)}
-            />
-          ) : (
-            <div className="empty-state" style={{ padding: '32px 16px' }}>
-              {mixing ? '正在把干声和伴奏合成 MP3，通常几秒钟…' : '还没有可播放的成品'}
-            </div>
-          )}
-
-          <div className="row" style={{ gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
-            <a
-              className="btn btn-primary"
-              href={`${workAudioUrl(work.id)}?download=1`}
-              style={work.status !== 'ready' ? { pointerEvents: 'none', opacity: 0.5 } : undefined}
-            >
-              下载 MP3
-            </a>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => setShowVocal((value) => !value)}
-              disabled={work.status !== 'ready'}
-            >
-              {showVocal ? '收起干声' : '试听干声（调对齐用）'}
-            </button>
-          </div>
-
-          {showVocal && (
-            <div style={{ marginTop: 14 }}>
-              <div className="small faint" style={{ marginBottom: 6 }}>
-                这是麦克风录的原始干声，没有任何伴奏。跟上面的成品来回切着听，
-                就能判断人声是早了还是拖了，然后调「人声对齐微调」（拖滑块或直接输入毫秒数）。
-              </div>
-              <audio controls preload="none" style={{ width: '100%' }} src={workVocalUrl(work.id)} />
-            </div>
-          )}
-
-          <div className="small faint" style={{ marginTop: 16 }}>
-            自动测得的人声起点偏移：<span className="mono">{work.autoOffsetMs} ms</span>
-            （服务端按这个值把干声对齐到伴奏时间轴）
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          <LivePreview
-            engine={previewEngine}
-            status={previewStatus}
-            error={previewError}
-            onRequestPlay={handlePreviewPlay}
-          />
-          <MixPanel
-            value={work.mixParams}
-            busy={busy || mixing}
-            disabled={work.status === 'failed'}
-            onApply={(params) => void handleApply(params)}
-            onParamsChange={handleParamsChange}
-          />
-        </div>
+      <div className="detail-stack">
+        <LivePreview
+          engine={previewEngine}
+          status={previewStatus}
+          error={previewError}
+          onRequestPlay={handlePreviewPlay}
+        />
+        <MixPanel
+          value={work.mixParams}
+          busy={busy}
+          onApply={(params) => void handleApply(params)}
+          onParamsChange={handleParamsChange}
+        />
       </div>
     </div>
   );

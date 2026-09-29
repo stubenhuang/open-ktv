@@ -14,10 +14,10 @@
 | 格式兼容 | 浏览器能直接播的原文件直接用；mkv / avi / flv / h265 / ape 等**自动转码**成 mp4(h264+aac) 或 mp3 代理 |
 | 演唱页 | 麦克风设备下拉、实时音量条、伴奏音量 / 耳返音量两个滑块、人声耳返一键静音、MV 画面播放 |
 | 录音 | 只录麦克风**干声**（WAV，采样点精确），伴奏不进录音文件 |
-| 自动对齐 | 先起录 0.15 秒再放伴奏，记录偏移量，服务端用 `adelay` 把干声对齐到伴奏时间轴 |
-| 混音 | 人声音量 / 伴奏音量 / 四档混响 / 人声对齐微调；「实时试听」改动立即生效，「重新生成」出 MP3 |
+| 自动对齐 | 先起录 0.15 秒静音再放伴奏，用音频图上的起播探测器在渲染时钟精确测量伴奏真正起播的时刻，混音时人声提前这段间隔（偏移可为负） |
+| 混音 | 人声音量 / 伴奏音量 / 四档混响 / 人声对齐微调；「实时试听」改动立即生效，点「合成」出 MP3 |
 | 响度 | 干声与伴奏分别自动响度归一化，末端限幅防削波 |
-| 作品库 | 列表、播放、下载 MP3、改名、删除；可试听干声做对齐对照 |
+| 作品库 | 列表、播放、下载 MP3、改名、删除；合成后自动定位到对应作品 |
 
 ---
 
@@ -101,12 +101,12 @@ sudo chown -R $(id -u):$(id -g) ~/.npm
 2. **去演唱**：戴上耳机，选好麦克风（对着说话看音量条有没有反应）。
 3. **开始演唱**：伴奏/画面开始播放，耳机里同时听到伴奏和自己的声音。
    两个滑块分别调伴奏音量和耳返音量；不想听自己的声音就把「人声耳返」关掉。
-4. **结束演唱**：点按钮（或者伴奏放完自动结束）。干声上传后服务端立刻合成 MP3，几秒后跳转到作品页。
-5. **调混音**：点「实时试听」播放，然后拖人声音量/伴奏音量/混响档次、调「人声对齐微调」
-   （滑块或直接输入毫秒数，范围 ±1000ms）—— 改动**立即**在试听里生效，不用等。
-   觉得人声和伴奏对不齐时，点「试听干声」和实时试听对照着听最容易判断。
-   满意后点「重新生成」，服务端再用干声合成一版可下载的 MP3。
-6. **下载**：作品页或详情页都能下载 192kbps 立体声 MP3。
+4. **结束演唱**：点按钮（或者伴奏放完自动结束）。干声上传后服务端立刻合成 MP3，几秒后跳转到作品编辑页。
+5. **调混音**（编辑页只有两块：实时试听 → 混音调整）：点「实时试听」播放，然后拖人声音量/伴奏音量、
+   混响档次、调「人声对齐微调」（滑块或直接输入毫秒数，范围 ±1000ms）—— 改动**立即**在试听里生效，不用等。
+   满意后点「合成」：服务端用干声重新出一版 MP3，页面**直接返回作品库并定位到这首作品**，
+   在列表里等「正在合成…」变成「已就绪」即可。
+6. **播放 / 下载**：都在作品库列表页 —— ready 的作品直接内嵌播放，或点「下载 MP3」拿 192kbps 立体声文件。
 
 ---
 
@@ -115,11 +115,13 @@ sudo chown -R $(id -u):$(id -g) ~/.npm
 ### 演唱页的音频图
 
 ```
-<video>/<audio> ──MediaElementSource──> accompGain ─────────────┐
-                                                                ├──> destination
-MediaStreamSource ──> analyser ──> micMonitorGain ─────────────┘
-                  │
-                  └──> AudioWorklet(pcm-capture) ──> captureSink(0) ──> destination
+<video>/<audio> ──MediaElementSource──┬──> accompGain ──────────────────────────────────────────────────────────────────────┐
+                                      │                                                   │
+                                      └──> AudioWorklet(accomp-onset) ──> captureSink(0)
+                                                                                       │
+MediaStreamSource ──> analyser ──> micMonitorGain ──────────────────────────────────────────────────────────────────────────────├──> destination
+                  │                                                                       │
+                  └──> AudioWorklet(pcm-capture) ──> captureSink(0) ──────────────────────────────────────────┘
 ```
 
 三个关键点：
@@ -132,30 +134,44 @@ MediaStreamSource ──> analyser ──> micMonitorGain ───────�
 
 ### 对齐
 
-1. 点「开始演唱」→ 立刻开始采集 PCM，`recordStartMs = performance.now()`
-2. 等 150ms → `currentTime = 0; play()` → `accompStartMs = performance.now()`
-3. `autoOffsetMs = accompStartMs - recordStartMs`（恒为正）
-4. 服务端 `adelay=delays=<offset>:all=1` 挂在**人声分支**上把干声推后
+干声 WAV 的 t=0 是**起录**时刻，而歌手是对着**起播后**的伴奏唱的 —— 干声第一拍
+落在 WAV 时间 ≈ G（G = 起录到伴奏真正起播的间隔，含 150ms 预备静音和浏览器
+seek/解码/调度延迟）。成品 MP3 里伴奏第一拍在 mix 时间 0，所以人声必须**提前 G**
+才对得上，即最终偏移 `offset = userOffsetMs − autoOffsetMs`（可为负）。
 
-`adelay` 挂在 mix 之后就等于没对齐，所以它在 amix 之前的人声分支里（有单元测试守着这一点）。
-自动值之外还留了 ±1000ms 的人工微调（滑块或直接输入毫秒数），用来兜住声卡/耳机的固有延迟差异。
+1. 点「开始演唱」→ 立刻开始采集 PCM，记下渲染时钟 `captureStartCtxTime`
+2. 等 150ms → `currentTime = 0; play()`，同时武装起播探测器
+3. `accomp-onset` worklet 挂在 MediaElementSource 上（伴奏音量 gain 之前），
+   用**渲染时钟**记下伴奏第一个非静音样本的时刻；`playing` 事件 / `currentTime`
+   轮询作兜底（伴奏开头是长静音时 onset 偏大，取两者中更接近真实起播的那个）
+4. `autoOffsetMs = G`（恒为正）；2.5s 内两个信号都没来回退到 150ms 常量并告警
+5. 服务端按 `shared/mix.ts` 的 `mixTimeline(offset)` 决定延后哪一轨：
+   offset ≥ 0 → 人声分支 `adelay`；offset < 0 → 伴奏分支 `adelay`（没有负 adelay，
+   延后伴奏等价于把人声提前，干声开头那段静音正好被吃掉）
+
+`adelay` 挂在 amix 之后就等于没对齐，所以它永远在 amix 之前的某一分支里
+（有单元测试守着两个方向）。自动值之外还留了 ±1000ms 的人工微调
+（正值 = 人声更晚 / 抢拍，负值 = 人声更早 / 拖拍），叠加在自动值之上。
+老库作品会在启动时按 `align_ver` 一次性换算到新公式（`server/src/db.ts`）。
 
 ### 混音滤波器链
 
 ```
-[0:a] aformat=48000/stereo, highpass=80, volume=<人声>, [aecho=混响], adelay=<偏移> [v];
-[1:a] aformat=48000/stereo, volume=<伴奏> [a];
+[0:a] aformat=48000/stereo, highpass=80, volume=<人声>, [aecho=混响], [adelay=<人声延迟>] [v];
+[1:a] aformat=48000/stereo, volume=<伴奏>, [adelay=<伴奏延迟>] [a];
 [v][a] amix=inputs=2:duration=first:normalize=0, alimiter=limit=0.95 [m]
 ```
+
+- 两个 adelay 按 `mixTimeline(offset)` 二选一：offset ≥ 0 只延后人声，offset < 0 只延后伴奏。
 
 - `duration=first` + 人声在第一位：成品长度跟着人声走，用户中途停不会拖出一长段纯伴奏尾巴。
 - `normalize=0`：amix 默认会按输入数把音量除以 2，这里必须关掉。
 - 响度归一化**没有**用 ffmpeg 的单遍 `loudnorm` 滤镜 —— 它的动态模式带内部前瞻缓冲，
   会引入不可控的时间偏移。改成「先跑一遍测量拿到输入响度，再乘一个静态增益」，零延迟且可预测。
 
-### 实时试听（改参数不用等重新生成）
+### 实时试听（改参数不用等合成）
 
-以前调任何参数都要点「重新生成」，等 ffmpeg 把整首 MP3 重编码一遍。现在作品详情页的
+以前调任何参数都要点「重新生成」，等 ffmpeg 把整首 MP3 重编码一遍。现在作品编辑页的
 「实时试听」在浏览器里用 Web Audio 复刻了同一条滤波器链，参数改动只操作本地音频图节点，
 零网络请求、立即发声：
 
@@ -167,14 +183,17 @@ accompBufferSource ──> accompGain ──────────────
 
 - 音量滑块 / 毫秒输入 / 混响档位的改动走 `onParamsChange` 直接进引擎；
   音量、混响用 `setTargetAtTime` 平滑过渡，**不打断播放**。
-- 对齐偏移不用 `DelayNode`（改 delayTime 有爆音），靠「人声晚 offset 秒起播」调度；
+- 对齐偏移不用 `DelayNode`（改 delayTime 有爆音），靠「晚到的一轨晚起播」调度
+  （offset ≥ 0 人声晚进、offset < 0 伴奏晚进，与服务端 mixTimeline 同一套规则）；
   偏移变化时防抖 120ms 后按当前位置重排两轨，无缝续播。
 - 电平和成品 MP3 对齐：最近一次成功混音时实测的两轨增益（`works.levels` 列）
   随作品落库，预览按 `10^(dB/20) × 用户滑块` 复算，和服务端 `computeLevels` 同一套公式。
 - 混响是卷积混响对服务端 `aecho` 的**听感近似**（四档尾巴长度递进），最终音色以下载的 MP3 为准。
-- 预览时长 = 对齐偏移 + 干声时长，和服务端 `duration=first` 一致，播完自动停。
+- 预览时长 = 干声时长 + max(0, 对齐偏移)，和服务端 `duration=first` 一致，播完自动停。
 - 干声和伴奏在首次点「试听」时才解码（懒加载），避免只下载不试听的用户白占内存；
   接近 15 分钟的录音解码后约几百 MB Float32，是已知限制。
+- 编辑页因此只剩「实时试听 + 混音调整」两块；成品 MP3 的播放/下载都在作品库列表页，
+  点「合成」后带着 `focusWorkId` 跳回列表，滚动到位并高亮几秒。
 
 ---
 
@@ -190,14 +209,16 @@ server/src/
   probe.ts        ffprobe 封装
   classify.ts     纯函数：ffprobe JSON → 能不能直接播 / 要不要转码
   transcode.ts    代理转码参数
-  ffmpeg.ts       ffmpeg 子进程封装（超时、stderr 尾部、-progress 解析）
+  ffmpeg.ts       ffmpeg 调用封装：参数常量（mp3 输出 / 进度）+ -progress 解析
+  process.ts      子进程调度：超时杀掉、stderr 尾部、ENOENT 提示
+  upload.ts       multer 收文件：临时目录、大小上限、错误与清理
   loudness.ts     响度测量 + 静态增益计算
   mix.ts          混音滤波器图构造（纯函数）
   mixJob.ts       一次混音的完整流程（先写 tmp 再 rename）
   jobs.ts         单并发任务队列
   media.ts        Range 流式播放
   naming.ts       文件名解码 / 歌名歌手解析 / 扩展名白名单
-  routes/         tracks / works / media
+  routes/         tracks / works / media / guard（按 id 取记录 + 404）
 web/src/
   audio/engine.ts 音频图、麦克风接入、WAV 采集
   log.ts          前端日志（开发环境 debug 起，生产只留 warn+）
@@ -278,11 +299,11 @@ npm run build        # 生产构建
 
 | 文件 | 测什么 |
 |---|---|
-| `wav.test.ts` | Float32 → 16bit WAV 编码、分片拼接、下混 |
+| `wav.test.ts` | Float32 → 16bit WAV 编码、分片拼接 |
 | `classify.test.ts` | ffprobe JSON → 能不能直接播 / 要不要转码 |
 | `naming.test.ts` | latin1 乱码还原、歌名/歌手解析、扩展名白名单 |
-| `mix.test.ts` | 混音滤波器图（adelay 挂人声分支等）、真实 ffmpeg 出片、响度归一化 |
-| `preview.test.ts` | 前端实时预览与服务端共用的偏移/增益公式 |
+| `mix.test.ts` | 混音滤波器图（正/负偏移各自 adelay 挂对分支）、真实 ffmpeg 出片、响度归一化 |
+| `preview.test.ts` | 前端实时预览与服务端共用的偏移/增益公式（含两边增益逐项对齐） |
 | `transcode.test.ts` | mkv→mp4、奇数分辨率修正、flac→mp3 代理 |
 | `logger.test.ts` | 日志级别过滤、行格式、meta 渲染、sink 路由 |
 | `jobs.test.ts` | 任务队列串行、isQueued、进度钳制、失败不阻塞 |
@@ -352,8 +373,8 @@ BASE_URL=http://127.0.0.1:8787 npm run test:e2e   # 也可以测生产模式
 被作品引用了。服务端会拒绝（409）并告诉你有几个作品，先去作品库删掉那些作品。
 
 **成品里人声和伴奏错位**
-作品详情页点「实时试听」，边播边调「人声对齐微调」（拖滑块或直接输入毫秒数，范围 ±1000ms）——
-改动立即生效，对到位后点「重新生成」再下载。想对照原始干声就点「试听干声」。
+去作品库点「调混音」进编辑页，开「实时试听」边播边调「人声对齐微调」（拖滑块或直接输入毫秒数，
+范围 ±1000ms）—— 改动立即生效，对到位后点「合成」，返回作品库等「已就绪」再下载。
 
 ---
 

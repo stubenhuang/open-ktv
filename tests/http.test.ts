@@ -113,12 +113,6 @@ describe('HTTP API（真实 Express + 临时数据目录）', () => {
     assert.equal(missing.status, 404);
   });
 
-  it('状态查询接口', async () => {
-    const response = await fetch(`${baseUrl}/api/tracks/${trackId}/status`);
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { status: 'ready', progress: null, error: null });
-  });
-
   it('改名：空标题 / 超长标题被拒，正常改名成功', async () => {
     const empty = await fetch(`${baseUrl}/api/tracks/${trackId}`, {
       method: 'PATCH',

@@ -505,17 +505,16 @@ async function main() {
     label: '作品就绪',
   });
 
+  // 成品 MP3 的播放/下载已挪到作品库列表页，详情页只剩「实时试听 + 混音调整」，
+  // 所以这里直接用接口校验成品，不再依赖页面上的 audio 元素
   const audioInfo = await evaluate(
     page,
     `(async () => {
-      const el = document.querySelector('audio');
-      if (!el) return { ok: false, why: '页面上没有 audio 元素' };
-      const response = await fetch(el.src);
+      const response = await fetch('/api/works/${workId}/audio');
       return {
         ok: response.ok,
         type: response.headers.get('content-type'),
         bytes: (await response.arrayBuffer()).byteLength,
-        src: el.src,
       };
     })()`,
     '校验成品 MP3',
@@ -525,56 +524,8 @@ async function main() {
   }
   pass(`成品 MP3 可播放（${audioInfo.type}，${audioInfo.bytes} 字节）`);
 
-  step('改人声音量 + 换混响，点「重新生成」');
-  const applied = await evaluate(
-    page,
-    `(async () => {
-      const sliders = [...document.querySelectorAll('.mix-panel input[type=range]')];
-      if (sliders.length < 1) return '找不到滑块';
-      const slider = sliders[0];
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-      setter.call(slider, '0.5');
-      slider.dispatchEvent(new Event('input', { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 120));
-
-      const hall = [...document.querySelectorAll('.reverb-option')].find((b) => b.textContent.includes('大厅'));
-      if (hall) hall.click();
-      await new Promise((r) => setTimeout(r, 120));
-
-      const button = [...document.querySelectorAll('button')].find((b) => b.textContent.includes('重新生成'));
-      if (!button || button.disabled) return '重新生成按钮不可用';
-      button.click();
-      return 'ok';
-    })()`,
-    '改参数并重新生成',
-  );
-  if (applied !== 'ok') throw new Error(`重新生成没触发：${applied}`);
-
-  await waitFor(page, `document.body.innerText.includes('正在合成')`, {
-    timeoutMs: 20_000,
-    label: '进入合成中',
-  });
-  await waitFor(page, `document.body.innerText.includes('已就绪')`, {
-    timeoutMs: 90_000,
-    label: '重混完成',
-  });
-
-  const params = await evaluate(
-    page,
-    `(async () => {
-      const id = location.pathname.split('/').pop();
-      const work = await (await fetch('/api/works/' + id)).json();
-      return work.mixParams;
-    })()`,
-    '核对混音参数',
-  );
-  if (params.reverb !== 'hall' || Math.abs(params.vocalGain - 0.5) > 0.001) {
-    throw new Error(`混音参数没生效：${JSON.stringify(params)}`);
-  }
-  pass(`重混成功，参数已落库：${JSON.stringify(params)}`);
-
   /* ------------------------------ 3.4 实时试听 ------------------------------ */
-  step('实时试听：点播放 + 拖滑块，不点「重新生成」也立即生效');
+  step('实时试听：点播放 + 拖滑块，不点「合成」也立即生效');
 
   const previewStart = await evaluate(
     page,
@@ -596,7 +547,7 @@ async function main() {
   );
   pass('实时试听已起播（浏览器内 Web Audio 混音，无 ffmpeg 参与）');
 
-  // 测试曲只有 3 秒，趁还在播立刻拖滑块：不点「重新生成」，参数实时送进引擎，
+  // 测试曲只有 3 秒，趁还在播立刻拖滑块：不点「合成」，参数实时送进引擎，
   // 播放不中断、无报错
   const liveTweak = await evaluate(
     page,
@@ -614,7 +565,7 @@ async function main() {
     '拖动滑块不断播',
   );
   if (liveTweak !== 'ok') throw new Error(`实时试听被参数改动打断：${liveTweak}`);
-  pass('参数改动实时生效，播放不中断（未触发任何重新生成请求）');
+  pass('参数改动实时生效，播放不中断（未触发任何合成请求）');
 
   const previewTime = await evaluate(
     page,
@@ -633,14 +584,83 @@ async function main() {
     '暂停预览',
   );
 
+  /* --------------------- 3.6 合成后直接返回作品库并定位 --------------------- */
+  step('改人声音量 + 换混响，点「合成」→ 应直接返回作品库并定位到作品');
+
+  const synth = await evaluate(
+    page,
+    `(async () => {
+      const sliders = [...document.querySelectorAll('.mix-panel input[type=range]')];
+      if (sliders.length < 1) return '找不到滑块';
+      const slider = sliders[0];
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(slider, '0.5');
+      slider.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 120));
+
+      const hall = [...document.querySelectorAll('.reverb-option')].find((b) => b.textContent.includes('大厅'));
+      if (hall) hall.click();
+      await new Promise((r) => setTimeout(r, 120));
+
+      const button = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === '合成');
+      if (!button || button.disabled) return '合成按钮不可用';
+      button.click();
+      return 'ok';
+    })()`,
+    '改参数并点合成',
+  );
+  if (synth !== 'ok') throw new Error(`合成没触发：${synth}`);
+
+  await waitFor(page, `location.pathname === '/works'`, {
+    timeoutMs: 20_000,
+    label: '返回作品库',
+  });
+  pass('点「合成」后直接返回作品库（不在详情页等结果）');
+
+  // 列表页此时显示「正在合成…」徽章，轮询到 ready 再核对参数
+  await waitFor(
+    page,
+    `(async () => {
+      const work = await (await fetch('/api/works/${workId}')).json();
+      return work.status === 'ready';
+    })()`,
+    { timeoutMs: 90_000, label: '重混完成' },
+  );
+
+  const params = await evaluate(
+    page,
+    `(async () => {
+      const work = await (await fetch('/api/works/${workId}')).json();
+      return work.mixParams;
+    })()`,
+    '核对混音参数',
+  );
+  if (params.reverb !== 'hall' || Math.abs(params.vocalGain - 0.5) > 0.001) {
+    throw new Error(`混音参数没生效：${JSON.stringify(params)}`);
+  }
+  pass(`重混成功，参数已落库：${JSON.stringify(params)}`);
+
+  // 定位：返回列表后目标作品应被滚动到视口内（高亮类 2.6s 后会撤，不断言类）
+  const located = await evaluate(
+    page,
+    `(() => {
+      const card = document.querySelector('[data-work-id="${workId}"]');
+      if (!card) return 'no-card';
+      const rect = card.getBoundingClientRect();
+      return rect.top < window.innerHeight && rect.bottom > 0 ? 'in-view' : 'off-screen';
+    })()`,
+    '检查作品定位',
+  );
+  if (located !== 'in-view') throw new Error(`作品没有定位到视口内：${located}`);
+  pass('返回作品库后已定位到该作品（滚动到视口内）');
+
   /* ------------------- 3.5 干声是否连续（掉音检测） ------------------- */
   step('解码干声 WAV，检查包络是否连续（掉音会在这里露出来）');
 
   const vocal = await evaluate(
     page,
     `(async () => {
-      const id = location.pathname.split('/').pop();
-      const response = await fetch('/api/works/' + id + '/vocal');
+      const response = await fetch('/api/works/${workId}/vocal');
       const bytes = await response.arrayBuffer();
       const ctx = new AudioContext();
       const decoded = await ctx.decodeAudioData(bytes);

@@ -5,7 +5,7 @@ import { api, trackMediaUrl, type TrackListItem } from '../api';
 import { LevelMeter } from '../components/LevelMeter';
 import { KtvEngine, isMicSupported } from '../audio/engine';
 import { useMicDevices } from '../hooks/useMicDevices';
-import { formatDuration, formatTimer } from '../utils';
+import { errorMessage, formatDuration, formatTimer } from '../utils';
 
 type Phase = 'idle' | 'saving';
 
@@ -26,7 +26,7 @@ export default function SingPage() {
   const [captureWarning, setCaptureWarning] = useState<string | null>(null);
   /**
    * 麦克风是否已经真正接进音频图。
-   * 不能直接读 engine.hasMic —— 那是个普通 getter，接好了也不会触发 React 重渲染，
+   * 不能直接读引擎的内部状态 —— 那是个普通字段，接好了也不会触发 React 重渲染，
    * 界面会永远停在「正在接入麦克风…」。
    */
   const [micReady, setMicReady] = useState(false);
@@ -58,7 +58,7 @@ export default function SingPage() {
         if (!cancelled) setTrack(result);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : '加载伴奏失败');
+        if (!cancelled) setLoadError(errorMessage(err, '加载伴奏失败'));
       });
 
     return () => {
@@ -111,7 +111,7 @@ export default function SingPage() {
       .catch((err: unknown) => {
         if (cancelled) return;
         setMicReady(false);
-        setActionError(`接入麦克风失败：${err instanceof Error ? err.message : String(err)}`);
+        setActionError(`接入麦克风失败：${errorMessage(err)}`);
       });
 
     return () => {
@@ -190,7 +190,7 @@ export default function SingPage() {
       setRecording(false);
       setPhase('idle');
       setActionError(
-        `结束录音失败：${err instanceof Error ? err.message : String(err)}`,
+        `结束录音失败：${errorMessage(err)}`,
       );
     }
   }, [engine, track, navigate]);
@@ -208,7 +208,7 @@ export default function SingPage() {
       setElapsedMs(0);
       setRecording(true);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : '开始演唱失败');
+      setActionError(errorMessage(err, '开始演唱失败'));
     }
   }, [engine, track]);
 
@@ -423,7 +423,7 @@ export default function SingPage() {
                         : mic.devices.length === 0
                           ? '没有检测到麦克风设备，请插上耳麦后刷新。'
                           : micReady
-                            ? '点开始后会先起录 0.15 秒再放伴奏，用来自动对齐。'
+                            ? '点开始后会先起录 0.15 秒静音再放伴奏，系统精确测量伴奏起播时刻，用来自动对齐。'
                             : '正在接入麦克风…'
                       : '正在初始化音频…'}
                   </span>
@@ -509,7 +509,7 @@ export default function SingPage() {
             <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
               <li>只录你的干声，伴奏不进录音文件。</li>
               <li>结束后服务端把干声和伴奏合成 192kbps 立体声 MP3。</li>
-              <li>录完可以调人声音量、伴奏音量、混响，随时重新生成。</li>
+              <li>录完去作品库点「调混音」：实时试听即时生效，点「合成」出新版 MP3。</li>
             </ul>
           </div>
         </div>

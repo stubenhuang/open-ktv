@@ -1,6 +1,6 @@
 import path from 'node:path';
-import { JOB_TIMEOUT_MS, TRANSCODE } from './config.ts';
-import { runFfmpeg } from './ffmpeg.ts';
+import { AUDIO, JOB_TIMEOUT_MS, TRANSCODE } from './config.ts';
+import { MP3_OUTPUT_ARGS, PROGRESS_OUTPUT_ARGS, runFfmpeg } from './ffmpeg.ts';
 import { PROXIES_DIR } from './paths.ts';
 
 export type ProxyTarget = 'video' | 'audio';
@@ -12,7 +12,7 @@ export function proxyPathFor(id: string, target: ProxyTarget): string {
 /**
  * 转码成浏览器能播的代理文件。
  * 视频：h264 + aac + faststart，最大宽度 1920，宽度强制偶数（h264 yuv420p 要求）。
- * 音频：直接出 mp3 192k 立体声。
+ * 音频：直接出 mp3 192k 立体声（与混音成品共用 MP3_OUTPUT_ARGS 的规格）。
  */
 export function buildTranscodeArgs(input: {
   sourcePath: string;
@@ -25,19 +25,8 @@ export function buildTranscodeArgs(input: {
     return [
       ...common,
       '-vn',
-      '-c:a',
-      'libmp3lame',
-      '-b:a',
-      TRANSCODE.audioBitrate,
-      '-ar',
-      '48000',
-      '-ac',
-      '2',
-      '-id3v2_version',
-      '3',
-      '-progress',
-      'pipe:1',
-      '-nostats',
+      ...MP3_OUTPUT_ARGS,
+      ...PROGRESS_OUTPUT_ARGS,
       input.outputPath,
     ];
   }
@@ -63,14 +52,12 @@ export function buildTranscodeArgs(input: {
     '-b:a',
     TRANSCODE.videoAudioBitrate,
     '-ar',
-    '48000',
+    String(AUDIO.sampleRate),
     '-ac',
-    '2',
+    String(AUDIO.channels),
     '-movflags',
     '+faststart',
-    '-progress',
-    'pipe:1',
-    '-nostats',
+    ...PROGRESS_OUTPUT_ARGS,
     input.outputPath,
   ];
 }

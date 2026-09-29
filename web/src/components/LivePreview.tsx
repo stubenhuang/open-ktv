@@ -138,12 +138,12 @@ export function LivePreview({ engine, status, error, onRequestPlay }: Props) {
 
       {error ? (
         <div className="small" style={{ marginTop: 10, color: 'var(--danger)' }}>
-          预览失败：{error}（可以先用成品 MP3 对听，或再点一次「试听」重试）
+          预览失败：{error}（可以回作品库听已生成的 MP3，或再点一次「试听」重试）
         </div>
       ) : (
         <div className="small faint" style={{ marginTop: 10 }}>
           干声 + 伴奏在浏览器里实时混音：拖滑块、输入毫秒数、换混响都会立刻生效，不打断播放。
-          这只是预览 —— 下载的 MP3 仍要点「重新生成」后才会更新。
+          这只是预览 —— 点下面的「合成」服务端才会真正出新版 MP3，然后自动返回作品库。
         </div>
       )}
     </div>

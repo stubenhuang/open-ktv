@@ -1,9 +1,7 @@
 import type { MixParams, ReverbKind } from '../../shared/types.ts';
 import { AUDIO } from './config.ts';
-import { dbToLinear } from '../../shared/mix.ts';
-
-/** 偏移钳制逻辑住在 shared/mix.ts，前端实时预览要用同一套；这里转手出去保持既有 import 不破 */
-export { MAX_OFFSET_MS, effectiveOffsetMs } from '../../shared/mix.ts';
+import { linearGain, mixTimeline } from '../../shared/mix.ts';
+import { MP3_OUTPUT_ARGS, PROGRESS_OUTPUT_ARGS } from './ffmpeg.ts';
 
 /** 归一化目标：伴奏略高于人声，人声才有「贴着伴奏唱」的感觉 */
 export const LOUDNESS_TARGET = {
@@ -22,29 +20,26 @@ export const REVERB_FILTER: Record<ReverbKind, string | null> = {
   stage: 'aecho=0.9:0.92:110:0.45',
 };
 
-function clampLinear(value: number): number {
-  if (!Number.isFinite(value)) return 1;
-  return Math.max(0, Math.min(4, value));
-}
-
 export interface MixLevels {
   /** 人声轨最终乘的线性增益（归一化增益 × 用户滑块） */
   vocalLinear: number;
   accompLinear: number;
 }
 
+/** 实测归一化增益 × 用户滑块；公式本体在 shared/mix.ts（前端实时预览要用同一套） */
 export function computeLevels(
   mixParams: Pick<MixParams, 'vocalGain' | 'accompGain'>,
   vocalGainDb: number,
   accompGainDb: number,
 ): MixLevels {
   return {
-    vocalLinear: clampLinear(dbToLinear(vocalGainDb) * mixParams.vocalGain),
-    accompLinear: clampLinear(dbToLinear(accompGainDb) * mixParams.accompGain),
+    vocalLinear: linearGain(mixParams.vocalGain, vocalGainDb),
+    accompLinear: linearGain(mixParams.accompGain, accompGainDb),
   };
 }
 
 export interface MixFilterInput {
+  /** 合成后的总对齐偏移（userOffsetMs − autoOffsetMs），ms；正值推后人声，负值延后伴奏 */
   offsetMs: number;
   levels: MixLevels;
   reverb: ReverbKind;
@@ -53,15 +48,21 @@ export interface MixFilterInput {
 /**
  * 构造 filter_complex。
  *
- * 对齐的关键点：`adelay` 必须挂在**人声分支**上，不能在 amix 之后 ——
- * 挂在后面会把伴奏一起推后，等于没对齐。
+ * 对齐模型（shared/mix.ts 的符号语义）：
+ *  offsetMs 是人声相对混音时间轴的延迟，**可正可负**。
+ *  · offset > 0：人声要更晚 → `adelay` 挂**人声分支**（干声被推后）；
+ *  · offset < 0：人声要更早 → 没有负的 adelay，改成把**伴奏分支**延后
+ *    |offset| ms。效果等价于把干声提前 —— 干声开头那段「起录后、伴奏起播前」
+ *    的预备静音正好被吃掉。两条路都不能挂在 amix 之后：挂在后面等于没对齐。
+ *  · offset = 0：两轨都不加延迟。
  *
- * `duration=first`：amix 的第一路输入是（延迟后的）人声，混音长度就以人声为准。
- * 用户中途点了结束，不会在成品里拖出一长段纯伴奏尾巴。
+ * `duration=first`：amix 的第一路输入始终是人声，混音长度就以人声为准
+ * （用户中途点了结束，不会在成品里拖出一长段纯伴奏尾巴）。
  */
 export function buildMixFilter(input: MixFilterInput): string {
   const { offsetMs, levels, reverb } = input;
   const sampleRate = AUDIO.sampleRate;
+  const { vocalDelayMs, accompDelayMs } = mixTimeline(offsetMs);
 
   const vocalChain = [
     `aformat=sample_rates=${sampleRate}:channel_layouts=stereo`,
@@ -70,12 +71,13 @@ export function buildMixFilter(input: MixFilterInput): string {
   ];
   const reverbFilter = REVERB_FILTER[reverb];
   if (reverbFilter) vocalChain.push(reverbFilter);
-  if (offsetMs > 0) vocalChain.push(`adelay=delays=${offsetMs}:all=1`);
+  if (vocalDelayMs > 0) vocalChain.push(`adelay=delays=${vocalDelayMs}:all=1`);
 
   const accompChain = [
     `aformat=sample_rates=${sampleRate}:channel_layouts=stereo`,
     `volume=${levels.accompLinear.toFixed(4)}`,
   ];
+  if (accompDelayMs > 0) accompChain.push(`adelay=delays=${accompDelayMs}:all=1`);
 
   return [
     `[0:a]${vocalChain.join(',')}[v]`,
@@ -105,21 +107,10 @@ export function buildMixArgs(input: MixArgsInput): string[] {
     buildMixFilter(input),
     '-map',
     '[m]',
-    '-c:a',
-    'libmp3lame',
-    '-b:a',
-    AUDIO.mp3Bitrate,
-    '-ar',
-    String(AUDIO.sampleRate),
-    '-ac',
-    String(AUDIO.channels),
-    '-id3v2_version',
-    '3',
+    ...MP3_OUTPUT_ARGS,
     '-metadata',
     `title=${input.title}`,
-    '-progress',
-    'pipe:1',
-    '-nostats',
+    ...PROGRESS_OUTPUT_ARGS,
     input.outputPath,
   ];
 }

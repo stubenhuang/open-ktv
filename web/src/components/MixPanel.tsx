@@ -2,18 +2,16 @@ import { useEffect, useRef, useState } from 'react';
 import {
   DEFAULT_MIX_PARAMS,
   MIX_LIMITS,
+  REVERB_KINDS,
   REVERB_LABELS,
   type MixParams,
-  type ReverbKind,
 } from '../../../shared/types';
-
-const REVERB_ORDER: ReverbKind[] = ['dry', 'room', 'hall', 'stage'];
 
 interface Props {
   /** 作品当前的混音参数 */
   value: MixParams;
+  /** 合成请求 in-flight：只用于按钮 loading，不禁用控件（试听随时可调） */
   busy: boolean;
-  disabled?: boolean;
   onApply: (params: MixParams) => void;
   /** 每次改动都回调（不触网）：实时试听引擎靠它立即生效 */
   onParamsChange?: (params: MixParams) => void;
@@ -27,20 +25,19 @@ function gainLabel(value: number): string {
 
 /**
  * 对齐微调的毫秒输入框：滑块负责粗调，这里负责直接输入精确值。
+ * 正值 = 人声更晚（抢拍），负值 = 人声更早（拖拍）；自动对齐已扣除先录的静音。
  * 输入中途（空串 / 只有 "-"）不报错，失焦时把显示归一化到合法值。
  */
 function OffsetMsInput({
   value,
-  disabled,
   onChange,
 }: {
   value: number;
-  disabled: boolean;
   onChange: (next: number) => void;
 }) {
   const [text, setText] = useState(() => String(value));
 
-  // 外部值变化（作品刷新 / 重新生成完成）时同步显示
+  // 外部值变化（作品刷新 / 合成完成）时同步显示
   useEffect(() => {
     setText(String(value));
   }, [value]);
@@ -64,7 +61,6 @@ function OffsetMsInput({
       max={MIX_LIMITS.userOffsetMs.max}
       step={MIX_LIMITS.userOffsetMs.step}
       value={text}
-      disabled={disabled}
       onChange={(event) => {
         setText(event.target.value);
         commit(event.target.value);
@@ -74,25 +70,27 @@ function OffsetMsInput({
   );
 }
 
-export function MixPanel({ value, busy, disabled, onApply, onParamsChange }: Props) {
+export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
   const [params, setParams] = useState<MixParams>(value ?? DEFAULT_MIX_PARAMS);
   /** 最新参数的一份镜像：setParams 的函数式更新拿不到同步的 next，实时回调需要它 */
   const paramsRef = useRef(params);
 
-  const dirty =
-    params.vocalGain !== value.vocalGain ||
-    params.accompGain !== value.accompGain ||
-    params.reverb !== value.reverb ||
-    params.userOffsetMs !== value.userOffsetMs;
-
-  // 作品数据刷新后（比如重混完成）把面板同步到服务端的真实值。
-  // 但用户有未提交改动时不能被轮询刷新覆盖 —— 混音中也可以继续拖滑块调实时试听。
+  // 作品数据刷新后把面板同步到服务端的真实值。
+  // 但用户有未提交改动时不能被轮询刷新覆盖 —— 合成中也可以继续拖滑块调实时试听。
+  // （轮询每次都会造新的 mixParams 对象，必须按内容比较，不能比对象身份）
   useEffect(() => {
-    if (dirty) return;
+    const current = paramsRef.current;
+    const hasLocalEdits =
+      current &&
+      (current.vocalGain !== value.vocalGain ||
+        current.accompGain !== value.accompGain ||
+        current.reverb !== value.reverb ||
+        current.userOffsetMs !== value.userOffsetMs);
+    if (hasLocalEdits) return;
     const synced = value ?? DEFAULT_MIX_PARAMS;
     paramsRef.current = synced;
     setParams(synced);
-  }, [value, dirty]);
+  }, [value]);
 
   const update = (patch: Partial<MixParams>) => {
     const next = { ...paramsRef.current, ...patch };
@@ -109,7 +107,7 @@ export function MixPanel({ value, busy, disabled, onApply, onParamsChange }: Pro
           混音调整
         </div>
         <p className="page-sub" style={{ marginTop: 2 }}>
-          拖动滑块 / 输入毫秒数会实时应用到上面的「实时试听」；满意后点「重新生成」，服务端再用干声合成一版可下载的 MP3。
+          拖动滑块 / 输入毫秒数会实时应用到上面的「实时试听」；点「合成」服务端会用干声重新出一版 MP3，然后自动返回作品库。
         </p>
       </div>
 
@@ -124,7 +122,6 @@ export function MixPanel({ value, busy, disabled, onApply, onParamsChange }: Pro
           max={MIX_LIMITS.gain.max}
           step={MIX_LIMITS.gain.step}
           value={params.vocalGain}
-          disabled={disabled}
           onChange={(event) => update({ vocalGain: Number(event.target.value) })}
         />
       </div>
@@ -140,7 +137,6 @@ export function MixPanel({ value, busy, disabled, onApply, onParamsChange }: Pro
           max={MIX_LIMITS.gain.max}
           step={MIX_LIMITS.gain.step}
           value={params.accompGain}
-          disabled={disabled}
           onChange={(event) => update({ accompGain: Number(event.target.value) })}
         />
       </div>
@@ -150,12 +146,11 @@ export function MixPanel({ value, busy, disabled, onApply, onParamsChange }: Pro
           <span>人声混响</span>
         </div>
         <div className="reverb-options">
-          {REVERB_ORDER.map((reverb) => (
+          {REVERB_KINDS.map((reverb) => (
             <button
               key={reverb}
               type="button"
-              disabled={disabled}
-              className={`reverb-option${params.reverb === reverb ? ' active' : ''}`}
+                  className={`reverb-option${params.reverb === reverb ? ' active' : ''}`}
               onClick={() => update({ reverb })}
             >
               {REVERB_LABELS[reverb]}
@@ -170,7 +165,6 @@ export function MixPanel({ value, busy, disabled, onApply, onParamsChange }: Pro
           <span className="offset-value">
             <OffsetMsInput
               value={params.userOffsetMs}
-              disabled={Boolean(disabled)}
               onChange={(next) => update({ userOffsetMs: next })}
             />
             <span className="field-value">ms</span>
@@ -182,11 +176,11 @@ export function MixPanel({ value, busy, disabled, onApply, onParamsChange }: Pro
           max={MIX_LIMITS.userOffsetMs.max}
           step={MIX_LIMITS.userOffsetMs.step}
           value={params.userOffsetMs}
-          disabled={disabled}
           onChange={(event) => update({ userOffsetMs: Number(event.target.value) })}
         />
         <div className="small faint">
-          范围 ±1000ms：觉得人声比伴奏早 → 往右拖或输入正值；觉得人声拖拍 → 往左拖或输入负值。
+          范围 ±1000ms：正值 = 人声更晚（人声比伴奏早、抢拍时用）；负值 = 人声更早（人声拖拍时用）。
+          自动对齐已经先扣掉了「起录后、伴奏起播前」那段静音，微调在此基础上正负叠加。
           也可以直接在输入框里填毫秒数。
         </div>
       </div>
@@ -194,18 +188,16 @@ export function MixPanel({ value, busy, disabled, onApply, onParamsChange }: Pro
       <button
         type="button"
         className="btn btn-primary"
-        disabled={disabled || busy || !dirty}
+        disabled={busy}
         onClick={() => onApply(params)}
       >
         {busy ? (
           <>
             <span className="spin" />
-            正在重新生成…
+            合成中…
           </>
-        ) : dirty ? (
-          '重新生成'
         ) : (
-          '参数未改动'
+          '合成'
         )}
       </button>
     </div>
