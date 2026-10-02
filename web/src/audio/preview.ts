@@ -37,12 +37,8 @@ import { errorMessage } from '../utils';
  *    的调度方式（与服务端 mixTimeline 同一套符号规则：offset ≥ 0 人声晚进，
  *    offset < 0 伴奏晚进）；偏移变化时按当前位置重排两轨。
  *
- * **预览不支持的两个处理**（都在 UI 里明确标注，别让用户以为是 bug）：
- *  1. 升降调 —— Web Audio 对 AudioBufferSourceNode 的 detune 是**同时改变音高与时长**的
- *     （等价于变速播放），会让人声与伴奏立刻错位，比不预览更糟；
- *     真正的变速不变调需要相位声码器，代价远超收益。所以预览按原调播放，
- *     升降调只在「合成」后的成品里生效。
- *  2. 降噪（afftdn）—— 没有对应的 Web Audio 节点。
+ * **预览不支持的处理**（UI 里明确标注，别让用户以为是 bug）：
+ *  降噪（afftdn）—— 没有对应的 Web Audio 节点，只影响服务端成品。
  *
  * 已知限制：整曲 decodeAudioData 进内存，接近 15 分钟的录音解码后约几百 MB
  * Float32（单机自用可接受）。
@@ -121,8 +117,6 @@ export class PreviewEngine {
     reverb: 'room',
     offsetMs: 0,
     levels: null,
-    pitchSemitones: 0,
-    accompSemitones: 0,
     eqLowDb: 0,
     eqMidDb: 0,
     eqHighDb: 0,

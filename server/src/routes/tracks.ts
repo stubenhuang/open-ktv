@@ -16,7 +16,7 @@ import {
 import { transcodeKey, trackToDetail, trackToListItem } from '../dto.ts';
 import { isQueued } from '../jobs.ts';
 import { createLogger } from '../logger.ts';
-import { forgetTrackLoudness, forgetTrackPreProcess } from '../mixJob.ts';
+import { forgetTrackLoudness } from '../mixJob.ts';
 import { decodeOriginalName } from '../naming.ts';
 import { PROXIES_DIR } from '../paths.ts';
 import { probeAndClassify } from '../probe.ts';
@@ -294,7 +294,6 @@ router.delete(
 
     deleteTrack(record.id);
     forgetTrackLoudness(record.id);
-    forgetTrackPreProcess(record.id);
     void fs.promises.rm(record.originalPath, { force: true });
     if (record.playablePath !== record.originalPath) {
       void fs.promises.rm(record.playablePath, { force: true });

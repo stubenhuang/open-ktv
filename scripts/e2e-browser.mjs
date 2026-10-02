@@ -588,13 +588,13 @@ async function main() {
   pass(`成品 MP3 可播放（${audioInfo.type}，${audioInfo.bytes} 字节）`);
 
   /* ------------------------------ 3.4 实时试听 ------------------------------ */
-  /* --------------------- 3.4 混音面板：分组 / 预设 / 升降调 -------------------- */
+  /* --------------------- 3.4 混音面板：分组 / 预设 --------------------- */
   step('混音面板：分组建在、点预设会写进参数');
   const panel = await evaluate(
     page,
     `(async () => {
       const groups = [...document.querySelectorAll('.mix-group-head')].map((n) => n.textContent);
-      const needed = ['音量', '音调', '音效', '修音'];
+      const needed = ['音量', '音效', '修音'];
       const missing = needed.filter((name) => !groups.some((g) => g.includes(name)));
       if (missing.length) return JSON.stringify({ error: '缺少分组：' + missing.join(',') });
 

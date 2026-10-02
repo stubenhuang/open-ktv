@@ -7,7 +7,6 @@ import {
   eqIsNeutral,
   linearGain,
   mixTimeline,
-  semitonesToRatio,
   vocalChainLinearGain,
 } from '../../shared/mix.ts';
 import { MP3_OUTPUT_ARGS, PROGRESS_OUTPUT_ARGS } from './ffmpeg.ts';
@@ -51,7 +50,7 @@ export function computeLevels(
  * 人声均衡三段。
  *
  * 均衡用的是双二阶（biquad）滤波，**没有内部延迟**，所以可以安全地留在
- * 混音图里 —— 需要担心延迟的是 rubberband / acompressor / deesser / afftdn，
+ * 混音图里 —— 需要担心延迟的是 acompressor / deesser / afftdn，
  * 那些都进了人声预处理 pass（见 buildVocalPreProcessArgs）。
  * 频率与类型必须与前端预览的 BiquadFilterNode 一致（共用 EQ_BANDS）。
  */
@@ -155,7 +154,6 @@ export function buildMixArgs(input: MixArgsInput): string[] {
  * 为什么要有预处理 pass。
  *
  * 本项目最值钱的资产是「干声与伴奏的精确对齐」，而下面这些滤镜都带**内部延迟**：
- *   · rubberband —— 相位声码器，天生有前瞻
  *   · acompressor —— 前瞻式动态处理
  *   · deesser / afftdn —— 检测 + FFT 窗口
  * 把它们挂进混音图，adelay 算出来的毫秒数就不再是真正的对齐量，而且
@@ -189,18 +187,15 @@ const PRE_PROCESS_OUTPUT_ARGS = [
 export interface VocalPreProcessInput {
   sourcePath: string;
   outputPath: string;
-  /** 已按能力探测结果清零（不支持 rubberband 时传 0） */
-  pitchSemitones: number;
   compression: number;
   deEss: number;
   noiseReduction: boolean;
 }
 
 /**
- * 人声预处理链：降噪 → 压缩 → 去齿音 → 升降调。
+ * 人声预处理链：降噪 → 压缩 → 去齿音。
  *
- * 顺序有讲究：先降噪再进动态处理（否则压缩器会被底噪触发），
- * 升降调放最后（避免让前面的处理工作在变调后的音色上）。
+ * 顺序有讲究：先降噪再进动态处理（否则压缩器会被底噪触发）。
  * 压缩的 makeup 不在这里做 —— 它并进了人声的线性增益，见 vocalChainLinearGain。
  */
 export function buildVocalPreProcessArgs(input: VocalPreProcessInput): string[] {
@@ -223,11 +218,6 @@ export function buildVocalPreProcessArgs(input: VocalPreProcessInput): string[] 
     chain.push(`deesser=i=${Math.max(0, Math.min(1, input.deEss)).toFixed(2)}:m=0.5:f=0.5:s=o`);
   }
 
-  const semitones = Math.round(Number(input.pitchSemitones) || 0);
-  if (semitones !== 0) {
-    chain.push(`rubberband=pitch=${semitonesToRatio(semitones).toFixed(6)}:tempo=1`);
-  }
-
   return [
     '-y',
     '-hide_banner',
@@ -236,35 +226,6 @@ export function buildVocalPreProcessArgs(input: VocalPreProcessInput): string[] 
     input.sourcePath,
     '-af',
     chain.join(','),
-    ...PRE_PROCESS_OUTPUT_ARGS,
-    ...PROGRESS_OUTPUT_ARGS,
-    input.outputPath,
-  ];
-}
-
-export interface AccompPreProcessInput {
-  sourcePath: string;
-  outputPath: string;
-  /** 已按能力探测结果清零 */
-  accompSemitones: number;
-}
-
-/**
- * 伴奏升降调。
- *
- * 只动伴奏、不动人声是**正确**的：用户是在按新调唱，录下来的人声本来就在新调上。
- * 这恰好解决了「这首伴奏的调我唱不上去」这个以前完全无解的问题。
- */
-export function buildAccompPreProcessArgs(input: AccompPreProcessInput): string[] {
-  const semitones = Math.round(Number(input.accompSemitones) || 0);
-  return [
-    '-y',
-    '-hide_banner',
-    '-nostdin',
-    '-i',
-    input.sourcePath,
-    '-af',
-    `rubberband=pitch=${semitonesToRatio(semitones).toFixed(6)}:tempo=1`,
     ...PRE_PROCESS_OUTPUT_ARGS,
     ...PROGRESS_OUTPUT_ARGS,
     input.outputPath,

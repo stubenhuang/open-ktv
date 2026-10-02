@@ -290,9 +290,12 @@ function toTrack(row: TrackRow): TrackRecord {
  * 解析落库的 mix_params JSON。
  *
  * 每个字段都以 DEFAULT_MIX_PARAMS 为回落 —— **这是老作品零回归的关键**：
- * 它们的 JSON 里根本没有升降调 / 均衡 / 压缩这些键，回落成中性值之后，
+ * 它们的 JSON 里根本没有均衡 / 压缩这些键，回落成中性值之后，
  * 重新合成的出声与本次改动前逐字节一致（有测试守着）。
  * 解析不出数字（手改库、脏数据）也走同一条回落路径，不静默变成 0。
+ *
+ * 库里可能还留着更早版本写下的键（例如已删掉的升降调），一律忽略：
+ * 返回的对象只按当前 MixParams 的字段集构造。
  */
 function parseMixParams(raw: string): MixParams {
   const fallback = DEFAULT_MIX_PARAMS;
@@ -309,9 +312,6 @@ function parseMixParams(raw: string): MixParams {
         ? (parsed.reverb as ReverbKind)
         : fallback.reverb,
       userOffsetMs: num(parsed.userOffsetMs, fallback.userOffsetMs),
-
-      pitchSemitones: num(parsed.pitchSemitones, fallback.pitchSemitones),
-      accompSemitones: num(parsed.accompSemitones, fallback.accompSemitones),
       vocalPreset: VOCAL_PRESETS.includes(parsed.vocalPreset as VocalPreset)
         ? (parsed.vocalPreset as VocalPreset)
         : fallback.vocalPreset,

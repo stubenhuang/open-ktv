@@ -69,16 +69,6 @@ describe('sanitizeMixParams', () => {
     assert.equal('evil' in result, false);
   });
 
-  it('升降调取整并夹在 ±12 半音', () => {
-    assert.equal(sanitizeMixParams({ pitchSemitones: 99 }, DEFAULT_MIX_PARAMS).pitchSemitones, 12);
-    assert.equal(sanitizeMixParams({ pitchSemitones: -99 }, DEFAULT_MIX_PARAMS).pitchSemitones, -12);
-    assert.equal(sanitizeMixParams({ pitchSemitones: 2.4 }, DEFAULT_MIX_PARAMS).pitchSemitones, 2);
-    assert.equal(sanitizeMixParams({ accompSemitones: -3.6 }, DEFAULT_MIX_PARAMS).accompSemitones, -4);
-
-    const base = mixParams({ pitchSemitones: 5, accompSemitones: -5 });
-    assert.equal(sanitizeMixParams({ pitchSemitones: 'abc' }, base).pitchSemitones, 5, '脏值回落 base');
-  });
-
   it('均衡三段夹在 ±12 dB', () => {
     const result = sanitizeMixParams(
       { eqLowDb: 99, eqMidDb: -99, eqHighDb: 1.25 },

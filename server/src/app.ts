@@ -3,7 +3,6 @@ import path from 'node:path';
 import express from 'express';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { LIBRARY_SOURCES, WEB_DIST_DIR } from './config.ts';
-import { getFfmpegCapabilities } from './ffmpegCapabilities.ts';
 import { createRegistry, type LibraryRegistry } from './library/registry.ts';
 import { queueState } from './jobs.ts';
 import { createLogger, type LogLevel } from './logger.ts';
@@ -56,9 +55,7 @@ export function createApp(options: CreateAppOptions = {}): express.Express {
   });
 
   app.get('/api/health', (_req, res) => {
-    // capabilities 下发给前端：缺 rubberband 时把升降调控件禁掉并说明原因，
-    // 而不是等用户点了合成才失败
-    res.json({ ok: true, queue: queueState(), capabilities: getFfmpegCapabilities() });
+    res.json({ ok: true, queue: queueState() });
   });
 
   app.use('/api/tracks', tracksRouter);

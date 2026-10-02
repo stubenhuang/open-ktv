@@ -52,8 +52,6 @@ export interface PreviewParams {
   /** 服务端实测归一化增益；null = 老作品，按 0dB 基准 */
   levels: WorkLevels | null;
 
-  pitchSemitones: number;
-  accompSemitones: number;
   eqLowDb: number;
   eqMidDb: number;
   eqHighDb: number;
@@ -92,16 +90,6 @@ export interface MixParams {
   reverb: ReverbKind;
   /** 人声对齐微调 -1000–1000 ms：正值=人声更晚（抢拍时用），负值=人声更早（拖拍时用） */
   userOffsetMs: number;
-
-  /* ------------------------------- 音调 ------------------------------- */
-
-  /** 人声升降调：−12..+12 半音（整数）。伴奏不变调 */
-  pitchSemitones: number;
-  /**
-   * 伴奏升降调：−12..+12 半音（整数）。
-   * 用来救「这首伴奏的调我唱不上去」—— 只动伴奏，人声跟着唱就是新调。
-   */
-  accompSemitones: number;
 
   /* ------------------------------- 音效 ------------------------------- */
 
@@ -199,11 +187,6 @@ export interface WorkListItem extends Work {
 export const MIX_LIMITS = {
   gain: { min: 0, max: 2, step: 0.05 },
   userOffsetMs: { min: -1000, max: 1000, step: 10 },
-  /**
-   * 升降调半音数。±12 已是八度极限，再大的话相位声码器的音质损失很难听，
-   * UI 上还会额外提示「±7 以上损失明显」。
-   */
-  semitones: { min: -12, max: 12, step: 1 },
   /** 均衡三段：−12..+12 dB */
   eqDb: { min: -12, max: 12, step: 0.5 },
   /** 「量」类参数（压缩量 / 去齿音强度）：0..1 */
@@ -230,8 +213,6 @@ export const DEFAULT_MIX_PARAMS: MixParams = {
   accompGain: 1,
   reverb: 'room',
   userOffsetMs: 0,
-  pitchSemitones: 0,
-  accompSemitones: 0,
   vocalPreset: 'natural',
   eqLowDb: 0,
   eqMidDb: 0,

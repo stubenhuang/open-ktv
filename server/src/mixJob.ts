@@ -2,18 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   effectiveOffsetMs,
-  needsAccompPreProcess,
   needsVocalPreProcess,
   previewDurationSec,
 } from '../../shared/mix.ts';
 import { JOB_TIMEOUT_MS } from './config.ts';
 import type { TrackRecord, WorkRecord } from './db.ts';
-import { getFfmpegCapabilities } from './ffmpegCapabilities.ts';
 import { runFfmpeg } from './ffmpeg.ts';
 import { createLogger } from './logger.ts';
 import { measureLoudness, normalizeGainDb } from './loudness.ts';
 import {
-  buildAccompPreProcessArgs,
   buildMixArgs,
   buildVocalPreProcessArgs,
   computeLevels,
@@ -58,37 +55,9 @@ async function accompanimentLoudness(track: TrackRecord) {
   return measured;
 }
 
-/**
- * 伴奏升降调结果的落盘路径。
- *
- * 放在 tmp/ 而不是 proxies/：它是混音的内部中间产物，不该被当成可播放资源。
- * 文件名里带上半音数，改调就会算一份新的。tmp/ 只在服务启动时清空，
- * 所以同一次运行里反复「合成」不会重复做变调（那是几秒钟的全曲重编码）。
- */
-function pitchedAccompanimentPath(trackId: string, semitones: number): string {
-  const sign = semitones > 0 ? 'p' : 'm';
-  return path.join(TMP_DIR, `pitch-${trackId}-${sign}${Math.abs(semitones)}.wav`);
-}
-
-/** 删除伴奏时调用：把它留下的响度缓存与变调中间文件一起清掉 */
+/** 删除伴奏时调用：把它留下的响度缓存清掉 */
 export function forgetTrackLoudness(trackId: string): void {
   loudnessCache.delete(trackId);
-}
-
-export function forgetTrackPreProcess(trackId: string): void {
-  const prefix = `pitch-${trackId}-`;
-  void (async () => {
-    try {
-      const entries = await fs.promises.readdir(TMP_DIR);
-      await Promise.all(
-        entries
-          .filter((name) => name.startsWith(prefix))
-          .map((name) => fs.promises.rm(path.join(TMP_DIR, name), { force: true })),
-      );
-    } catch (error) {
-      log.warn('清理伴奏变调缓存失败', { trackId, error });
-    }
-  })();
 }
 
 /* --------------------------------- 主流程 --------------------------------- */
@@ -106,22 +75,11 @@ export async function mixWorkToMp3(input: {
 }): Promise<MixResult> {
   const { work, track, onProgress } = input;
   const params = work.mixParams;
-  const capabilities = getFfmpegCapabilities();
 
-  // 构建缺 rubberband 时把升降调清零：降级禁用，而不是让整个合成失败。
-  // UI 那边也会把这两个控件禁掉并说明原因（/api/health 会下发能力）。
-  const pitchSemitones = capabilities.rubberband ? Math.round(params.pitchSemitones) || 0 : 0;
-  const accompSemitones = capabilities.rubberband ? Math.round(params.accompSemitones) || 0 : 0;
-  if (!capabilities.rubberband && (params.pitchSemitones !== 0 || params.accompSemitones !== 0)) {
-    log.warn('ffmpeg 缺少 rubberband，本次合成的升降调被忽略', { workId: work.id });
-  }
+  const wantsVocalPre = needsVocalPreProcess(params);
 
-  const wantsVocalPre = needsVocalPreProcess({ ...params, pitchSemitones });
-  const wantsAccompPre = needsAccompPreProcess({ accompSemitones });
-
-  // 两个预处理步骤均分 PRE_PROCESS_SHARE，混音吃掉剩下的
-  const stepCount = (wantsVocalPre ? 1 : 0) + (wantsAccompPre ? 1 : 0);
-  const stepShare = stepCount > 0 ? PRE_PROCESS_SHARE / stepCount : 0;
+  // 预处理占 PRE_PROCESS_SHARE，混音吃掉剩下的
+  const stepShare = wantsVocalPre ? PRE_PROCESS_SHARE : 0;
   let finishedSteps = 0;
 
   /** 把一个子步骤的 0–1 映射到整次合成的大进度上 */
@@ -136,7 +94,7 @@ export async function mixWorkToMp3(input: {
   /** 本次合成产生的中间文件，结束（无论成败）都要清掉 */
   const intermediates: string[] = [];
   let vocalPath = work.vocalPath;
-  let accompanimentPath = track.originalPath;
+  const accompanimentPath = track.originalPath;
 
   try {
     if (wantsVocalPre) {
@@ -146,7 +104,6 @@ export async function mixWorkToMp3(input: {
 
       log.debug('人声预处理', {
         workId: work.id,
-        pitchSemitones,
         compression: params.compression,
         deEss: params.deEss,
         noiseReduction: params.noiseReduction,
@@ -155,7 +112,6 @@ export async function mixWorkToMp3(input: {
         args: buildVocalPreProcessArgs({
           sourcePath: work.vocalPath,
           outputPath: prepared,
-          pitchSemitones,
           compression: params.compression,
           deEss: params.deEss,
           noiseReduction: params.noiseReduction,
@@ -167,39 +123,6 @@ export async function mixWorkToMp3(input: {
       });
       vocalPath = prepared;
       finishedSteps += 1;
-    }
-
-    if (wantsAccompPre) {
-      const cached = pitchedAccompanimentPath(track.id, accompSemitones);
-      if (fs.existsSync(cached)) {
-        log.debug('复用已缓存的伴奏升降调结果', { trackId: track.id, accompSemitones });
-        finishedSteps += 1;
-        stepProgress(1);
-      } else {
-        // 先写临时名再 rename：中途失败不会留下一个「看起来已缓存」的半截文件，
-        // 否则下次会直接把它当成品用
-        const partial = `${cached}.part`;
-        try {
-          log.debug('伴奏升降调', { trackId: track.id, accompSemitones });
-          await runFfmpeg({
-            args: buildAccompPreProcessArgs({
-              sourcePath: track.originalPath,
-              outputPath: partial,
-              accompSemitones,
-            }),
-            timeoutMs: JOB_TIMEOUT_MS.preProcess,
-            totalDurationSec: track.duration,
-            onProgress: stepProgress,
-            label: '伴奏升降调',
-          });
-          await fs.promises.rename(partial, cached);
-        } catch (error) {
-          await fs.promises.rm(partial, { force: true });
-          throw error;
-        }
-        finishedSteps += 1;
-      }
-      accompanimentPath = cached;
     }
 
     const [vocalLoudness, accompLoudness] = await Promise.all([

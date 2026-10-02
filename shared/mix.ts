@@ -101,8 +101,6 @@ export function toPreviewParams(
     | 'accompGain'
     | 'reverb'
     | 'userOffsetMs'
-    | 'pitchSemitones'
-    | 'accompSemitones'
     | 'eqLowDb'
     | 'eqMidDb'
     | 'eqHighDb'
@@ -119,8 +117,6 @@ export function toPreviewParams(
     reverb: params.reverb,
     offsetMs: effectiveOffsetMs(autoOffsetMs, params.userOffsetMs),
     levels,
-    pitchSemitones: params.pitchSemitones,
-    accompSemitones: params.accompSemitones,
     eqLowDb: params.eqLowDb,
     eqMidDb: params.eqMidDb,
     eqHighDb: params.eqHighDb,
@@ -154,12 +150,6 @@ export const EQ_BANDS = {
   mid: { frequency: 1200, q: 1 },
   high: { frequency: 4000, q: 1 },
 } as const;
-
-/** 半音数 → 频率比；升降调用它（±12 半音 = 一个八度） */
-export function semitonesToRatio(semitones: number): number {
-  const value = Number.isFinite(semitones) ? semitones : 0;
-  return Math.pow(2, value / 12);
-}
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -293,29 +283,20 @@ export function matchPreset(
 /**
  * 是否需要跑一次「人声预处理 pass」。
  *
- * 判据是「有没有用到带内部延迟的人声处理」：rubberband（相位声码器）、
- * acompressor（前瞻）、deesser、afftdn 都有延迟，挂在混音图里会破坏
- * 这个项目最值钱的对齐语义，所以它们统统走独立的预处理 pass，
- * 现有 mixTimeline 的计算一个字都不用改。
+ * 判据是「有没有用到带内部延迟的人声处理」：acompressor（前瞻）、deesser、
+ * afftdn 都有延迟，挂在混音图里会破坏这个项目最值钱的对齐语义，
+ * 所以它们统统走独立的预处理 pass，现有 mixTimeline 的计算一个字都不用改。
  *
  * 全中性 → 不跑 pass，直接拿原始干声混音，与改动前完全一致（零回归）。
  */
 export function needsVocalPreProcess(
-  params: Pick<MixParams, 'pitchSemitones' | 'compression' | 'deEss' | 'noiseReduction'>,
+  params: Pick<MixParams, 'compression' | 'deEss' | 'noiseReduction'>,
 ): boolean {
   return (
-    Math.round(Number(params.pitchSemitones) || 0) !== 0 ||
     clamp01(params.compression) > 0 ||
     clamp01(params.deEss) > 0 ||
     params.noiseReduction === true
   );
-}
-
-/** 伴奏是否需要预处理（只有升降调会动它） */
-export function needsAccompPreProcess(
-  params: Pick<MixParams, 'accompSemitones'>,
-): boolean {
-  return Math.round(Number(params.accompSemitones) || 0) !== 0;
 }
 
 /**

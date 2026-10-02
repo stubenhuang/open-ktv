@@ -18,22 +18,12 @@ interface Props {
   onApply: (params: MixParams) => void;
   /** 每次改动都回调（不触网）：实时试听引擎靠它立即生效 */
   onParamsChange?: (params: MixParams) => void;
-  /**
-   * ffmpeg 是否支持 rubberband。false 时升降调控件会被禁用并说明原因 ——
-   * 服务端此时会忽略升降调，让用户白拖一个不会生效的滑块更糟。
-   */
-  rubberbandAvailable?: boolean;
 }
 
 function gainLabel(value: number): string {
   if (value <= 0.001) return '静音';
   const db = 20 * Math.log10(value);
   return `${db >= 0 ? '+' : ''}${db.toFixed(1)} dB`;
-}
-
-function semitoneLabel(value: number): string {
-  if (value === 0) return '原调';
-  return `${value > 0 ? '+' : ''}${value} 半音`;
 }
 
 function dbLabel(value: number): string {
@@ -120,13 +110,7 @@ function Group({
   );
 }
 
-export function MixPanel({
-  value,
-  busy,
-  onApply,
-  onParamsChange,
-  rubberbandAvailable = true,
-}: Props) {
+export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
   const [params, setParams] = useState<MixParams>(value ?? DEFAULT_MIX_PARAMS);
   /** 最新参数的一份镜像：setParams 的函数式更新拿不到同步的 next，实时回调需要它 */
   const paramsRef = useRef(params);
@@ -155,8 +139,6 @@ export function MixPanel({
   };
 
   const activePreset = matchPreset(params);
-  // 这几个处理只有服务端成品里有，实时试听放不出来，要明确告诉用户
-  const pitchPending = params.pitchSemitones !== 0 || params.accompSemitones !== 0;
 
   return (
     <div className="card mix-panel">
@@ -199,58 +181,6 @@ export function MixPanel({
             onChange={(event) => update({ accompGain: Number(event.target.value) })}
           />
         </div>
-      </Group>
-
-      <Group title="音调（升降调）">
-        {!rubberbandAvailable && (
-          <div className="alert alert-warn" style={{ marginTop: 0 }}>
-            当前 ffmpeg 不带 rubberband，升降调不可用（其余功能不受影响）。
-            换一个带 <code>--enable-librubberband</code> 的构建即可启用。
-          </div>
-        )}
-
-        <div className="field">
-          <div className="field-label">
-            <span>人声升降调</span>
-            <span className="field-value">{semitoneLabel(params.pitchSemitones)}</span>
-          </div>
-          <input
-            type="range"
-            min={MIX_LIMITS.semitones.min}
-            max={MIX_LIMITS.semitones.max}
-            step={MIX_LIMITS.semitones.step}
-            value={params.pitchSemitones}
-            disabled={!rubberbandAvailable}
-            onChange={(event) => update({ pitchSemitones: Number(event.target.value) })}
-          />
-          <div className="small faint">只调整你自己的人声，伴奏不变。±7 半音以上音质损失会明显。</div>
-        </div>
-
-        <div className="field" style={{ marginTop: 14 }}>
-          <div className="field-label">
-            <span>伴奏升降调</span>
-            <span className="field-value">{semitoneLabel(params.accompSemitones)}</span>
-          </div>
-          <input
-            type="range"
-            min={MIX_LIMITS.semitones.min}
-            max={MIX_LIMITS.semitones.max}
-            step={MIX_LIMITS.semitones.step}
-            value={params.accompSemitones}
-            disabled={!rubberbandAvailable}
-            onChange={(event) => update({ accompSemitones: Number(event.target.value) })}
-          />
-          <div className="small faint">
-            伴奏调太高/太低时用它移调 —— 你按新调重唱即可，人声不用再动。
-          </div>
-        </div>
-
-        {pitchPending && (
-          <div className="alert alert-warn">
-            升降调需要在服务端重新编码，**实时试听里听不到**（浏览器端做变速不变调代价太大）。
-            想确认效果请点「合成」，再到作品库试听。
-          </div>
-        )}
       </Group>
 
       <Group title="音效">

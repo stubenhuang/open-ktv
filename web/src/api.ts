@@ -111,16 +111,7 @@ export type LibraryDownloadResult =
   | { taskId: string; title: string }
   | { alreadyImported: true; track: TrackDetail };
 
-/** ffmpeg 能力：缺 rubberband 时前端要把升降调控件禁掉并说明原因 */
-export interface HealthResponse {
-  ok: boolean;
-  queue: { active: string | null; waiting: number };
-  capabilities: { rubberband: boolean };
-}
-
 export const api = {
-  health: () => request<HealthResponse>('/api/health'),
-
   listTracks: () => request<TrackListItem[]>('/api/tracks'),
 
   getTrack: (id: string) => request<TrackDetail>(`/api/tracks/${encodeURIComponent(id)}`),

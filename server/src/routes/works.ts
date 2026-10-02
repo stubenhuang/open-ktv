@@ -73,25 +73,6 @@ export function sanitizeMixParams(input: unknown, base: MixParams): MixParams {
       ),
     ),
 
-    // 升降调必须是整数半音：rubberband 接受任意比值，但半音才是用户心智里的单位，
-    // 而且小数会让「+1 半音」这种显示变得很难看
-    pitchSemitones: Math.round(
-      clampNumber(
-        raw.pitchSemitones,
-        MIX_LIMITS.semitones.min,
-        MIX_LIMITS.semitones.max,
-        base.pitchSemitones,
-      ),
-    ),
-    accompSemitones: Math.round(
-      clampNumber(
-        raw.accompSemitones,
-        MIX_LIMITS.semitones.min,
-        MIX_LIMITS.semitones.max,
-        base.accompSemitones,
-      ),
-    ),
-
     vocalPreset,
     eqLowDb: clampNumber(raw.eqLowDb, MIX_LIMITS.eqDb.min, MIX_LIMITS.eqDb.max, base.eqLowDb),
     eqMidDb: clampNumber(raw.eqMidDb, MIX_LIMITS.eqDb.min, MIX_LIMITS.eqDb.max, base.eqMidDb),

@@ -25,8 +25,6 @@ before(async () => {
 
   db.initDb();
   cleanTmpDir();
-  // 同 index.ts 的启动流程：先探测 ffmpeg 能力，/api/health 才会如实上报
-  await (await import('../server/src/ffmpegCapabilities.ts')).detectFfmpegCapabilities();
 
   const app = createApp();
   server = http.createServer(app);
@@ -64,12 +62,9 @@ describe('HTTP API（真实 Express + 临时数据目录）', () => {
     const body = (await response.json()) as {
       ok: boolean;
       queue: { active: null };
-      capabilities: { rubberband: boolean };
     };
     assert.equal(body.ok, true);
     assert.deepEqual(body.queue, { active: null, waiting: 0 });
-    // 只断言形状：不同机器的 ffmpeg 构建不一定都带 rubberband
-    assert.equal(typeof body.capabilities.rubberband, 'boolean');
   });
 
   it('未知接口 404 JSON', async () => {

@@ -10,11 +10,9 @@ import {
   deEssEnabled,
   effectiveOffsetMs,
   matchPreset,
-  needsAccompPreProcess,
   needsVocalPreProcess,
   previewDurationSec,
   previewLinearGains,
-  semitonesToRatio,
   toPreviewParams,
   vocalChainLinearGain,
 } from '../shared/mix.ts';
@@ -132,15 +130,6 @@ describe('预览混响参数表', () => {
 });
 
 describe('修音与音效链：共享公式（服务端 ffmpeg 与前端预览共用）', () => {
-  it('semitonesToRatio：±12 半音正好是一个八度', () => {
-    assert.equal(semitonesToRatio(0), 1);
-    assert.ok(Math.abs(semitonesToRatio(12) - 2) < 1e-12);
-    assert.ok(Math.abs(semitonesToRatio(-12) - 0.5) < 1e-12);
-    // 半音是乘性关系：+1 再 −1 回到原处
-    assert.ok(Math.abs(semitonesToRatio(1) * semitonesToRatio(-1) - 1) < 1e-12);
-    assert.equal(semitonesToRatio(Number.NaN), 1, '脏值当 0 处理');
-  });
-
   it('compressorParams：0 就是关；量越大阈值越低、压缩比越高', () => {
     const off = compressorParams(0);
     assert.equal(off.enabled, false);
@@ -241,23 +230,12 @@ describe('修音与音效链：共享公式（服务端 ffmpeg 与前端预览�
   });
 
   it('needsVocalPreProcess：全中性时不跑预处理（老作品走原路径）', () => {
-    const neutral = { pitchSemitones: 0, compression: 0, deEss: 0, noiseReduction: false };
+    const neutral = { compression: 0, deEss: 0, noiseReduction: false };
     assert.equal(needsVocalPreProcess(neutral), false, '什么都不开就不该多跑一次 ffmpeg');
 
-    assert.equal(needsVocalPreProcess({ ...neutral, pitchSemitones: 1 }), true);
-    assert.equal(needsVocalPreProcess({ ...neutral, pitchSemitones: -12 }), true);
     assert.equal(needsVocalPreProcess({ ...neutral, compression: 0.05 }), true);
     assert.equal(needsVocalPreProcess({ ...neutral, deEss: 0.05 }), true);
     assert.equal(needsVocalPreProcess({ ...neutral, noiseReduction: true }), true);
-    // 小数半音会被取整成 0 → 不算需要预处理
-    assert.equal(needsVocalPreProcess({ ...neutral, pitchSemitones: 0.4 }), false);
-  });
-
-  it('needsAccompPreProcess：只有升降调会动伴奏', () => {
-    assert.equal(needsAccompPreProcess({ accompSemitones: 0 }), false);
-    assert.equal(needsAccompPreProcess({ accompSemitones: 0.4 }), false);
-    assert.equal(needsAccompPreProcess({ accompSemitones: 3 }), true);
-    assert.equal(needsAccompPreProcess({ accompSemitones: -7 }), true);
   });
 
   it('toPreviewParams 把新参数原样带进预览（预设不参与 DSP）', () => {
@@ -270,8 +248,6 @@ describe('修音与音效链：共享公式（服务端 ffmpeg 与前端预览�
         compression: 0.5,
         deEss: 0.25,
         noiseReduction: true,
-        pitchSemitones: 2,
-        accompSemitones: -1,
       },
       0,
       null,
@@ -282,8 +258,6 @@ describe('修音与音效链：共享公式（服务端 ffmpeg 与前端预览�
     assert.equal(preview.compression, 0.5);
     assert.equal(preview.deEss, 0.25);
     assert.equal(preview.noiseReduction, true);
-    assert.equal(preview.pitchSemitones, 2);
-    assert.equal(preview.accompSemitones, -1);
     // 预设只是 UI 便利，不能成为 PreviewParams 的输入（少一个会分叉的来源）
     assert.equal('vocalPreset' in preview, false);
   });

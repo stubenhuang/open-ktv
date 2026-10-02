@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { DEFAULT_MIX_PARAMS, type MixParams } from '../shared/types.ts';
+import { DEFAULT_MIX_PARAMS } from '../shared/types.ts';
 import { createIsolatedDataDir, removeIsolatedDataDir } from './isolated.ts';
 
 /**
@@ -34,9 +34,6 @@ before(async () => {
   mixJob = await import('../server/src/mixJob.ts');
   paths = await import('../server/src/paths.ts');
   db.initDb();
-  // 生产里 index.ts 启动时会探测 ffmpeg 能力；测试直接调 mixJob，得自己探一次，
-  // 否则 getFfmpegCapabilities() 会保守地返回「不支持 rubberband」，升降调被清零
-  await (await import('../server/src/ffmpegCapabilities.ts')).detectFfmpegCapabilities();
 
   trackId = 'track-1';
   workId = 'work-1';
@@ -151,7 +148,6 @@ describe('mixWorkToMp3', () => {
       [],
       `不该有人声预处理中间文件，实际：${entries.join(', ')}`,
     );
-    assert.deepEqual(entries.filter((name) => name.startsWith('pitch-')), []);
   });
 
   it('开启压缩 / 均衡后仍能出片，且预处理中间文件被清掉', async () => {
@@ -188,45 +184,5 @@ describe('mixWorkToMp3', () => {
       `预处理中间文件应被清理，实际：${entries.join(', ')}`,
     );
     assert.equal(fs.existsSync(work.vocalPath), true, '原始干声必须还在');
-  });
-
-  it('伴奏升降调：第一次跑生成缓存，第二次直接复用', async () => {
-    const track = db.getTrack(trackId)!;
-    const work = db.getWork(workId)!;
-    const params: MixParams = { ...DEFAULT_MIX_PARAMS, reverb: 'dry', accompSemitones: 2 };
-
-    const first = await mixJob.mixWorkToMp3({
-      work: { ...work, mixParams: params },
-      track,
-      onProgress: () => {},
-    });
-    assert.equal((await helpers.summarize(first.outputPath)).audioCodec, 'mp3');
-
-    // 变调结果按 (trackId, 半音数) 缓存在 tmp 里，供后续「合成」复用
-    const cached = (await fs.promises.readdir(paths.TMP_DIR)).filter((name) =>
-      name.startsWith(`pitch-${trackId}-`),
-    );
-    assert.equal(cached.length, 1, `应缓存一份变调结果，实际：${cached.join(', ')}`);
-    assert.match(cached[0]!, /-p2\.wav$/);
-
-    // 第二次：缓存命中，不需要重新变调（这里只验证仍能出片且缓存没多出一份）
-    const second = await mixJob.mixWorkToMp3({
-      work: { ...work, mixParams: params },
-      track,
-      onProgress: () => {},
-    });
-    assert.equal((await helpers.summarize(second.outputPath)).audioCodec, 'mp3');
-    const again = (await fs.promises.readdir(paths.TMP_DIR)).filter((name) =>
-      name.startsWith(`pitch-${trackId}-`),
-    );
-    assert.equal(again.length, 1, '缓存命中不该再生成一份');
-
-    // 删除伴奏时缓存要被清掉
-    mixJob.forgetTrackPreProcess(trackId);
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    const afterCleanup = (await fs.promises.readdir(paths.TMP_DIR)).filter((name) =>
-      name.startsWith(`pitch-${trackId}-`),
-    );
-    assert.deepEqual(afterCleanup, []);
   });
 });
