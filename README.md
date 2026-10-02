@@ -43,26 +43,34 @@ npm install
 ./openktv.sh start
 ```
 
-然后打开 <http://127.0.0.1:8787>。关掉用 `./openktv.sh stop`。
+然后打开 <http://127.0.0.1:8787>。它会在当前终端前台跑、日志实时打出来，按 `Ctrl+C` 就关掉。
 
 ### 服务管理脚本 `openktv.sh`
 
-推荐用它来开关服务：它在后台跑（不占终端），自动记 pid、写日志、检查端口。
+推荐用它来开关服务：默认**占住当前终端前台跑**（日志实时打出来，`Ctrl+C` 关闭），
+加 `--daemon` 才是放到后台。两种方式都会自动记 pid、写日志、检查端口。
 
 ```bash
-./openktv.sh start            # 启动（生产模式：单进程，会先自动构建前端）
+./openktv.sh start            # 启动（生产模式：单进程，会先自动构建前端）——前台跑，Ctrl+C 关
 ./openktv.sh start --dev      # 启动开发模式（Vite 热更新 + 后端 --watch，改代码自动生效）
+./openktv.sh start --daemon   # 放后台跑（不占终端），启动完就返回，用 stop 关
 ./openktv.sh stop             # 关闭
 ./openktv.sh stop --force     # 关闭，并清掉占着端口的残留进程
-./openktv.sh restart          # 重启（沿用上次的模式）
+./openktv.sh restart          # 重启（沿用上次的模式，同样是前台跑）
 ./openktv.sh status           # 查看状态（运行中退出码 0，没运行退出码 1）
 ./openktv.sh logs             # 跟踪日志（Ctrl+C 退出，不会关掉服务）
 ```
+
+前台模式下 `Ctrl+C` 一次是优雅关闭（先给服务发信号，最多等 10 秒收尾），再按一次就是强制结束。
+不管前台后台，pid 都写在同一个 `.run/openktv.pid` 里，所以另开一个终端跑 `status` / `stop` 一样管用 ——
+在别的终端 `stop` 掉之后，前台那个脚本会自己收尾退出。
 
 | 模式 | 进程数 | 访问地址 | 说明 |
 |---|---|---|---|
 | `start`（默认，生产） | 1 | <http://127.0.0.1:8787> | 单进程同时托管前端和 API。每次启动都会重新构建前端（约 0.1 秒） |
 | `start --dev` | 3 | <http://127.0.0.1:5173> | Vite HMR + 后端 `--watch`，改代码立刻生效 |
+
+`--daemon` 只决定「占不占终端」，跟上面两种模式是正交的。
 
 相关文件（都在 `.run/`，已 gitignore）：
 
@@ -84,7 +92,8 @@ npm run dev              # 开发模式，前台跑，Ctrl+C 关
 npm run build && npm start   # 生产模式，前台跑，Ctrl+C 关
 ```
 
-前台跑的时候 `Ctrl+C` 一次就能把前后的进程都收干净（`dev.mjs` 做了信号转发）。
+前台跑的时候 `Ctrl+C` 一次就能把前后的进程都收干净（`dev.mjs` 做了信号转发）；
+`./openktv.sh start` 默认就是这套行为，只是多了构建前端、查端口、记 pid 和日志。
 
 ### 如果 `npm install` 报 EPERM
 
@@ -317,7 +326,7 @@ accompBufferSource ──> accompGain ──────────────
 ## 目录结构
 
 ```
-openktv.sh        start / stop / restart / status / logs 服务管理脚本
+openktv.sh        start [--dev|--daemon] / stop / restart / status / logs 服务管理脚本（start 默认前台，Ctrl+C 关）
 server/src/
   index.ts        Express 入口、启动恢复、监听与信号收尾
   app.ts          createApp()：路由、静态托管、SPA 兜底、统一错误出口、请求日志
