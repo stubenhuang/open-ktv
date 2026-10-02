@@ -42,6 +42,39 @@ export function formatDateTime(timestamp: number): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+/* ------------------------------ 麦克风设备筛选 ------------------------------ */
+
+/**
+ * 判断一个音频输入设备是不是「机器自带的」（MacBook / iMac 的内置麦克风）。
+ *
+ * 为什么只能看 label：Web 平台没给设备类型字段，`MediaDeviceInfo` 只有 label /
+ * deviceId / groupId。好在 macOS 上 Chrome 的 label 是「系统设备名 (传输类型)」，
+ * 而 Apple 机身内置麦克风的名字一定带机型或「内置」字样：
+ *
+ *   内置：`MacBook Pro麦克风 (Built-in)`（本机实测）、`MacBook Pro Microphone (Built-in)`、
+ *         `内置麦克风`、`Internal Microphone`
+ *   外置：`外置麦克风 (Built-in)`（本机实测的 3.5mm 口外接麦）、`Blue Yeti (USB)`、
+ *         `AirPods Pro (Bluetooth)`
+ *
+ * **「外置」这类明确标记优先于传输类型**：3.5mm 耳机口那个外接麦走的是机身 codec，
+ * macOS 把它的 Transport 也报成 `Built-in`，只看后缀会把用户真正的麦克风藏掉。
+ *
+ * label 为空（还没授权时）不算内置 —— 宁可多列一个，也不要把设备列表清空。
+ *
+ * deviceId 为 `default` 时一律算内置：那是 Chrome 的「系统默认设备」别名，
+ * 指向哪个物理设备无从判断，而它默认就是内置那个。
+ */
+export function isBuiltinMic(deviceId: string, label: string): boolean {
+  if (deviceId === 'default') return true;
+  const name = label ?? '';
+  // 名字里明说是外接/外置的一律当外置
+  if (/外置|外接|external|usb|bluetooth|蓝牙|无线|wireless|airpods|thunderbolt/i.test(name)) {
+    return false;
+  }
+  if (/built[\s_-]?in|内置|内建|internal/i.test(name)) return true;
+  return /macbook|imac/i.test(name);
+}
+
 /* ------------------------------ 歌词滚动布局 ------------------------------ */
 
 /**

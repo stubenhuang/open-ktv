@@ -5,6 +5,7 @@ import {
   formatDateTime,
   formatDuration,
   formatTimer,
+  isBuiltinMic,
   lyricTrackOffsetY,
 } from '../web/src/utils.ts';
 
@@ -111,5 +112,48 @@ describe('歌词滚动布局', () => {
     assert.equal(lyricTrackOffsetY(1, 40, 3), 0);
     assert.equal(lyricTrackOffsetY(Number.NaN), lyricTrackOffsetY(0));
     assert.equal(lyricTrackOffsetY(0, 0, 0), 0);
+  });
+});
+
+describe('isBuiltinMic（演唱只用外置输入）', () => {
+  it('Apple 机身内置麦克风的几种叫法都认得出来', () => {
+    // 本机实测：macOS 中文系统 + Chrome 的 label 就是「系统设备名 (传输类型)」
+    assert.equal(isBuiltinMic('abc123', 'MacBook Pro麦克风 (Built-in)'), true);
+    assert.equal(isBuiltinMic('abc123', 'MacBook Pro Microphone (Built-in)'), true);
+    assert.equal(isBuiltinMic('abc123', 'MacBook Air的麦克风（内置）'), true);
+    assert.equal(isBuiltinMic('abc123', 'iMac Microphone (Built-in)'), true);
+    // 老机型 / 英文系统
+    assert.equal(isBuiltinMic('abc123', '内置麦克风'), true);
+    assert.equal(isBuiltinMic('abc123', 'Internal Microphone (Built-in)'), true);
+    assert.equal(isBuiltinMic('abc123', 'Built-in Audio Input'), true);
+  });
+
+  it('外置设备不会被误杀', () => {
+    assert.equal(isBuiltinMic('usb-1', 'Blue Yeti (USB)'), false);
+    assert.equal(isBuiltinMic('usb-2', 'AirPods Pro (Bluetooth)'), false);
+    assert.equal(isBuiltinMic('usb-3', 'MixPre-3 II (Thunderbolt)'), false);
+    assert.equal(isBuiltinMic('usb-4', 'USB Audio Device'), false);
+    // 声卡上的「麦克风」二字不该触发内置判定
+    assert.equal(isBuiltinMic('usb-5', 'Scarlett Solo 麦克风输入 (USB)'), false);
+  });
+
+  it('3.5mm 口的外接麦：名字写着「外置」，传输类型却是 Built-in（真实踩过的坑）', () => {
+    // macOS 把这个口的 Transport 也报成 Built-in，Chrome 的 label 就成了
+    // 「外置麦克风 (Built-in)」——只看 (Built-in) 后缀会把用户真正的麦克风藏掉
+    assert.equal(isBuiltinMic('jack-1', '外置麦克风 (Built-in)'), false);
+    assert.equal(isBuiltinMic('jack-1', '外置麦克风'), false);
+    assert.equal(isBuiltinMic('jack-1', '外接麦克风 (Built-in)'), false);
+    assert.equal(isBuiltinMic('jack-1', 'External Microphone (Built-in)'), false);
+  });
+
+  it('Chrome 的「系统默认设备」别名算内置', () => {
+    // 它指向哪个物理设备无从判断，而默认就是内置那个
+    assert.equal(isBuiltinMic('default', 'Default - 麦克风'), true);
+    assert.equal(isBuiltinMic('default', '任何名字'), true);
+  });
+
+  it('label 为空（还没授权）不算内置，宁可多列也不清空列表', () => {
+    assert.equal(isBuiltinMic('some-id', ''), false);
+    assert.equal(isBuiltinMic('some-id', undefined as unknown as string), false);
   });
 });

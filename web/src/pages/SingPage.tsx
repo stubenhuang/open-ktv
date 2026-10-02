@@ -135,8 +135,9 @@ export default function SingPage() {
 
   useEffect(() => {
     // 等设备列表出来再接入：否则会先用「默认设备」接一次、拿到 deviceId 再接一次，
-    // 两次 getUserMedia 互相 teardown，容易留下竞态
-    if (!engine || mic.permission !== 'granted' || mic.devices.length === 0) {
+    // 两次 getUserMedia 互相 teardown，容易留下竞态。
+    // 这里刻意要求 deviceId 非空：传 null/空会落到「系统默认设备」，也就是我们要避开的内置麦克风。
+    if (!engine || mic.permission !== 'granted' || !mic.deviceId) {
       setMicReady(false);
       return;
     }
@@ -145,7 +146,7 @@ export default function SingPage() {
     setMicReady(false);
 
     engine
-      .setMicDevice(mic.deviceId || null)
+      .setMicDevice(mic.deviceId)
       .then(() => {
         if (!cancelled) setMicReady(true);
       })
@@ -158,7 +159,7 @@ export default function SingPage() {
     return () => {
       cancelled = true;
     };
-  }, [engine, mic.permission, mic.deviceId, mic.devices.length]);
+  }, [engine, mic.permission, mic.deviceId]);
 
   useEffect(() => {
     engine?.setAccompVolume(accompVolume);
@@ -472,7 +473,7 @@ export default function SingPage() {
                       ? mic.permission !== 'granted'
                         ? '等待麦克风授权…'
                         : mic.devices.length === 0
-                          ? '没有检测到麦克风设备，请插上耳麦后刷新。'
+                          ? '没有可用的外置麦克风，插上麦克风后这里会自动出现。'
                           : micReady
                             ? '点开始后会先起录 0.15 秒静音再放伴奏，系统精确测量伴奏起播时刻，用来自动对齐。'
                             : '正在接入麦克风…'
@@ -494,16 +495,47 @@ export default function SingPage() {
               <select
                 className="select-input"
                 value={mic.deviceId}
-                disabled={mic.permission !== 'granted' || recording}
+                disabled={mic.permission !== 'granted' || recording || mic.devices.length === 0}
                 onChange={(event) => mic.selectDevice(event.target.value)}
               >
-                {mic.devices.length === 0 && <option value="">（未检测到设备）</option>}
+                {mic.devices.length === 0 && (
+                  <option value="">
+                    {mic.permission === 'granted' ? '（没有可用的外置输入）' : '（等待麦克风授权）'}
+                  </option>
+                )}
                 {mic.devices.map((device) => (
                   <option key={device.deviceId} value={device.deviceId}>
                     {device.label}
                   </option>
                 ))}
               </select>
+
+              {/* 只列外置输入：内置麦克风被藏起来了，这里说清它们去哪了，并留一个「全都放出来」的开关
+                  （判据是设备名，所以把藏掉的名字也列出来 —— 万一认错了用户一眼能看出来并自己救回来） */}
+              {mic.hiddenBuiltinLabels.length > 0 &&
+                (mic.showBuiltin ? (
+                  <div className="small faint">
+                    已显示全部输入设备（含内置麦克风）。
+                    <button type="button" className="link-btn" onClick={mic.toggleBuiltin}>
+                      只看外置
+                    </button>
+                  </div>
+                ) : mic.devices.length === 0 ? (
+                  <div className="alert alert-warn" style={{ marginTop: 8 }}>
+                    没检测到外置麦克风，已隐藏：{mic.hiddenBuiltinLabels.join('、')}。
+                    插上 USB / 3.5mm 麦克风后会自动出现在这里。
+                    <button type="button" className="link-btn" onClick={mic.toggleBuiltin}>
+                      显示全部设备
+                    </button>
+                  </div>
+                ) : (
+                  <div className="small faint">
+                    只列外置输入（已隐藏：{mic.hiddenBuiltinLabels.join('、')}）。
+                    <button type="button" className="link-btn" onClick={mic.toggleBuiltin}>
+                      显示全部设备
+                    </button>
+                  </div>
+                ))}
               <div className="field-label" style={{ marginTop: 6 }}>
                 <span>输入电平</span>
                 <span className="faint small">{micReady ? '对着麦克风说话试试' : '未接入'}</span>
