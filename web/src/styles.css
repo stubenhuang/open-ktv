@@ -987,7 +987,7 @@ input[type='range']:disabled::-webkit-slider-thumb {
 /* ------------------------------ 跟唱歌词 ------------------------------ */
 
 /*
- * 行高（小窗 34px / 全屏 64px）与 web/src/utils.ts 的 LYRIC_LINE_HEIGHT、
+ * 行高（小窗 34px / 全屏 72px）与 web/src/utils.ts 的 LYRIC_LINE_HEIGHT、
  * LYRIC_FULLSCREEN_LINE_HEIGHT 必须一致 —— 滚动位置是按「行下标 × 行高」
  * 算出来的，改一边就要改另一边。
  */
@@ -1040,30 +1040,30 @@ input[type='range']:disabled::-webkit-slider-thumb {
 }
 
 .lyrics-view-fullscreen .lyric-line {
-  font-size: 26px;
+  font-size: 30px;
   font-weight: 600;
   padding: 0 12px;
 }
 
 /* 长句缩字号（档位由 lyricLineSizeClass 按字符数判），免得 nowrap 裁掉 */
 .lyrics-view-fullscreen .lyric-fs-sm {
-  font-size: 22px;
+  font-size: 26px;
 }
 
 .lyrics-view-fullscreen .lyric-fs-xs {
-  font-size: 18px;
+  font-size: 22px;
 }
 
 .lyrics-view-fullscreen .lyric-active {
-  font-size: 42px;
+  font-size: 48px;
 }
 
 .lyrics-view-fullscreen .lyric-active.lyric-fs-sm {
-  font-size: 34px;
+  font-size: 40px;
 }
 
 .lyrics-view-fullscreen .lyric-active.lyric-fs-xs {
-  font-size: 27px;
+  font-size: 32px;
 }
 
 .lyrics-track {
@@ -1076,7 +1076,7 @@ input[type='range']:disabled::-webkit-slider-thumb {
 
 .lyric-line {
   height: 34px;
-  font-size: 17px;
+  font-size: 19px;
   font-weight: 500;
   text-align: center;
   padding: 0 18px;
@@ -1100,7 +1100,7 @@ input[type='range']:disabled::-webkit-slider-thumb {
 /* 当前行：放大 + 主色高亮，一眼能看到唱到哪了 */
 .lyric-active {
   color: var(--accent-2);
-  font-size: 21px;
+  font-size: 24px;
   font-weight: 700;
   text-shadow: 0 0 18px rgba(56, 217, 255, 0.45);
 }

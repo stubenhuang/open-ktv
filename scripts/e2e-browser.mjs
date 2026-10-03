@@ -777,6 +777,83 @@ async function main() {
   );
   pass('实时试听已起播（浏览器内 Web Audio 混音，无 ffmpeg 参与）');
 
+  /*
+   * 回归：拖进度条 / 改人声对齐都走引擎的 startSources()（停旧轨、起新轨）。
+   * 旧轨 stop() 触发的 ended 是异步派发的，等它到的时候 stopping 已被重置成 false，
+   * 会被误判成「自然播完」——试听当场结束、进度条跳到最后。起播代数就是防这个的。
+   * 这两步紧跟起播之后做：测试干声只有 ~3.15s，别等它自然播完。
+   *
+   * 断言挑「还在播 + 时间文本没变成 结尾/结尾」：无头环境可能没有音频时钟，
+   * currentTime 不推进，所以不能断言位置前进，只能断言它没被甩到结尾。
+   */
+  const readTransport = `(() => {
+    const button = document.querySelector('.preview-transport button');
+    const bar = document.querySelector('.preview-transport input[type=range]');
+    const time = document.querySelector('.preview-time');
+    return JSON.stringify({
+      playing: Boolean(button && button.textContent.includes('暂停')),
+      seek: bar ? bar.value : null,
+      time: time ? time.textContent.trim() : null,
+    });
+  })()`;
+
+  step('实时试听：拖进度条不该把播放打断、不该把进度条甩到结尾');
+
+  const seekState = await evaluate(
+    page,
+    `(async () => {
+      const before = ${readTransport};
+      const bar = document.querySelector('.preview-transport input[type=range]');
+      if (!bar) return JSON.stringify({ error: '找不到试听进度条' });
+      if (!JSON.parse(before).playing) return JSON.stringify({ error: '预览没在播放' });
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(bar, String(Number(bar.max) * 0.4));
+      bar.dispatchEvent(new Event('input', { bubbles: true }));
+      // 等过 seek 合并窗（120ms）+ 旧轨 ended 的派发
+      await new Promise((r) => setTimeout(r, 500));
+      return ${readTransport};
+    })()`,
+    '拖动试听进度条',
+  );
+  const seekResult = JSON.parse(seekState);
+  if (seekResult.error) throw new Error(seekResult.error);
+  if (!seekResult.playing) {
+    throw new Error(`拖进度条把试听打断了（像被误判成播完）：${seekState}`);
+  }
+  if (seekResult.time && /^(\S+)\s*\/\s*\1$/.test(seekResult.time)) {
+    throw new Error(`拖进度条后进度条被甩到结尾：${seekResult.time}`);
+  }
+  pass(`拖进度条后续播正常（${seekResult.time}，滑块 ${seekResult.seek}）`);
+
+  step('实时试听：改人声对齐（触发两轨重排）也不该打断播放');
+
+  const offsetState = await evaluate(
+    page,
+    `(async () => {
+      const group = [...document.querySelectorAll('.mix-group')]
+        .find((n) => (n.querySelector('summary') || {}).textContent.includes('人声对齐微调'));
+      if (group) group.open = true;
+      const input = group ? group.querySelector('input.ms-input') : null;
+      if (!input) return JSON.stringify({ error: '找不到人声对齐微调的毫秒输入框' });
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(input, '300');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      // 对齐重排在引擎里有 120ms 防抖，等它排完再看
+      await new Promise((r) => setTimeout(r, 500));
+      return ${readTransport};
+    })()`,
+    '改人声对齐微调',
+  );
+  const offsetResult = JSON.parse(offsetState);
+  if (offsetResult.error) throw new Error(offsetResult.error);
+  if (!offsetResult.playing) {
+    throw new Error(`改人声对齐把试听打断了（像被误判成播完）：${offsetState}`);
+  }
+  if (offsetResult.time && /^(\S+)\s*\/\s*\1$/.test(offsetResult.time)) {
+    throw new Error(`改人声对齐后进度条被甩到结尾：${offsetResult.time}`);
+  }
+  pass(`改人声对齐后续播正常（${offsetResult.time}）`);
+
   // 测试曲只有 3 秒，趁还在播立刻拖滑块：不点「合成」，参数实时送进引擎，
   // 播放不中断、无报错
   const liveTweak = await evaluate(

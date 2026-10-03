@@ -120,12 +120,12 @@ describe('歌词滚动布局', () => {
 
 describe('全屏歌词的行高与字号档', () => {
   it('全屏行高更大，当前行同样落在可视区正中间', () => {
-    // 5 行可视区、行高 64：容器高 320，中线 160
-    assert.equal(LYRIC_FULLSCREEN_LINE_HEIGHT, 64);
+    // 5 行可视区、行高 72：容器高 360，中线 180
+    assert.equal(LYRIC_FULLSCREEN_LINE_HEIGHT, 72);
     assert.equal(LYRIC_FULLSCREEN_VIEW_LINES, 5);
-    // 第 0 行：轨道上移到 128，该行中心 = 128 + 32 = 160 ✓
-    assert.equal(lyricTrackOffsetY(0, LYRIC_FULLSCREEN_LINE_HEIGHT, LYRIC_FULLSCREEN_VIEW_LINES), 128);
-    // 第 2 行：128 − 128 = 0，该行中心 = 0 + 2*64 + 32 = 160 ✓
+    // 第 0 行：轨道上移到 144，该行中心 = 144 + 36 = 180 ✓
+    assert.equal(lyricTrackOffsetY(0, LYRIC_FULLSCREEN_LINE_HEIGHT, LYRIC_FULLSCREEN_VIEW_LINES), 144);
+    // 第 2 行：144 − 144 = 0，该行中心 = 0 + 2*72 + 36 = 180 ✓
     assert.equal(lyricTrackOffsetY(2, LYRIC_FULLSCREEN_LINE_HEIGHT, LYRIC_FULLSCREEN_VIEW_LINES), 0);
   });
 

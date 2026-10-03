@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PreviewEngine } from '../audio/preview';
 import { log } from '../log';
 import { formatDuration } from '../utils';
@@ -15,6 +15,14 @@ interface Props {
 
 /** 播放中位置刷新间隔；200ms 足够顺眼，又不至于频繁重渲染 */
 const TICK_MS = 200;
+/**
+ * 拖进度条时 seek 的合并窗。
+ *
+ * 拖动过程中每个像素都发一次 input：每次都 seek 就是每次都停/起两轨，
+ * 听到的是一路爆音。这里只让 UI 位置跟手，真正 seek 等停手后合成一次
+ * （和预览引擎里对齐重排的 OFFSET_REARM_MS 同一个思路）。
+ */
+const SEEK_COMMIT_MS = 120;
 
 /**
  * 「实时试听」卡片：播放/暂停 + 进度条。
@@ -27,6 +35,9 @@ export function LivePreview({ engine, status, error, onRequestPlay }: Props) {
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   const draggingRef = useRef(false);
+  /** 拖动中记下的待 seek 位置；尚未提交给引擎 */
+  const pendingSeekRef = useRef<number | null>(null);
+  const seekTimerRef = useRef<number | null>(null);
 
   // 换了一首作品（engine 实例变化）时同步到引擎的真实状态。
   // 注意不能无条件 setPlaying(false)：懒加载路径里引擎建好时已经在播了，
@@ -56,6 +67,36 @@ export function LivePreview({ engine, status, error, onRequestPlay }: Props) {
     return () => window.clearInterval(timer);
   }, [engine, playing]);
 
+  // 卸载时丢掉还没提交的 seek 定时器
+  useEffect(
+    () => () => {
+      if (seekTimerRef.current !== null) window.clearTimeout(seekTimerRef.current);
+      seekTimerRef.current = null;
+    },
+    [],
+  );
+
+  /** 把拖动期间积攒的目标位置一次性交给引擎 */
+  const flushSeek = useCallback(() => {
+    if (seekTimerRef.current !== null) {
+      window.clearTimeout(seekTimerRef.current);
+      seekTimerRef.current = null;
+    }
+    draggingRef.current = false;
+    const target = pendingSeekRef.current;
+    pendingSeekRef.current = null;
+    if (target !== null) engine?.seek(target);
+  }, [engine]);
+
+  /** 松手（或停手）：立刻提交，不等合并窗剩下的时间 */
+  const releaseSeek = useCallback(() => {
+    if (pendingSeekRef.current === null) {
+      draggingRef.current = false;
+      return;
+    }
+    flushSeek();
+  }, [flushSeek]);
+
   const handleToggle = () => {
     if (!engine) {
       // 懒加载：等父组件建好引擎并起播，再把按钮/进度同步到真实状态
@@ -82,8 +123,12 @@ export function LivePreview({ engine, status, error, onRequestPlay }: Props) {
   };
 
   const handleSeek = (value: number) => {
+    // 输入中：只更新 UI，引擎那侧攒着，停手后合并成一次 seek
     setPosition(value);
-    engine?.seek(value);
+    pendingSeekRef.current = value;
+    draggingRef.current = true;
+    if (seekTimerRef.current !== null) window.clearTimeout(seekTimerRef.current);
+    seekTimerRef.current = window.setTimeout(() => flushSeek(), SEEK_COMMIT_MS);
   };
 
   const disabled = status === 'loading';
@@ -121,15 +166,12 @@ export function LivePreview({ engine, status, error, onRequestPlay }: Props) {
           value={Math.min(position, Math.max(duration, 0.1))}
           disabled={!engine}
           onChange={(event) => {
-            draggingRef.current = true;
             handleSeek(Number(event.target.value));
           }}
-          onPointerUp={() => {
-            draggingRef.current = false;
-          }}
-          onBlur={() => {
-            draggingRef.current = false;
-          }}
+          onPointerUp={releaseSeek}
+          onPointerCancel={releaseSeek}
+          onKeyUp={releaseSeek}
+          onBlur={releaseSeek}
         />
         <span className="preview-time">
           {formatDuration(position)} / {formatDuration(duration)}

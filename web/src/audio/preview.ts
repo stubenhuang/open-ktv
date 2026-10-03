@@ -129,8 +129,18 @@ export class PreviewEngine {
   private passStartCtxTime: number | null = null;
   /** 起播时所在的混音时间轴位置（秒） */
   private startPositionSec = 0;
-  /** 自然播完 vs 手动停止：onended 两种都会触发，靠这个区分 */
+  /**
+   * 自然播完 vs 手动停止：onended 两种都会触发，靠这个区分。
+   *
+   * 但它挡不住「被替换掉的旧 source」迟到的 ended：stopSources() 先把 stopping 置 true，
+   * startSources() 建好新轨后又置回 false，而旧 source 的 ended 是排队异步派发的 ——
+   * 等它到的时候 stopping 已经是 false，handleVocalEnded 会把它当成自然播完，
+   * 把刚起播的新轨掐掉、通知 UI 跳结尾（seek / 改对齐都会踩到）。
+   * 所以另配 sourceGeneration：stopSources() 每次 +1，旧 source 的 ended 一律作废。
+   */
   private stopping = false;
+  /** 起播代数。stopSources() 每次 +1；只有当代数匹配才是「当前这轨真的播完了」 */
+  private sourceGeneration = 0;
   private rearmTimer: number | null = null;
 
   /** 干声（含对齐偏移）播完时触发；UI 用来复位播放按钮 */
@@ -372,11 +382,15 @@ export class PreviewEngine {
     );
     this.accompSource = accompSource;
 
+    // stopSources() 刚把代数 +1，这里取的就是「当前这轨」的代数；
+    // 之后再被替换/停止，取到的代数就对不上了
+    const generation = this.sourceGeneration;
+
     const vocalSource = this.context.createBufferSource();
     vocalSource.buffer = this.vocalBuffer;
     vocalSource.connect(this.vocalGain);
     this.stopping = false;
-    vocalSource.onended = () => this.handleVocalEnded();
+    vocalSource.onended = () => this.handleVocalEnded(generation);
     vocalSource.start(
       now + Math.max(0, vocalEnterSec - positionSec),
       Math.min(Math.max(0, positionSec - vocalEnterSec), this.vocalBuffer.duration),
@@ -386,6 +400,8 @@ export class PreviewEngine {
 
   private stopSources(): void {
     this.stopping = true;
+    // 旧轨的 ended 事件还会派发（stop() 也会触发它），用代数把它作废
+    this.sourceGeneration += 1;
     this.accompSource?.disconnect();
     this.accompSource?.stop();
     this.accompSource = null;
@@ -396,7 +412,9 @@ export class PreviewEngine {
   }
 
   /** 干声播完 = 成品播完（duration=first）：整体停下并通知 UI */
-  private handleVocalEnded(): void {
+  private handleVocalEnded(generation: number): void {
+    // 不是当前这轨（被 seek / 对齐重排 / pause 替换掉的旧轨）——它的 ended 不作数
+    if (generation !== this.sourceGeneration) return;
     if (this.stopping) return;
     this.startPositionSec = this.durationSec;
     this.stopSources();

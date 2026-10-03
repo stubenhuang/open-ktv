@@ -107,8 +107,13 @@ export function lyricTrackOffsetY(
 
 /* ------------------------------ 逐字填充（卡拉 OK） ------------------------------ */
 
-/** 全屏歌词的行高（px）。和 styles.css 里 .lyric-line 的内联高度同源，改一边要改另一边 */
-export const LYRIC_FULLSCREEN_LINE_HEIGHT = 64;
+/**
+ * 全屏歌词的行高（px）。和 styles.css 里 .lyric-line 的内联高度同源，改一边要改另一边
+ *
+ * 72 是给 48px 的当前行留的：字大但行也高，唱到哪一行一眼能看到，
+ * 上下相邻行也不会挤成一块。
+ */
+export const LYRIC_FULLSCREEN_LINE_HEIGHT = 72;
 
 /** 全屏歌词可视区域显示的行数（奇数，当前行才能正好居中） */
 export const LYRIC_FULLSCREEN_VIEW_LINES = 5;
