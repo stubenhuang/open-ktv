@@ -254,3 +254,69 @@ export function lyricClockMs(
   const user = Number.isFinite(userOffsetMs) ? userOffsetMs : 0;
   return audio + tag - user;
 }
+
+/**
+ * 最后一句歌词的兜底时长（ms）。
+ * LRC 的末行没有「下一行」可借时长，只能拿媒体时长；两者都拿不到时按这么久算唱完。
+ */
+export const LAST_LINE_FALLBACK_MS = 4000;
+
+/**
+ * 第 index 行在**伴奏时间轴**上的起止时刻（ms），供逐字填充用。
+ *
+ *     startMs = lrcDisplayTimeMs(本行)
+ *     endMs   = lrcDisplayTimeMs(下一行)   // 末行没有下一行，借 fallbackEndMs
+ *
+ * 必须走 lrcDisplayTimeMs 而不是自己再算一遍 `line − tag + user` ——
+ * 高亮、seek、这里三方共用同一套符号，分叉就会出现「字亮完了行还没高亮」。
+ *
+ * fallbackEndMs 传媒体时长（`mediaEl.duration × 1000`，0/NaN = 不知道）；
+ * 拿不到或比本行还早时按 LAST_LINE_FALLBACK_MS 兜底。
+ */
+export function lyricLineWindowMs(
+  lines: readonly LrcLine[],
+  index: number,
+  lrcOffsetMs: number,
+  userOffsetMs: number,
+  fallbackEndMs: number,
+): { startMs: number; endMs: number } {
+  const line = lines[index];
+  const startMs = line ? lrcDisplayTimeMs(line.timeMs, lrcOffsetMs, userOffsetMs) : 0;
+  const next = lines[index + 1];
+  const fallback =
+    Number.isFinite(fallbackEndMs) && fallbackEndMs > startMs
+      ? fallbackEndMs
+      : startMs + LAST_LINE_FALLBACK_MS;
+  const endMs = next ? lrcDisplayTimeMs(next.timeMs, lrcOffsetMs, userOffsetMs) : fallback;
+  return { startMs, endMs };
+}
+
+/**
+ * 某行歌词的行内进度（0–1）：唱到这句的百分之多少。
+ *
+ * clockMs 是**伴奏时间轴**上的时刻（和 startMs/endMs 同一套空间，
+ * 调用方传 `mediaEl.currentTime × 1000`）。
+ * 窗口长度 ≤ 0（同一刻的多行）时「行一旦开始就当唱完」——
+ * 否则会除出 Infinity/NaN，字会全灭或全亮；起点本身是脏数据时返回 0（不亮）。
+ */
+export function lyricLineProgress(clockMs: number, startMs: number, endMs: number): number {
+  const clock = Number.isFinite(clockMs) ? clockMs : 0;
+  if (!Number.isFinite(startMs)) return 0;
+  const start = startMs;
+  const end = Number.isFinite(endMs) ? endMs : start;
+  const span = end - start;
+  if (span <= 0) return clock >= start ? 1 : 0;
+  if (clock <= start) return 0;
+  if (clock >= end) return 1;
+  return (clock - start) / span;
+}
+
+/**
+ * 进度 → 点亮字数（0–charCount，向下取整）：逐字翻亮，同一帧内不出现半亮半灭的中间态。
+ * charCount ≤ 0（间奏空行）或进度脏数据时返回 0，绝不给 NaN。
+ */
+export function lyricCharLitCount(progress: number, charCount: number): number {
+  if (!Number.isFinite(charCount) || charCount <= 0) return 0;
+  const value = Number.isFinite(progress) ? progress : 0;
+  return Math.max(0, Math.min(charCount, Math.floor(value * charCount)));
+}

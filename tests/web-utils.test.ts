@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  LYRIC_FULLSCREEN_LINE_HEIGHT,
+  LYRIC_FULLSCREEN_VIEW_LINES,
   formatBytes,
   formatDateTime,
   formatDuration,
   formatTimer,
   isBuiltinMic,
+  lyricLineSizeClass,
   lyricTrackOffsetY,
 } from '../web/src/utils.ts';
 
@@ -112,6 +115,37 @@ describe('歌词滚动布局', () => {
     assert.equal(lyricTrackOffsetY(1, 40, 3), 0);
     assert.equal(lyricTrackOffsetY(Number.NaN), lyricTrackOffsetY(0));
     assert.equal(lyricTrackOffsetY(0, 0, 0), 0);
+  });
+});
+
+describe('全屏歌词的行高与字号档', () => {
+  it('全屏行高更大，当前行同样落在可视区正中间', () => {
+    // 5 行可视区、行高 64：容器高 320，中线 160
+    assert.equal(LYRIC_FULLSCREEN_LINE_HEIGHT, 64);
+    assert.equal(LYRIC_FULLSCREEN_VIEW_LINES, 5);
+    // 第 0 行：轨道上移到 128，该行中心 = 128 + 32 = 160 ✓
+    assert.equal(lyricTrackOffsetY(0, LYRIC_FULLSCREEN_LINE_HEIGHT, LYRIC_FULLSCREEN_VIEW_LINES), 128);
+    // 第 2 行：128 − 128 = 0，该行中心 = 0 + 2*64 + 32 = 160 ✓
+    assert.equal(lyricTrackOffsetY(2, LYRIC_FULLSCREEN_LINE_HEIGHT, LYRIC_FULLSCREEN_VIEW_LINES), 0);
+  });
+
+  it('长句逐级缩字号，短句不减', () => {
+    assert.equal(lyricLineSizeClass('短句'), '');
+    assert.equal(lyricLineSizeClass('一二三四五六七八九十壹贰叁'), 'lyric-fs-sm');
+    assert.equal(
+      lyricLineSizeClass('一二三四五六七八九十壹贰叁肆伍陆柒捌玖拾'),
+      'lyric-fs-xs',
+    );
+  });
+
+  it('emoji 按一个字符算，不会把代理对拆成两个', () => {
+    // 「🎤🎤🎤🎤🎤🎤🎤🎤🎤🎤🎤🎤🎤」= 13 个码位 → 只缩一号
+    assert.equal(lyricLineSizeClass('🎤'.repeat(13)), 'lyric-fs-sm');
+    assert.equal(lyricLineSizeClass('🎤'.repeat(19)), 'lyric-fs-xs');
+  });
+
+  it('空串不缩号', () => {
+    assert.equal(lyricLineSizeClass(''), '');
   });
 });
 

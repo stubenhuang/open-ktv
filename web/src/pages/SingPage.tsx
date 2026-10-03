@@ -178,6 +178,9 @@ export default function SingPage() {
   const handleStop = useCallback(async () => {
     if (!engine || !track) return;
 
+    // 一按就进「收尾」态：stopRecording 要等 worklet flush（~80ms），
+    // 这期间全屏层的按钮已经换成「正在合成…」，不会被重复点
+    setPhase('saving');
     try {
       const result = await engine.stopRecording();
       setRecording(false);
@@ -206,6 +209,7 @@ export default function SingPage() {
       const expectedSec = elapsedRef.current / 1000;
       if (expectedSec > 1.5 && result.durationSec < expectedSec * 0.6) {
         const contextState = engine.context.state;
+        setPhase('idle');
         setActionError(
           `只采集到 ${result.durationSec.toFixed(1)} 秒音频，但录音持续了约 ${expectedSec.toFixed(1)} 秒` +
             `（音频上下文状态：${contextState}）。多半是音频设备/驱动中途出错了，` +
@@ -215,11 +219,11 @@ export default function SingPage() {
       }
 
       if (result.durationSec * 1000 < MIN_RECORD_MS) {
+        setPhase('idle');
         setActionError('录音太短了，至少唱满 1 秒再结束。');
         return;
       }
 
-      setPhase('saving');
       const work = await api.createWork({
         vocal: result.blob,
         vocalFileName: 'vocal.wav',
@@ -342,6 +346,12 @@ export default function SingPage() {
 
   const canStart = Boolean(engine) && micReady && !recording && phase === 'idle';
   const mediaUrl = trackMediaUrl(track.id);
+  /**
+   * 录音中（含收尾合成）进入全屏歌词模式。
+   * 只是把舞台用 CSS 提到视口大小 —— <video>/<audio> 元素原地不动：
+   * MediaElementSource 绑在 DOM 节点上，搬家会重建音频图、打断伴奏。
+   */
+  const fullscreen = recording || phase === 'saving';
 
   return (
     <div>
@@ -385,7 +395,7 @@ export default function SingPage() {
 
       <div className="sing-grid">
         <div>
-          <div className="stage">
+          <div className={`stage${fullscreen ? ' stage-fullscreen' : ''}`}>
             {track.kind === 'video' ? (
               <video
                 ref={mediaCallbackRef}
@@ -411,7 +421,8 @@ export default function SingPage() {
                 lyricsOffsetMs={lyricsOffsetMs}
                 mediaEl={mediaEl}
                 canSeek={!recording}
-                overlay={track.kind === 'video'}
+                overlay={track.kind === 'video' && !fullscreen}
+                fullscreen={fullscreen}
               />
             ) : track.kind !== 'video' ? (
               <div className="stage-audio-visual">
@@ -421,68 +432,85 @@ export default function SingPage() {
               </div>
             ) : null}
 
-            {recording && (
-              <div className="record-overlay">
-                <span className="rec-dot" />
-                录音中
-              </div>
+            {/* 全屏录制层：大字逐字歌词 + 右上角的「完成录制 / 取消录制」 */}
+            {fullscreen && (
+              <>
+                {/* 视频垫在渐变下，白字歌词在任何画面上都看得清 */}
+                {track.kind === 'video' && <div className="stage-fs-scrim" />}
+                <div className="stage-fs-ui">
+                  <div className="stage-fs-info">
+                    <div className="stage-fs-title">{track.title}</div>
+                    <div className="stage-fs-status">
+                      {phase === 'saving' ? (
+                        <>
+                          <span className="spin" />
+                          正在合成…
+                        </>
+                      ) : (
+                        <>
+                          <span className="rec-dot" />
+                          <span>录音中</span>
+                          <span className="mono">{formatTimer(elapsedMs)}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div className="stage-fs-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-lg"
+                      disabled={phase !== 'idle'}
+                      onClick={() => void handleStop()}
+                    >
+                      {phase === 'saving' ? (
+                        <>
+                          <span className="spin" />
+                          正在合成…
+                        </>
+                      ) : (
+                        '完成录制'
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-lg stage-fs-cancel"
+                      disabled={phase !== 'idle'}
+                      onClick={handleAbandon}
+                    >
+                      取消录制
+                    </button>
+                  </div>
+                </div>
+              </>
             )}
           </div>
 
-          <div className="card" style={{ marginTop: 16 }}>
-            <div className="record-bar">
-              {recording ? (
-                <>
-                  <span className="timer mono">{formatTimer(elapsedMs)}</span>
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-lg"
-                    disabled={phase !== 'idle'}
-                    onClick={() => void handleStop()}
-                  >
-                    {phase === 'saving' ? (
-                      <>
-                        <span className="spin" />
-                        正在合成…
-                      </>
-                    ) : (
-                      '结束演唱'
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={phase !== 'idle'}
-                    onClick={handleAbandon}
-                  >
-                    放弃重唱
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-lg"
-                    disabled={!canStart}
-                    onClick={() => void handleStart()}
-                  >
-                    开始演唱
-                  </button>
-                  <span className="muted small">
-                    {engine
-                      ? mic.permission !== 'granted'
-                        ? '等待麦克风授权…'
-                        : mic.devices.length === 0
-                          ? '没有可用的外置麦克风，插上麦克风后这里会自动出现。'
-                          : micReady
-                            ? '点开始后会先起录 0.15 秒静音再放伴奏，系统精确测量伴奏起播时刻，用来自动对齐。'
-                            : '正在接入麦克风…'
-                      : '正在初始化音频…'}
-                  </span>
-                </>
-              )}
+          {/* 全屏期操作都在右上角，这里只留待唱状态的开始按钮 */}
+          {!fullscreen && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <div className="record-bar">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-lg"
+                  disabled={!canStart}
+                  onClick={() => void handleStart()}
+                >
+                  开始演唱
+                </button>
+                <span className="muted small">
+                  {engine
+                    ? mic.permission !== 'granted'
+                      ? '等待麦克风授权…'
+                      : mic.devices.length === 0
+                        ? '没有可用的外置麦克风，插上麦克风后这里会自动出现。'
+                        : micReady
+                          ? '点开始后会先起录 0.15 秒静音再放伴奏，系统精确测量伴奏起播时刻，用来自动对齐。'
+                          : '正在接入麦克风…'
+                    : '正在初始化音频…'}
+                </span>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div className="control-panel">

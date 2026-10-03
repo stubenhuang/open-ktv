@@ -105,3 +105,22 @@ export function lyricTrackOffsetY(
   return ((visible - 1) / 2) * height - index * height;
 }
 
+/* ------------------------------ 逐字填充（卡拉 OK） ------------------------------ */
+
+/** 全屏歌词的行高（px）。和 styles.css 里 .lyric-line 的内联高度同源，改一边要改另一边 */
+export const LYRIC_FULLSCREEN_LINE_HEIGHT = 64;
+
+/** 全屏歌词可视区域显示的行数（奇数，当前行才能正好居中） */
+export const LYRIC_FULLSCREEN_VIEW_LINES = 5;
+
+/**
+ * 全屏歌词的长句字号档。行是 nowrap 的，长句不缩号会被裁掉；
+ * 阈值按字符数估（>12 缩一号，>18 再缩一号）。
+ */
+export function lyricLineSizeClass(text: string): 'lyric-fs-sm' | 'lyric-fs-xs' | '' {
+  const length = [...text].length;
+  if (length > 18) return 'lyric-fs-xs';
+  if (length > 12) return 'lyric-fs-sm';
+  return '';
+}
+

@@ -170,9 +170,11 @@ export default function WorkDetailPage() {
       <div className="page-head">
         <div style={{ minWidth: 0 }}>
           {editing ? (
-            <div className="row" style={{ gap: 8 }}>
+            <div className="detail-title-row">
+              <span className="detail-title-chip">🎤</span>
               <input
                 className="text-input"
+                style={{ flex: '1 1 auto', maxWidth: 420 }}
                 value={titleDraft}
                 autoFocus
                 onChange={(event) => setTitleDraft(event.target.value)}
@@ -194,12 +196,12 @@ export default function WorkDetailPage() {
               </button>
             </div>
           ) : (
-            <h1 className="page-title">
-              {work.title}
+            <div className="detail-title-row">
+              <span className="detail-title-chip">🎤</span>
+              <h1 className="page-title">{work.title}</h1>
               <button
                 type="button"
                 className="btn btn-ghost btn-sm"
-                style={{ marginLeft: 8, verticalAlign: 'middle' }}
                 onClick={() => {
                   setTitleDraft(work.title);
                   setEditing(true);
@@ -207,23 +209,23 @@ export default function WorkDetailPage() {
               >
                 改名
               </button>
-              {/* 成品 MP3 的徽章跟着状态走：唱完刚落页时能看到初始混音的进度 */}
-              {mixing ? (
-                <span className="badge badge-work" style={{ marginLeft: 8, verticalAlign: 'middle' }}>
-                  <span className="spin" style={{ borderTopColor: 'var(--accent-2)' }} />
-                  正在合成…
-                </span>
-              ) : work.status === 'ready' ? (
-                <span className="badge badge-ok" style={{ marginLeft: 8, verticalAlign: 'middle' }}>
-                  已就绪
-                </span>
-              ) : null}
-            </h1>
+            </div>
           )}
-          <p className="page-sub">
-            {work.trackTitle ? `伴奏：${work.trackTitle} · ` : ''}
-            演唱时长 {formatDuration(work.vocalDuration)} · {formatDateTime(work.createdAt)}
-          </p>
+          <div className="detail-sub-row" style={{ marginTop: 6 }}>
+            <p className="page-sub" style={{ margin: 0 }}>
+              {work.trackTitle ? `伴奏：${work.trackTitle} · ` : ''}
+              演唱时长 {formatDuration(work.vocalDuration)} · {formatDateTime(work.createdAt)}
+            </p>
+            {/* 成品 MP3 的徽章跟着状态走：唱完刚落页时能看到初始混音的进度 */}
+            {mixing ? (
+              <span className="badge badge-work">
+                <span className="spin" style={{ borderTopColor: 'var(--accent-2)' }} />
+                正在合成…
+              </span>
+            ) : work.status === 'ready' ? (
+              <span className="badge badge-ok">已就绪</span>
+            ) : null}
+          </div>
         </div>
         <div className="row">
           <Link className="btn btn-ghost" to="/works">

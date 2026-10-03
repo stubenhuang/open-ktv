@@ -108,7 +108,7 @@ export function LivePreview({ engine, status, error, onRequestPlay }: Props) {
               加载中…
             </>
           ) : playing ? (
-            '暂停'
+            '⏸ 暂停'
           ) : (
             '▶ 试听'
           )}

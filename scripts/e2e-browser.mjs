@@ -519,6 +519,41 @@ async function main() {
   });
   pass('已经进入录音状态，伴奏在播');
 
+  // 录音中应该进全屏歌词层，完成/取消按钮在右上方
+  await waitFor(page, `document.querySelector('.stage-fullscreen') !== null`, {
+    timeoutMs: 10_000,
+    label: '全屏歌词层出现',
+  });
+  const fullscreen = await evaluate(
+    page,
+    `(() => {
+      const stage = document.querySelector('.stage-fullscreen');
+      const actions = document.querySelector('.stage-fs-actions');
+      if (!stage || !actions) return { error: '缺 .stage-fullscreen 或 .stage-fs-actions' };
+      const style = getComputedStyle(stage);
+      const rect = actions.getBoundingClientRect();
+      return {
+        position: style.position,
+        fixed: style.position === 'fixed',
+        coversViewport: stage.getBoundingClientRect().height >= window.innerHeight - 1,
+        // 右上方：贴顶、贴右
+        topRight: rect.top < 60 && rect.right > window.innerWidth - 40,
+        buttons: [...actions.querySelectorAll('button')].map((b) => b.textContent.trim()),
+        status: (document.querySelector('.stage-fs-status') || {}).textContent || '',
+      };
+    })()`,
+    '检查全屏歌词层',
+  );
+  if (fullscreen.error) throw new Error(fullscreen.error);
+  if (!fullscreen.fixed) throw new Error(`全屏层不是 fixed 定位：${fullscreen.position}`);
+  if (!fullscreen.coversViewport) throw new Error('全屏层没铺满视口');
+  if (!fullscreen.topRight) throw new Error('完成/取消按钮不在右上方');
+  if (!fullscreen.buttons.includes('完成录制') || !fullscreen.buttons.includes('取消录制')) {
+    throw new Error(`右上方按钮不对：${JSON.stringify(fullscreen.buttons)}`);
+  }
+  if (!fullscreen.status.includes('录音中')) throw new Error(`全屏层没有录音状态：${fullscreen.status}`);
+  pass(`全屏歌词层就绪（右上角：${fullscreen.buttons.join(' / ')}）`);
+
   // 跟唱歌词：三行都要渲染出来，且当前行随伴奏推进（这一探本身也花掉一部分录音时间）
   const lyricsProbe = await evaluate(
     page,
@@ -548,11 +583,65 @@ async function main() {
   }
   pass(`歌词跟唱正常：「${lyricsState.first}」→「${lyricsState.second}」`);
 
-  await sleep(1600);
+  // 逐字填充：当前行被拆成字符 span，且随播放一个字一个字点亮
+  // （采样窗控制在 1.2s 内：测试伴奏只有 6 秒，后面还要留时间点「完成录制」）
+  const karaokeProbe = await evaluate(
+    page,
+    `(async () => {
+      const samples = [];
+      for (let i = 0; i < 12; i += 1) {
+        const active = document.querySelector('.lyric-active');
+        const chars = active ? [...active.querySelectorAll('.lyric-char')] : [];
+        samples.push({
+          text: active ? active.textContent.trim() : null,
+          total: chars.length,
+          lit: chars.filter((c) => c.classList.contains('is-lit')).length,
+        });
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return JSON.stringify(samples);
+    })()`,
+    '检查逐字填充',
+  );
+  const karaoke = JSON.parse(karaokeProbe);
+  for (const sample of karaoke) {
+    if (sample.text && sample.total > 0) {
+      // 有字的行：每个字一个 span（emoji/代理对按码点拆）
+      if (sample.total !== [...sample.text].length) {
+        throw new Error(`字符 span 数和文本长度不符：${JSON.stringify(sample)}`);
+      }
+    }
+  }
+  const byText = new Map();
+  for (const sample of karaoke) {
+    if (!sample.text || sample.total === 0) continue;
+    byText.set(sample.text, Math.max(byText.get(sample.text) ?? 0, sample.lit));
+  }
+  const progressed = [...byText.entries()].filter(([, lit]) => lit > 0);
+  if (progressed.length === 0) {
+    throw new Error(`逐字填充没亮过：${karaokeProbe}`);
+  }
+  pass(
+    `逐字填充正常（${progressed.map(([text, lit]) => `「${text}」${lit} 字`).join('，')}）`,
+  );
 
-  step('点「结束演唱」，等合成');
-  const stopped = await evaluate(page, clickByText('结束演唱'), '点结束演唱');
-  if (!stopped) throw new Error('找不到「结束演唱」按钮');
+  await sleep(800);
+
+  step('点「完成录制」，等合成');
+  const stopped = await evaluate(page, clickByText('完成录制'), '点完成录制');
+  if (!stopped) throw new Error('找不到「完成录制」按钮');
+
+  // 收尾（stopRecording 的 flush + 上传）期间全屏层不能消失、按钮要禁用，
+  // 否则会被重复点成两次提交。合成很快时页面可能已经跳走，两种情况都放行。
+  await waitFor(
+    page,
+    `(() => {
+      if (location.pathname.startsWith('/works/')) return true;
+      const btn = document.querySelector('.stage-fs-actions button.btn-primary');
+      return Boolean(btn) && btn.disabled;
+    })()`,
+    { timeoutMs: 20_000, label: '进入收尾态（按钮禁用）或已跳转' },
+  );
 
   await waitFor(page, `location.pathname.startsWith('/works/')`, {
     timeoutMs: 60_000,
@@ -586,6 +675,50 @@ async function main() {
     throw new Error(`成品 MP3 不对：${JSON.stringify(audioInfo)}`);
   }
   pass(`成品 MP3 可播放（${audioInfo.type}，${audioInfo.bytes} 字节）`);
+
+  /* --------------------- 3.5 取消录制：原路退回待唱状态 --------------------- */
+  step('再唱一次然后取消：验证「取消录制」按钮');
+  await page.send('Page.navigate', { url: `${BASE_URL}/sing/${trackId}` });
+  // 等按钮渲染出来并且真的可用（麦克风要重新接入，别在 React 挂载前就点）
+  await waitFor(
+    page,
+    `(() => { const b = document.querySelector('button.btn-primary.btn-lg'); return Boolean(b) && !b.disabled; })()`,
+    { timeoutMs: 30_000, label: '演唱页就绪（麦克风再次接入）' },
+  );
+  const restarted = await evaluate(page, clickByText('开始演唱'), '点开始演唱');
+  if (!restarted) throw new Error('找不到「开始演唱」按钮');
+
+  await waitFor(page, `document.querySelector('.stage-fullscreen') !== null`, {
+    timeoutMs: 15_000,
+    label: '再次进入全屏歌词层',
+  });
+  const cancelled = await evaluate(page, clickByText('取消录制'), '点取消录制');
+  if (!cancelled) throw new Error('找不到「取消录制」按钮');
+
+  await waitFor(
+    page,
+    `document.querySelector('.stage-fullscreen') === null && !document.body.innerText.includes('录音中')`,
+    { timeoutMs: 10_000, label: '退出全屏并回到待唱状态' },
+  );
+  const backToIdle = await evaluate(
+    page,
+    `(() => ({
+      startEnabled: !document.querySelector('button.btn-primary.btn-lg')?.disabled,
+      cancelGone: !document.body.innerText.includes('取消录制'),
+    }))()`,
+    '确认回到待唱状态',
+  );
+  if (!backToIdle.startEnabled || !backToIdle.cancelGone) {
+    throw new Error(`取消后状态不对：${JSON.stringify(backToIdle)}`);
+  }
+  pass('取消录制后退回待唱状态（开始按钮重新可用）');
+
+  // 后面的混音面板/实时试听都长在作品详情页上，先导航回去
+  await page.send('Page.navigate', { url: `${BASE_URL}/works/${workId}` });
+  await waitFor(page, `document.querySelector('.mix-group-head') !== null`, {
+    timeoutMs: 30_000,
+    label: '回到作品详情页',
+  });
 
   /* ------------------------------ 3.4 实时试听 ------------------------------ */
   /* --------------------- 3.4 混音面板：分组 / 预设 --------------------- */

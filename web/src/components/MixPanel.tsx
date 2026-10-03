@@ -152,34 +152,36 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
       </div>
 
       <Group title="音量">
-        <div className="field">
-          <div className="field-label">
-            <span>人声音量</span>
-            <span className="field-value">{gainLabel(params.vocalGain)}</span>
+        <div className="mix-volume-grid">
+          <div className="field">
+            <div className="field-label">
+              <span>人声音量</span>
+              <span className="field-value">{gainLabel(params.vocalGain)}</span>
+            </div>
+            <input
+              type="range"
+              min={MIX_LIMITS.gain.min}
+              max={MIX_LIMITS.gain.max}
+              step={MIX_LIMITS.gain.step}
+              value={params.vocalGain}
+              onChange={(event) => update({ vocalGain: Number(event.target.value) })}
+            />
           </div>
-          <input
-            type="range"
-            min={MIX_LIMITS.gain.min}
-            max={MIX_LIMITS.gain.max}
-            step={MIX_LIMITS.gain.step}
-            value={params.vocalGain}
-            onChange={(event) => update({ vocalGain: Number(event.target.value) })}
-          />
-        </div>
 
-        <div className="field">
-          <div className="field-label">
-            <span>伴奏音量</span>
-            <span className="field-value">{gainLabel(params.accompGain)}</span>
+          <div className="field">
+            <div className="field-label">
+              <span>伴奏音量</span>
+              <span className="field-value">{gainLabel(params.accompGain)}</span>
+            </div>
+            <input
+              type="range"
+              min={MIX_LIMITS.gain.min}
+              max={MIX_LIMITS.gain.max}
+              step={MIX_LIMITS.gain.step}
+              value={params.accompGain}
+              onChange={(event) => update({ accompGain: Number(event.target.value) })}
+            />
           </div>
-          <input
-            type="range"
-            min={MIX_LIMITS.gain.min}
-            max={MIX_LIMITS.gain.max}
-            step={MIX_LIMITS.gain.step}
-            value={params.accompGain}
-            onChange={(event) => update({ accompGain: Number(event.target.value) })}
-          />
         </div>
       </Group>
 
@@ -331,7 +333,7 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
 
       <button
         type="button"
-        className="btn btn-primary"
+        className="btn btn-primary btn-lg mix-apply"
         disabled={busy}
         onClick={() => onApply(params)}
       >

@@ -2,11 +2,15 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   EMPTY_LRC,
+  LAST_LINE_FALLBACK_MS,
   findActiveLineIndex,
   formatLrcTimestamp,
   hasLrcTimeline,
   lrcDisplayTimeMs,
+  lyricCharLitCount,
   lyricClockMs,
+  lyricLineProgress,
+  lyricLineWindowMs,
   normalizeLrc,
   parseLrc,
 } from '../shared/lrc.ts';
@@ -225,5 +229,102 @@ describe('formatLrcTimestamp', () => {
     assert.equal(formatLrcTimestamp(80_000), '01:20.00');
     assert.equal(formatLrcTimestamp(-5), '00:00.00');
     assert.equal(formatLrcTimestamp(Number.NaN), '00:00.00');
+  });
+});
+
+describe('逐字填充：lyricLineWindowMs（行内起止时刻）', () => {
+  const lines = parseLrc(['[00:01.00]一', '[00:03.00]二', '[00:05.00]三'].join('\n')).lines;
+
+  it('行窗口 = 本行到下一行的显示时刻', () => {
+    assert.deepEqual(lyricLineWindowMs(lines, 0, 0, 0, 9_000), { startMs: 1_000, endMs: 3_000 });
+    assert.deepEqual(lyricLineWindowMs(lines, 1, 0, 0, 9_000), { startMs: 3_000, endMs: 5_000 });
+  });
+
+  it('末行借媒体时长（fallbackEndMs）', () => {
+    assert.deepEqual(lyricLineWindowMs(lines, 2, 0, 0, 9_000), { startMs: 5_000, endMs: 9_000 });
+  });
+
+  it('媒体时长拿不到（0/NaN）或比本行还早 → 按 LAST_LINE_FALLBACK_MS 兜底', () => {
+    assert.deepEqual(lyricLineWindowMs(lines, 2, 0, 0, 0), { startMs: 5_000, endMs: 9_000 });
+    assert.deepEqual(lyricLineWindowMs(lines, 2, 0, 0, Number.NaN), { startMs: 5_000, endMs: 9_000 });
+    assert.deepEqual(lyricLineWindowMs(lines, 2, 0, 0, 2_000), { startMs: 5_000, endMs: 9_000 });
+  });
+
+  it('和 lrcDisplayTimeMs 同一套符号：offset/用户微调一起平移', () => {
+    // [offset:] +500 更早、用户微调 +300 更晚 → 整段窗口一起平移 −200ms
+    assert.deepEqual(lyricLineWindowMs(lines, 0, 500, 300, 0), { startMs: 800, endMs: 2_800 });
+    assert.deepEqual(lyricLineWindowMs(lines, 0, -200, 0, 0), { startMs: 1_200, endMs: 3_200 });
+  });
+
+  it('越界下标不炸（渲染层兜底）', () => {
+    assert.deepEqual(lyricLineWindowMs(lines, 9, 0, 0, 0), { startMs: 0, endMs: LAST_LINE_FALLBACK_MS });
+    assert.deepEqual(lyricLineWindowMs([], 0, 0, 0, 0), { startMs: 0, endMs: LAST_LINE_FALLBACK_MS });
+  });
+});
+
+describe('逐字填充：lyricLineProgress（行内进度）', () => {
+  it('行内从 0 长到 1', () => {
+    assert.equal(lyricLineProgress(1_000, 1_000, 3_000), 0);
+    assert.equal(lyricLineProgress(1_500, 1_000, 3_000), 0.25);
+    assert.equal(lyricLineProgress(2_999, 1_000, 3_000), 1999 / 2000);
+    assert.equal(lyricLineProgress(3_000, 1_000, 3_000), 1);
+  });
+
+  it('行外钳制在 0/1', () => {
+    assert.equal(lyricLineProgress(0, 1_000, 3_000), 0);
+    assert.equal(lyricLineProgress(9_999, 1_000, 3_000), 1);
+  });
+
+  it('零长度窗口：行一旦开始就当唱完，不除出 Infinity/NaN', () => {
+    assert.equal(lyricLineProgress(2_000, 2_000, 2_000), 1);
+    assert.equal(lyricLineProgress(1_999, 2_000, 2_000), 0);
+    assert.equal(lyricLineProgress(2_000, 2_000, 1_000), 1);
+  });
+
+  it('脏输入一律当 0，不产生 NaN', () => {
+    assert.equal(lyricLineProgress(Number.NaN, 1_000, 2_000), 0);
+    assert.equal(lyricLineProgress(1_500, Number.NaN, Number.NaN), 0);
+  });
+
+  it('窗口公式反推：progress=1 的时刻正好是下一行的起点', () => {
+    // 上一行窗口 [1000,3000)，progress=1 时下一行开始 —— 两行填充无缝衔接
+    assert.equal(lyricLineProgress(3_000, 1_000, 3_000), 1);
+    assert.equal(lyricLineProgress(3_000, 3_000, 5_000), 0);
+  });
+});
+
+describe('逐字填充：lyricCharLitCount（点亮字数）', () => {
+  it('按进度向下取整逐字翻亮', () => {
+    assert.equal(lyricCharLitCount(0, 5), 0);
+    assert.equal(lyricCharLitCount(0.19, 5), 0);
+    assert.equal(lyricCharLitCount(0.2, 5), 1);
+    assert.equal(lyricCharLitCount(0.6, 5), 3);
+    assert.equal(lyricCharLitCount(0.99, 5), 4);
+    assert.equal(lyricCharLitCount(1, 5), 5);
+  });
+
+  it('钳制在 0–charCount', () => {
+    assert.equal(lyricCharLitCount(-0.5, 5), 0);
+    assert.equal(lyricCharLitCount(1.5, 5), 5);
+  });
+
+  it('间奏空行（0 字）与脏进度返回 0', () => {
+    assert.equal(lyricCharLitCount(0.5, 0), 0);
+    assert.equal(lyricCharLitCount(0.5, -3), 0);
+    assert.equal(lyricCharLitCount(Number.NaN, 5), 0);
+    assert.equal(lyricCharLitCount(Number.NaN, Number.NaN), 0);
+  });
+
+  it('整行唱完刚好点亮最后一个字（收尾不会差一字）', () => {
+    const text = '海阔天空';
+    const { startMs, endMs } = { startMs: 0, endMs: 4_000 };
+    for (let t = startMs; t <= endMs; t += 40) {
+      const lit = lyricCharLitCount(lyricLineProgress(t, startMs, endMs), [...text].length);
+      assert.ok(lit >= 0 && lit <= [...text].length);
+    }
+    assert.equal(
+      lyricCharLitCount(lyricLineProgress(endMs, startMs, endMs), [...text].length),
+      [...text].length,
+    );
   });
 });

@@ -66,6 +66,13 @@ select {
   font-size: inherit;
 }
 
+/* 复选框用主题强调色（如修音组的「降噪」开关），别用浏览器默认蓝 */
+input[type='checkbox'] {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+}
+
 /* ---------------------------------- 布局 ---------------------------------- */
 
 .app-shell {
@@ -573,20 +580,107 @@ select {
   margin-bottom: 8px;
 }
 
-.record-overlay {
+/*
+ * 录音中的全屏歌词层。
+ *
+ * 只改定位和层级，<video>/<audio> 元素原地不动 —— MediaElementSource 绑在 DOM
+ * 节点上，把它搬去别的容器会重建音频图、打断伴奏。z-index 90 盖过 .app-nav 的 20。
+ */
+.stage-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  aspect-ratio: auto;
+  border: none;
+  border-radius: 0;
+}
+
+/* 视频垫在径向渐变下：白字歌词在任何画面上都看得清 */
+.stage-fs-scrim {
   position: absolute;
-  top: 12px;
-  left: 12px;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: radial-gradient(120% 90% at 50% 50%, rgba(5, 7, 13, 0.42), rgba(5, 7, 13, 0.92));
+}
+
+/* 顶栏：左边录音状态，右边「完成录制 / 取消录制」——录制期间唯一的操作出口 */
+.stage-fs-ui {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 3;
   display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 20px;
+  /* 整条栏不吃点击，只在状态牌/按钮上恢复 */
+  pointer-events: none;
+}
+
+.stage-fs-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  pointer-events: auto;
+}
+
+.stage-fs-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-dim);
+  max-width: 46vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage-fs-status {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
+  padding: 5px 13px;
+  border-radius: 999px;
   background: rgba(0, 0, 0, 0.62);
   border: 1px solid rgba(255, 77, 79, 0.55);
-  border-radius: 999px;
-  padding: 5px 13px;
   font-size: 13.5px;
   font-weight: 600;
   backdrop-filter: blur(6px);
+}
+
+.stage-fs-status .mono {
+  font-size: 15px;
+  letter-spacing: 0.5px;
+}
+
+.stage-fs-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  pointer-events: auto;
+}
+
+/* 取消键用玻璃底，不跟粉色主按钮抢注意力 */
+.stage-fs-cancel {
+  background: rgba(10, 12, 20, 0.72);
+  border-color: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(8px);
+}
+
+.stage-fs-cancel:hover:not(:disabled) {
+  background: rgba(30, 35, 52, 0.85);
+  border-color: rgba(255, 255, 255, 0.32);
+}
+
+/* 无歌词时全屏中央的那枚大音符 */
+.stage-fullscreen .stage-audio-visual .big {
+  font-size: 92px;
+  margin-bottom: 14px;
 }
 
 .rec-dot {
@@ -712,13 +806,6 @@ input[type='range']:disabled::-webkit-slider-thumb {
   flex-wrap: wrap;
 }
 
-.timer {
-  font-size: 27px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 1px;
-}
-
 /* -------------------------------- 作品页 --------------------------------- */
 
 .work-list {
@@ -757,11 +844,36 @@ input[type='range']:disabled::-webkit-slider-thumb {
   gap: 17px;
 }
 
+/* 音量两条滑块：宽屏并排（各占一半），窄屏自动回落单列 */
+.mix-volume-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+@media (min-width: 560px) {
+  .mix-volume-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+}
+
+/* 合成：本页唯一主操作，通栏 pill */
+.mix-apply {
+  width: 100%;
+  justify-content: center;
+  margin-top: 2px;
+}
+
 /* 实时试听的传输条：播放按钮 + 进度 + 时间 */
 .preview-transport {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.preview-transport .btn-primary {
+  min-width: 104px;
 }
 
 .preview-transport input[type='range'] {
@@ -776,20 +888,30 @@ input[type='range']:disabled::-webkit-slider-thumb {
   white-space: nowrap;
 }
 
+/* 选择按钮一律一行排布：装得下就一行，装不下再折行（预设 6 个也能一行放下） */
 .reverb-options {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 7px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .reverb-option {
-  padding: 8px 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 9px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   background: var(--bg-soft);
   color: var(--text-dim);
   font-size: 13.5px;
   text-align: center;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.reverb-option:hover {
+  border-color: #4a5677;
+  color: var(--text);
 }
 
 .reverb-option.active {
@@ -804,6 +926,40 @@ input[type='range']:disabled::-webkit-slider-thumb {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+/* 详情页标题行：渐变 🎤 chip + 标题 + 改名，不再把按钮/徽章塞进 h1 里 */
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.detail-title-chip {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  background: linear-gradient(135deg, var(--accent-soft), var(--accent-2-soft));
+  border: 1px solid rgba(255, 45, 120, 0.35);
+}
+
+.detail-title-row .page-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.detail-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 /* 从详情页点「合成」跳回作品库时，目标卡片的高亮 */
@@ -831,8 +987,9 @@ input[type='range']:disabled::-webkit-slider-thumb {
 /* ------------------------------ 跟唱歌词 ------------------------------ */
 
 /*
- * 行高 34px 与 web/src/components/LyricsView.tsx 的 LYRIC_LINE_HEIGHT 必须一致 ——
- * 滚动位置是按「行下标 × 行高」算出来的，改一边就要改另一边。
+ * 行高（小窗 34px / 全屏 64px）与 web/src/utils.ts 的 LYRIC_LINE_HEIGHT、
+ * LYRIC_FULLSCREEN_LINE_HEIGHT 必须一致 —— 滚动位置是按「行下标 × 行高」
+ * 算出来的，改一边就要改另一边。
  */
 .lyrics-view {
   position: relative;
@@ -857,6 +1014,56 @@ input[type='range']:disabled::-webkit-slider-thumb {
   bottom: 12px;
   background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, 0.72));
   padding: 6px 0;
+}
+
+/*
+ * 全屏歌词：绝对居中铺满，字号/行高整体放大。
+ * 行高由 LyricsView 内联写入（LYRIC_FULLSCREEN_LINE_HEIGHT），这里只管排版。
+ */
+.lyrics-view-fullscreen {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  padding: 0 7vw;
+  /* 上下淡出的范围比小窗窄一些：全屏行少，淡多了像缺行 */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    #000 14%,
+    #000 86%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 14%, #000 86%, transparent 100%);
+}
+
+.lyrics-view-fullscreen .lyric-line {
+  font-size: 26px;
+  font-weight: 600;
+  padding: 0 12px;
+}
+
+/* 长句缩字号（档位由 lyricLineSizeClass 按字符数判），免得 nowrap 裁掉 */
+.lyrics-view-fullscreen .lyric-fs-sm {
+  font-size: 22px;
+}
+
+.lyrics-view-fullscreen .lyric-fs-xs {
+  font-size: 18px;
+}
+
+.lyrics-view-fullscreen .lyric-active {
+  font-size: 42px;
+}
+
+.lyrics-view-fullscreen .lyric-active.lyric-fs-sm {
+  font-size: 34px;
+}
+
+.lyrics-view-fullscreen .lyric-active.lyric-fs-xs {
+  font-size: 27px;
 }
 
 .lyrics-track {
@@ -912,6 +1119,31 @@ input[type='range']:disabled::-webkit-slider-thumb {
   opacity: 0.6;
 }
 
+/*
+ * 逐字填充：只有当前行被 LyricsView 拆成 .lyric-char，唱到哪个字哪个字亮。
+ * 字级时刻是推出来的 —— LRC 只有行级时间戳，所以把「本行到下一行的时长」
+ * 按字符数均分（shared/lrc.ts 的 lyricLineWindowMs / lyricLineProgress /
+ * lyricCharLitCount，纯函数有单测）。rAF 里只切 class，不进 React state。
+ *
+ * 底色走 --lyric-char-dim 变量：全屏只改这个变量，不和 .is-lit 的 color 抢
+ * （两条特异性相同，直接写 color 会让后来者把点亮态盖掉）。
+ */
+.lyric-char {
+  --lyric-char-dim: var(--text-faint);
+  color: var(--lyric-char-dim);
+  transition: color 110ms linear, text-shadow 110ms linear;
+}
+
+.lyric-char.is-lit {
+  color: var(--accent-2);
+  text-shadow: 0 0 18px rgba(56, 217, 255, 0.45);
+}
+
+/* 全屏底更亮一档，未唱到的字不至于糊进背景里 */
+.lyrics-view-fullscreen .lyric-char {
+  --lyric-char-dim: rgba(238, 241, 248, 0.32);
+}
+
 /* --------------------------------- 点歌台 --------------------------------- */
 
 .library-search-bar {
@@ -944,6 +1176,12 @@ input[type='range']:disabled::-webkit-slider-thumb {
 
 /* ------------------------------ 混音面板分组 ------------------------------ */
 
+.mix-panel > .mix-group:first-child {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
 .mix-group {
   border-top: 1px solid var(--border);
   padding-top: 10px;
@@ -961,6 +1199,11 @@ input[type='range']:disabled::-webkit-slider-thumb {
   padding: 4px 0;
   list-style: none;
   user-select: none;
+  transition: color 0.15s;
+}
+
+.mix-group-head:hover {
+  color: var(--accent);
 }
 
 /* 去掉默认三角，换一个随展开状态旋转的小箭头 */
