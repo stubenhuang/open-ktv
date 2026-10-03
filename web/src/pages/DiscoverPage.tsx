@@ -180,7 +180,8 @@ export default function DiscoverPage() {
 
   /* --------------------------------- 渲染 --------------------------------- */
 
-  // 还没配任何源：给配置指引，而不是一个空页面
+  // 一个源都没配：给配置指引，而不是一个空页面。
+  // 内置 5sing 默认开着，走到这里说明被 FIVESING_ENABLED=0 关掉了。
   if (sourceCount === 0) {
     return (
       <div>
@@ -195,11 +196,13 @@ export default function DiscoverPage() {
             还没有配置任何曲库源
           </div>
           <p className="page-sub" style={{ marginTop: 6 }}>
-            本项目的曲库源是「你提供的清单地址」，启动时通过 <code>LIBRARY_SOURCES</code>{' '}
-            环境变量配置。源站只需要托管一份静态 JSON，不需要任何服务端逻辑，
-            所以 NAS、对象存储、局域网 HTTP 都能直接用。
+            内置的 5sing 伴奏源可以用 <code>FIVESING_ENABLED=1</code>（默认就是开的）打开；
+            也可以用 <code>LIBRARY_SOURCES</code> 环境变量配上自己的源。源站只需要托管一份静态
+            JSON，不需要任何服务端逻辑，所以 NAS、对象存储、局域网 HTTP 都能直接用。
           </p>
-          <pre className="library-config-sample">{`LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh start`}</pre>
+          <pre className="library-config-sample">{`FIVESING_ENABLED=1 ./openktv.sh start
+# 或者用自己的清单：
+LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh start`}</pre>
           <p className="small faint" style={{ marginTop: 8 }}>
             清单格式：{`{"version":1,"name":"我的伴奏库","items":[{"id":"qingtian","title":"晴天","artist":"周杰伦","kind":"audio","url":"qingtian.mp3","lrc":"qingtian.lrc"}]}`}
             <br />
@@ -216,7 +219,7 @@ export default function DiscoverPage() {
         <div>
           <h1 className="page-title">点歌台</h1>
           <p className="page-sub">
-            搜索曲库 → 点歌（服务端自动下载并入库）→ 去演唱。清单里带了歌词的会一并入库。
+            搜索曲库 → 点歌（服务端自动下载并入库）→ 去演唱。点歌时会自动尝试匹配歌词。
           </p>
         </div>
       </div>

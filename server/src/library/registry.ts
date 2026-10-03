@@ -6,9 +6,10 @@
  * 一条 sources 状态，前端可以逐源提示「某某源当前不可用」。
  */
 
-import { LIBRARY_SEARCH_TIMEOUT_MS } from '../config.ts';
+import { LIBRARY_SEARCH_TIMEOUT_MS, FIVESING_ENABLED } from '../config.ts';
 import { createLogger } from '../logger.ts';
 import { HttpIndexProvider } from './providers/httpIndex.ts';
+import { FiveSingProvider } from './providers/fiveSing.ts';
 import {
   libraryRef,
   toLibraryItemDto,
@@ -125,6 +126,11 @@ export class LibraryRegistry {
  * 其余源照常可用。
  */
 export function createRegistry(specs: readonly string[]): LibraryRegistry {
+  return new LibraryRegistry(createHttpIndexProviders(specs));
+}
+
+/** 只构建 LIBRARY_SOURCES 配置的自建清单源（createRegistry 的内部实现） */
+export function createHttpIndexProviders(specs: readonly string[]): LibraryProvider[] {
   const providers: LibraryProvider[] = [];
   const seenManifest = new Set<string>();
 
@@ -162,5 +168,22 @@ export function createRegistry(specs: readonly string[]): LibraryRegistry {
     log.info(`曲库源已加载 ${providers.length} 个`, { ids: providers.map((p) => p.id) });
   }
 
-  return new LibraryRegistry(providers);
+  return providers;
+}
+
+/**
+ * 生产默认装配：内置 5sing 伴奏源 + LIBRARY_SOURCES 配的自建清单源。
+ *
+ * 5sing 放最前面：它是开箱即用的主源；多源结果是交错排列的（见 searchAll），
+ * 顺序只影响「每个源的第 N 条谁先露脸」，不影响公平性。
+ *
+ * includeFiveSing 留给测试：不用真的去打 5sing 也能验证装配逻辑。
+ */
+export function createDefaultRegistry(
+  specs: readonly string[] = [],
+  options: { includeFiveSing?: boolean } = {},
+): LibraryRegistry {
+  const withFiveSing = options.includeFiveSing ?? FIVESING_ENABLED;
+  const fiveSing: LibraryProvider[] = withFiveSing ? [new FiveSingProvider()] : [];
+  return new LibraryRegistry([...fiveSing, ...createHttpIndexProviders(specs)]);
 }

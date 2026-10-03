@@ -186,6 +186,22 @@ export default function LibraryPage() {
     }
   };
 
+  /** 按歌名/歌手问歌词源（酷狗）要一份 LRC；失败只提示，不动已有歌词 */
+  const handleAutoLyrics = async (track: TrackListItem) => {
+    setBusyId(track.id);
+    setError(null);
+    try {
+      const updated = await api.fetchTrackLyrics(track.id);
+      setEditLyrics(updated.lyrics ?? '');
+      setLyricsDirty(false);
+      await load();
+    } catch (err) {
+      setError(errorMessage(err, '自动获取歌词失败'));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <div>
       <div className="page-head">
@@ -325,6 +341,14 @@ export default function LibraryPage() {
                           >
                             选择 .lrc 文件
                           </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            disabled={busyId === track.id}
+                            onClick={() => void handleAutoLyrics(track)}
+                          >
+                            自动获取歌词
+                          </button>
                           {track.hasLyrics && (
                             <button
                               type="button"
@@ -347,6 +371,9 @@ export default function LibraryPage() {
                               if (file) void handleLyricsFile(file);
                             }}
                           />
+                        </div>
+                        <div className="small faint" style={{ marginTop: 4 }}>
+                          自动获取：按歌名/歌手从酷狗匹配 LRC（优先原唱版本），需要服务端能访问酷狗。
                         </div>
                       </div>
 

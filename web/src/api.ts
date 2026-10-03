@@ -142,6 +142,10 @@ export const api = {
     return upload<TrackDetail>(`/api/tracks/${encodeURIComponent(id)}/lyrics`, form);
   },
 
+  /** 按歌名/歌手从歌词源（酷狗）自动匹配 LRC；找不到会 404 */
+  fetchTrackLyrics: (id: string) =>
+    request<TrackDetail>(`/api/tracks/${encodeURIComponent(id)}/lyrics/auto`, jsonInit('POST', {})),
+
   /** 救「转码跑到一半服务重启」：原文件还在，重新排一次转码 */
   retryTrack: (id: string) =>
     request<TrackDetail>(`/api/tracks/${encodeURIComponent(id)}/retry`, { method: 'POST' }),

@@ -2,23 +2,30 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
-import { LIBRARY_SOURCES, WEB_DIST_DIR } from './config.ts';
-import { createRegistry, type LibraryRegistry } from './library/registry.ts';
+import { LIBRARY_SOURCES, KUGOU_LYRICS_ENABLED, WEB_DIST_DIR } from './config.ts';
+import { createDefaultRegistry, type LibraryRegistry } from './library/registry.ts';
+import { createKugouLyrics } from './library/lyrics/kugou.ts';
+import type { LyricsLookup } from './library/lyrics/types.ts';
 import { queueState } from './jobs.ts';
 import { createLogger, type LogLevel } from './logger.ts';
 import { createLibraryRouter } from './routes/library.ts';
+import { createTracksRouter } from './routes/tracks.ts';
 import mediaRouter from './routes/media.ts';
-import tracksRouter from './routes/tracks.ts';
 import worksRouter from './routes/works.ts';
 
 const httpLog = createLogger('http');
 
 export interface CreateAppOptions {
   /**
-   * 曲库源注册表。生产从 LIBRARY_SOURCES 构建；测试注入指向本地清单源的实例，
-   * 从而完全不依赖外网。
+   * 曲库源注册表。生产从 LIBRARY_SOURCES + 内置 5sing 构建；测试注入指向本地
+   * 清单源的实例，从而完全不依赖外网。
    */
   library?: LibraryRegistry;
+  /**
+   * 歌词源。生产默认酷狗（KUGOU_LYRICS_ENABLED=0 时为 null）；
+   * 测试注入假实现，同样不碰外网。
+   */
+  lyrics?: LyricsLookup | null;
 }
 
 /**
@@ -31,7 +38,8 @@ export function createApp(options: CreateAppOptions = {}): express.Express {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '2mb' }));
-  const library = options.library ?? createRegistry(LIBRARY_SOURCES);
+  const library = options.library ?? createDefaultRegistry(LIBRARY_SOURCES);
+  const lyrics = options.lyrics ?? (KUGOU_LYRICS_ENABLED ? createKugouLyrics() : null);
 
   // 请求日志：谁、什么路径、什么状态码、花了多久。
   // 轮询类接口（健康检查、媒体流）和非 api 请求降到 debug，否则前端一刷就是一片。
@@ -58,9 +66,9 @@ export function createApp(options: CreateAppOptions = {}): express.Express {
     res.json({ ok: true, queue: queueState() });
   });
 
-  app.use('/api/tracks', tracksRouter);
+  app.use('/api/tracks', createTracksRouter({ lyrics }));
   app.use('/api/works', worksRouter);
-  app.use('/api/library', createLibraryRouter(library));
+  app.use('/api/library', createLibraryRouter(library, { lyrics }));
   app.use('/api/media', mediaRouter);
 
   app.use('/api', (_req, res) => {

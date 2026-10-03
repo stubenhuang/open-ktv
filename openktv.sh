@@ -19,6 +19,11 @@
 #   PORT      后端端口，默认 8787
 #   WEB_PORT  开发模式下 Vite 端口，默认 5173
 #
+# 曲库/歌词相关（详见 README「曲库与歌词」，都不配也能跑）：
+#   FIVESING_ENABLED        内置 5sing 伴奏源开关，默认 1
+#   KUGOU_LYRICS_ENABLED    点歌时自动匹配酷狗歌词开关，默认 1
+#   LIBRARY_SOURCES         自建曲库源，逗号分隔的「名字=清单URL」
+#
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

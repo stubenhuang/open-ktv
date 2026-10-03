@@ -24,10 +24,23 @@ import type { ProxyTarget } from '../transcode.ts';
 import { ingestFile, startTranscode } from '../tracks/ingest.ts';
 import { uploadEndpoint } from '../upload.ts';
 import { withRecord } from './guard.ts';
+import type { LyricsLookup } from '../library/lyrics/types.ts';
 
 const log = createLogger('track');
 
-const router = Router();
+export interface TracksRouterDeps {
+  /** 歌词源；null = 未启用（只能手动贴/传 .lrc） */
+  lyrics?: LyricsLookup | null;
+}
+
+/**
+ * 伴奏路由。
+ *
+ * 工厂而不是模块级常量：歌词源要能注入（测试用假的，生产用酷狗），
+ * 而且「歌词从哪来」这件事不该由模块加载时的全局状态决定。
+ */
+export function createTracksRouter(deps: TracksRouterDeps = {}): Router {
+  const router = Router();
 
 /** 「取伴奏 → 404 → 业务处理」；404 文案只在这里写一份 */
 const withTrack = (handler: (req: Request, res: Response, track: TrackRecord) => void) =>
@@ -281,6 +294,45 @@ router.post('/:id/lyrics', (req, res) => {
   receiveLyrics(req, res);
 });
 
+/**
+ * 自动补歌词：按歌名/歌手问歌词源（默认酷狗），找到就入库。
+ *
+ * 与点歌时的自动走同一条 find —— 上传的伴奏当时没歌词，后来想补就用这个。
+ * 时长已知（入库时探测过），传给歌词源用来挑对版本，比点歌时更准。
+ */
+router.post(
+  '/:id/lyrics/auto',
+  withTrack(async (_req, res, record) => {
+    if (!deps.lyrics) {
+      res.status(400).json({ error: '歌词源没有启用（KUGOU_LYRICS_ENABLED=0？）' });
+      return;
+    }
+
+    const found = await deps.lyrics.find({
+      title: record.title,
+      artist: record.artist,
+      durationSec: record.duration,
+    });
+    if (!found) {
+      res.status(404).json({
+        error: '没找到带时间轴的 LRC 歌词，可以手动上传 .lrc 文件',
+      });
+      return;
+    }
+
+    const parsed = parseLyricsInput(found);
+    if (!parsed.ok) {
+      // find 返回的理论上都是规范化过的；真出事按「没找到」处理，别把 500 抛给用户
+      res.status(404).json({ error: '匹配到的歌词不可用，可以手动上传 .lrc 文件' });
+      return;
+    }
+
+    updateTrack(record.id, { lyrics: parsed.lyrics });
+    log.info(`伴奏 ${record.id} 的歌词已更新（来自歌词源）`, { id: record.id });
+    res.json(trackToDetail(getTrack(record.id)!));
+  }),
+);
+
 router.delete(
   '/:id',
   withTrack((_req, res, record) => {
@@ -307,4 +359,5 @@ router.delete(
   }),
 );
 
-export default router;
+  return router;
+}

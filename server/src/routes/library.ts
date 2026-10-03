@@ -18,6 +18,7 @@ import { downloadToFile, fetchText } from '../library/download.ts';
 import type { LibraryRegistry } from '../library/registry.ts';
 import { createTask, downloadJobKey, getTask, patchTask, toLibraryTaskDto } from '../library/tasks.ts';
 import { libraryRef, type LibraryItem, type LibraryItemKind } from '../library/types.ts';
+import type { LyricsLookup } from '../library/lyrics/types.ts';
 
 const log = createLogger('library');
 
@@ -41,7 +42,71 @@ function fileNameFor(item: LibraryItem): string {
   return item.kind === 'video' ? 'karaoke.mp4' : 'karaoke.mp3';
 }
 
-export function createLibraryRouter(registry: LibraryRegistry): Router {
+/**
+ * 下载，主地址失败时用备用 CDN 再试一次。
+ *
+ * 5sing 的 getSongUrl 会同时给主/备两个域名的地址，主节点偶尔抽风；
+ * 这时候重试一次比让用户整首歌重新点一遍友好得多。备份也没有就原样抛出。
+ */
+async function downloadWithBackup(
+  item: LibraryItem,
+  destPath: string,
+  onProgress: (ratio: number) => void,
+): Promise<number> {
+  try {
+    return await downloadToFile({
+      url: item.url,
+      destPath,
+      maxBytes: MAX_UPLOAD_BYTES,
+      timeoutMs: LIBRARY_DOWNLOAD_TIMEOUT_MS,
+      onProgress,
+    });
+  } catch (error) {
+    if (!item.backupUrl) throw error;
+    log.warn('曲库文件主地址下载失败，改用备用地址重试', { error });
+    return downloadToFile({
+      url: item.backupUrl,
+      destPath,
+      maxBytes: MAX_UPLOAD_BYTES,
+      timeoutMs: LIBRARY_DOWNLOAD_TIMEOUT_MS,
+      onProgress,
+    });
+  }
+}
+
+/**
+ * 给点歌任务找歌词。
+ *
+ * 优先用源站自带的 lrcUrl（自建清单源）；没有就按歌名/歌手问歌词源
+ * （默认酷狗）。歌词是附赠功能：任何失败都只让这首没歌词。
+ */
+async function resolveLyricsForItem(
+  item: LibraryItem,
+  lyrics: LyricsLookup | null | undefined,
+): Promise<string | null> {
+  if (item.lrcUrl) {
+    const raw = await fetchText(item.lrcUrl, LRC_LIMITS.maxBytes, LIBRARY_SEARCH_TIMEOUT_MS);
+    if (!raw) return null;
+    const normalized = normalizeLrc(raw);
+    return hasLrcTimeline(normalized) ? normalized : null;
+  }
+
+  if (!lyrics) return null;
+  try {
+    const found = await lyrics.find({ title: item.title, artist: item.artist });
+    return found;
+  } catch (error) {
+    log.warn('歌词源出错，这首将不带歌词', { error });
+    return null;
+  }
+}
+
+export interface LibraryRouterDeps {
+  /** 歌词源；null = 未启用（只吃源站自带的 lrcUrl） */
+  lyrics?: LyricsLookup | null;
+}
+
+export function createLibraryRouter(registry: LibraryRegistry, deps: LibraryRouterDeps = {}): Router {
   const router = Router();
 
   /** 当前配了哪些源；没配时前端据此显示配置指引 */
@@ -126,23 +191,10 @@ export function createLibraryRouter(registry: LibraryRegistry): Router {
         const tmpPath = path.join(TMP_DIR, `library-${randomUUID()}`);
 
         try {
-          const bytes = await downloadToFile({
-            url: item.url,
-            destPath: tmpPath,
-            maxBytes: MAX_UPLOAD_BYTES,
-            timeoutMs: LIBRARY_DOWNLOAD_TIMEOUT_MS,
-            onProgress: report,
-          });
+          const bytes = await downloadWithBackup(item, tmpPath, report);
 
-          // 歌词是附赠的：源站给了就顺手带上，拉不到就算了
-          let lyrics: string | null = null;
-          if (item.lrcUrl) {
-            const raw = await fetchText(item.lrcUrl, LRC_LIMITS.maxBytes, LIBRARY_SEARCH_TIMEOUT_MS);
-            if (raw) {
-              const normalized = normalizeLrc(raw);
-              lyrics = hasLrcTimeline(normalized) ? normalized : null;
-            }
-          }
+          // 歌词：源站自带优先，否则问歌词源（酷狗）。拿不到不挡入库。
+          const lyrics = await resolveLyricsForItem(item, deps.lyrics);
 
           const result = await ingestFile({
             tmpPath,

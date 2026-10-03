@@ -69,5 +69,37 @@ export const LIBRARY_DOWNLOAD_TIMEOUT_MS = Number(
   process.env.LIBRARY_DOWNLOAD_TIMEOUT_MS ?? 15 * 60 * 1000,
 );
 
+/* ------------------------------ 内置 5sing 曲库 ------------------------------ */
+
+/**
+ * 内置的 5sing 伴奏源，默认开启。
+ *
+ * huodong.5sing.kugou.com 只是「5sing音乐活动」页（任何路径都返回同一个 SPA），
+ * 没有伴奏接口；真正在用的一直是下面这组 5sing 官方端点。三个 BASE 都可覆盖 ——
+ * 哪天活动页或别的镜像提供了同构 API，改环境变量即可，代码不用动。
+ */
+export const FIVESING_ENABLED = (process.env.FIVESING_ENABLED ?? '1') !== '0';
+
+/** 关键词搜索（filter=3 只出伴奏）与空关键词浏览用的热门伴奏页 */
+export const FIVESING_SEARCH_BASE = process.env.FIVESING_SEARCH_BASE ?? 'http://search.5sing.kugou.com';
+export const FIVESING_WEB_BASE = process.env.FIVESING_WEB_BASE ?? 'http://5sing.kugou.com';
+/** 歌曲元数据（newget）与下载地址（getSongUrl） */
+export const FIVESING_API_BASE = process.env.FIVESING_API_BASE ?? 'http://mobileapi.5sing.kugou.com';
+
+/* --------------------------------- 歌词源 --------------------------------- */
+
+/**
+ * 酷狗歌词，默认开启。三步流：搜歌拿 hash → 查歌词候选 → 下载 LRC。
+ * 选它的理由：与 5sing 同属酷狗、国内直连、候选带评分与时长（挑版本用）。
+ *
+ * 歌词是附赠功能：任何一步失败都只导致「这首没歌词」，绝不影响伴奏入库。
+ */
+export const KUGOU_LYRICS_ENABLED = (process.env.KUGOU_LYRICS_ENABLED ?? '1') !== '0';
+/** 搜歌接口（该域名只有 http）；歌词查询/下载走 https */
+export const KUGOU_SONG_SEARCH_BASE = process.env.KUGOU_SONG_SEARCH_BASE ?? 'http://mobilecdn.kugou.com';
+export const KUGOU_LYRICS_BASE = process.env.KUGOU_LYRICS_BASE ?? 'https://lyrics.kugou.com';
+/** 歌词三步的总预算；给得比搜索宽一点，但别让点歌任务卡在歌词上 */
+export const KUGOU_LYRICS_TIMEOUT_MS = Number(process.env.KUGOU_LYRICS_TIMEOUT_MS ?? 8_000);
+
 export const FFMPEG_BIN = process.env.FFMPEG_BIN ?? 'ffmpeg';
 export const FFPROBE_BIN = process.env.FFPROBE_BIN ?? 'ffprobe';

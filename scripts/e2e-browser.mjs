@@ -924,8 +924,9 @@ async function main() {
     label: '点歌台渲染',
   });
 
-  // 没配 LIBRARY_SOURCES 时应该给出配置指引，而不是空页面或报错；
-  // 配了源就应该出现搜索框。两种都算通过 —— 这个用例只保证页面不炸。
+  // 内置 5sing 源默认开着，所以正常情况下这里一定出现搜索框；
+  // 只有既没配 LIBRARY_SOURCES、又把 FIVESING_ENABLED=0 时才显示配置指引。
+  // 两种都算通过 —— 这个用例只保证页面不炸。
   const discover = await evaluate(
     page,
     `(() => ({
@@ -941,8 +942,10 @@ async function main() {
   if (!discover.navHasLink) throw new Error('导航里没有「点歌台」入口');
   pass(discover.hasGuide ? '点歌台渲染正常（未配置源 → 显示配置指引）' : '点歌台渲染正常（已配置源 → 显示搜索框）');
 
-  // 只有配了曲库源的时候才跑这段（默认不配，避免 e2e 依赖外部资源）。
-  // 用 E2E_LIBRARY_SOURCE=1 打开，同时服务端要带 LIBRARY_SOURCES 启动。
+  // 只有想验点歌链路时才跑这段（默认不跑，避免 e2e 依赖外部资源）：
+  //   E2E_LIBRARY_SOURCE=1 LIBRARY_SOURCES="本地测试源=<清单URL>" FIVESING_ENABLED=0 npm run dev
+  // FIVESING_ENABLED=0 很重要 —— 不然搜索会连带命中内置 5sing 的结果，
+  // 点到的卡片就不一定是本地清单那条了。
   if (process.env.E2E_LIBRARY_SOURCE === '1') {
     step('点歌台：搜索 → 点歌 → 自动入库 → 去演唱');
 
@@ -1015,10 +1018,12 @@ async function main() {
           .filter((t) => t.source === 'library').length;
         const before = await countLibrary();
         const sources = await (await fetch('/api/library/sources')).json();
+        // 内置 5sing 源固定排在前面，这里要找的是自建清单源（id 带 http-index: 前缀）
+        const source = sources.sources.find((s) => s.id.startsWith('http-index:')) ?? sources.sources[0];
         const response = await fetch('/api/library/download', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ providerId: sources.sources[0].id, itemId: 'qingtian' }),
+          body: JSON.stringify({ providerId: source.id, itemId: 'qingtian' }),
         });
         const body = await response.json();
         return JSON.stringify({

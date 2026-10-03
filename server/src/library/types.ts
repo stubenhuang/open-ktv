@@ -29,8 +29,15 @@ export interface LibraryItem {
   artist: string | null;
   durationSec: number | null;
   kind: LibraryItemKind;
-  /** 源站给的下载地址（已绝对化）。只在服务端流转，不下发给浏览器 */
+  /**
+   * 源站给的下载地址（已绝对化）。只在服务端流转，不下发给浏览器。
+   *
+   * 有的源（如 5sing）搜索阶段拿不到下载地址，只会在 resolve 之后填上 ——
+   * 点歌链路始终走 resolve → 下载，拿到的 item.url 一定可用。
+   */
   url: string;
+  /** 备用下载地址（源站同一个文件的第二个 CDN）。下载失败时重试一次用 */
+  backupUrl?: string | null;
   /** 可选的 LRC 歌词地址（已绝对化）；有就随伴奏一起入库 */
   lrcUrl: string | null;
   sizeBytes: number | null;
