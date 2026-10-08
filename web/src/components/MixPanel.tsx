@@ -89,10 +89,13 @@ function OffsetMsInput({
 }
 
 /**
- * 一条滑块：标签 + 悬停说明 + 当前值 + range。
+ * 一条滑块：标签 + 悬停说明 + 滑块 + 当前值，**全部在一行里**。
  *
- * 说明不再常驻一行，改成标签旁的小图标（见 Hint.tsx）—— 编辑页要一屏放完，
- * 每个控件挂一行解释会把面板撑出两屏。
+ * 均衡 3 行 / 音量 2 行 / 修音 2 行都是竖排的（一个控件一行）。
+ * 之所以把标签和读数也拉到同一行，是为了「竖排还不撑高」：标签在上、
+ * 滑块在下的老样式一条要 47px，七条就是 330px，一屏放不下；
+ * 一行式只要 20px，而且标签列定宽之后七条滑块的左右边缘天然对齐，
+ * 一列读数也整整齐齐 —— 专业混音台就是这个排法。
  *
  * `data-mix-param` 是给自动化（e2e）用的定位钩子 —— 面板里滑块越来越多，
  * 靠「第几个 input[type=range]」定位太脆，改一个排布就会点错参数。
@@ -128,14 +131,11 @@ function Slider({
   onChange: (next: number) => void;
 }) {
   return (
-    <div className="field">
-      <div className="field-label">
-        <span className="label-with-hint">
-          {label}
-          {hint && <Hint text={hint} tone={tone} placement={placement} flipNarrow={flipNarrow} />}
-        </span>
-        <span className="field-value">{display}</span>
-      </div>
+    <div className="field slider-row">
+      <span className="label-with-hint slider-row-label">
+        {label}
+        {hint && <Hint text={hint} tone={tone} placement={placement} flipNarrow={flipNarrow} />}
+      </span>
       <input
         type="range"
         data-mix-param={param}
@@ -145,6 +145,7 @@ function Slider({
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
       />
+      <span className="field-value slider-row-value">{display}</span>
     </div>
   );
 }
@@ -270,7 +271,7 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
                 <span>均衡</span>
                 <span className="faint small">低 200Hz · 中 1.2kHz · 高 4kHz</span>
               </div>
-              <div className="eq-grid">
+              <div className="slider-stack">
                 {(
                   [
                     ['eqLowDb', '低频'],
@@ -297,7 +298,7 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
 
         <div className="mix-col">
           <Group title="音量">
-            <div className="mix-volume-grid">
+            <div className="slider-stack">
               <Slider
                 param="vocalGain"
                 label="人声音量"
@@ -323,7 +324,7 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
 
           {/* 修音：常驻展开，不提供折叠（用户要能一眼看到压缩/去齿音/降噪） */}
           <Group title="修音" hint="压缩 · 去齿音 · 降噪">
-            <div className="mix-fix-grid">
+            <div className="slider-stack">
               <Slider
                 param="compression"
                 label="压缩量"
