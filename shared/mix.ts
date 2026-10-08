@@ -237,14 +237,21 @@ export interface VocalPresetSpec {
  * 点了预设就等于把这里的数字写进 MixParams 的对应字段，之后用户还能继续手调。
  * 好处是预览与服务端天然同构（它们只看数值），也省掉「预设和滑块谁说了算」
  * 这类必然扯不清的推导。
+ *
+ * 10 个预设的参数包两两不同：matchPreset 是按数值反推的，包与包一旦重了
+ * 就会有两个按钮同时高亮，用户点不出区别。
  */
 export const VOCAL_PRESET_SPECS: Record<VocalPreset, VocalPresetSpec> = {
   natural: { eqLowDb: 0, eqMidDb: 0, eqHighDb: 0, compression: 0, deEss: 0, reverb: 'room' },
   warm: { eqLowDb: 3, eqMidDb: 0.5, eqHighDb: -1.5, compression: 0.25, deEss: 0, reverb: 'room' },
   bright: { eqLowDb: -1.5, eqMidDb: 1, eqHighDb: 4, compression: 0.15, deEss: 0.2, reverb: 'room' },
+  sweet: { eqLowDb: 1.5, eqMidDb: 2, eqHighDb: 2.5, compression: 0.35, deEss: 0.35, reverb: 'room' },
   magnetic: { eqLowDb: 2, eqMidDb: 3, eqHighDb: -2, compression: 0.45, deEss: 0.15, reverb: 'hall' },
   ethereal: { eqLowDb: -2, eqMidDb: -1, eqHighDb: 3, compression: 0.2, deEss: 0.3, reverb: 'stage' },
+  soft: { eqLowDb: 0.5, eqMidDb: -1, eqHighDb: 1, compression: 0.2, deEss: 0.25, reverb: 'plate' },
   powerful: { eqLowDb: 1, eqMidDb: 1.5, eqHighDb: 3.5, compression: 0.6, deEss: 0.1, reverb: 'room' },
+  retro: { eqLowDb: 4, eqMidDb: -1.5, eqHighDb: -3, compression: 0.3, deEss: 0, reverb: 'plate' },
+  live: { eqLowDb: 1, eqMidDb: 0.5, eqHighDb: 1.5, compression: 0.5, deEss: 0.2, reverb: 'stage' },
 };
 
 /** 预设对应的那部分参数（UI 点预设时写进 MixParams） */
@@ -300,12 +307,12 @@ export function needsVocalPreProcess(
 }
 
 /**
- * 实时预览的混响参数。
+ * 实时预览的混响参数（8 档）。
  *
  * 服务端用 aecho（延迟回声，见 server/src/mix.ts 的 REVERB_FILTER），
  * Web Audio 里没有对应滤镜，这里用「程序生成的指数衰减噪声 IR + ConvolverNode」
- * 做听感近似：四档的尾巴长度/前延迟/湿度拉开差距，切换时差异清晰可辨。
- * 预览只为试听，最终音色以下载的成品 MP3 为准。
+ * 做听感近似：八档的尾巴长度/前延迟/湿度按 REVERB_KINDS 的顺序递进，
+ * 切换时差异清晰可辨。预览只为试听，最终音色以下载的成品 MP3 为准。
  *
  * dry 为 null = 旁通混响。
  */
@@ -315,6 +322,10 @@ export const REVERB_PREVIEW: Record<
 > = {
   dry: null,
   room: { seconds: 0.35, preDelayMs: 10, decay: 2.6, wet: 0.35 },
+  plate: { seconds: 0.5, preDelayMs: 8, decay: 2.8, wet: 0.32 },
   hall: { seconds: 1.3, preDelayMs: 25, decay: 2.0, wet: 0.45 },
   stage: { seconds: 2.6, preDelayMs: 45, decay: 1.6, wet: 0.55 },
+  cathedral: { seconds: 3.8, preDelayMs: 60, decay: 1.4, wet: 0.6 },
+  arena: { seconds: 5, preDelayMs: 80, decay: 1.2, wet: 0.62 },
+  canyon: { seconds: 6.5, preDelayMs: 110, decay: 1, wet: 0.65 },
 };

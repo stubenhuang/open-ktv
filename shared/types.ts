@@ -23,8 +23,23 @@ export type ProxyKind = 'none' | 'video' | 'audio';
 
 export type WorkStatus = 'mixing' | 'ready' | 'failed';
 
-/** 混响档位；数组本身就是唯一来源，前后端都从这里取顺序（服务端另用它做白名单） */
-export const REVERB_KINDS = ['dry', 'room', 'hall', 'stage'] as const;
+/**
+ * 混响档位（8 档）；数组本身就是唯一来源，前后端都从这里取顺序
+ * （服务端另用它做白名单，前端预览用同一顺序排按钮）。
+ *
+ * 顺序即「空间由小到大」：原声 → 小房间 → 金属板 → 大厅 → 演唱会 → 教堂 → 体育场 → 峡谷。
+ * 尾巴长度在 shared/mix.ts 的 REVERB_PREVIEW 里也是这个顺序递进，两边必须一致。
+ */
+export const REVERB_KINDS = [
+  'dry',
+  'room',
+  'plate',
+  'hall',
+  'stage',
+  'cathedral',
+  'arena',
+  'canyon',
+] as const;
 
 export type ReverbKind = (typeof REVERB_KINDS)[number];
 
@@ -62,14 +77,25 @@ export interface PreviewParams {
 }
 
 /**
- * 音效预设。
+ * 人声预设（10 种）。
  *
  * 它**不是**一个不透明 DSP 参数：预设只是「一组具名参数默认值」
  * （见 shared/mix.ts 的 VOCAL_PRESET_SPECS），点一下就把数值写进
  * eqLowDb / compression / reverb 等字段。这样实时试听与服务端天然同构，
  * 用户也能在预设基础上继续手调。
  */
-export const VOCAL_PRESETS = ['natural', 'warm', 'bright', 'magnetic', 'ethereal', 'powerful'] as const;
+export const VOCAL_PRESETS = [
+  'natural',
+  'warm',
+  'bright',
+  'sweet',
+  'magnetic',
+  'ethereal',
+  'soft',
+  'powerful',
+  'retro',
+  'live',
+] as const;
 
 export type VocalPreset = (typeof VOCAL_PRESETS)[number];
 
@@ -77,9 +103,13 @@ export const VOCAL_PRESET_LABELS: Record<VocalPreset, string> = {
   natural: '自然',
   warm: '温暖',
   bright: '明亮',
+  sweet: '甜美',
   magnetic: '磁性',
   ethereal: '空灵',
+  soft: '轻柔',
   powerful: '有力',
+  retro: '复古',
+  live: '现场',
 };
 
 export interface MixParams {
@@ -234,10 +264,14 @@ export const DEFAULT_MIX_PARAMS: MixParams = {
 };
 
 export const REVERB_LABELS: Record<ReverbKind, string> = {
-  dry: '原声（无混响）',
+  dry: '原声',
   room: '小房间',
+  plate: '金属板',
   hall: '大厅',
   stage: '演唱会',
+  cathedral: '教堂',
+  arena: '体育场',
+  canyon: '峡谷',
 };
 
 /** 用户录音的绝对上限（毫秒），前端与后端共用 */

@@ -5,7 +5,7 @@ import { runFfmpeg } from '../server/src/ffmpeg.ts';
 import { measureLoudness, normalizeGainDb } from '../server/src/loudness.ts';
 import { buildMixArgs, buildMixFilter, computeLevels } from '../server/src/mix.ts';
 import { EQ_BANDS, effectiveOffsetMs, mixTimeline } from '../shared/mix.ts';
-import { MIX_LIMITS } from '../shared/types.ts';
+import { MIX_LIMITS, REVERB_KINDS, type ReverbKind } from '../shared/types.ts';
 import { cleanupDir, ffmpegOk, makeTempDir, sineArgs, summarize } from './helpers.ts';
 
 let workDir = '';
@@ -37,7 +37,12 @@ function filterInput(overrides: Partial<Parameters<typeof buildMixFilter>[0]> = 
   };
 }
 
-async function mixTo(outputName: string, offsetMs: number, vocalGain = 1, reverb: 'dry' | 'room' | 'hall' | 'stage' = 'dry') {
+async function mixTo(
+  outputName: string,
+  offsetMs: number,
+  vocalGain = 1,
+  reverb: ReverbKind = 'dry',
+) {
   const output = path.join(workDir, outputName);
   const levels = computeLevels({ vocalGain, accompGain: 1, compression: 0 }, 0, 0);
   await runFfmpeg({
@@ -187,8 +192,8 @@ describe('混音端到端（真实 ffmpeg）', () => {
     );
   });
 
-  it('四档混响都能成功出片', async () => {
-    for (const reverb of ['dry', 'room', 'hall', 'stage'] as const) {
+  it('八档混响都能成功出片（dry 旁通，其余挂 aecho）', async () => {
+    for (const reverb of REVERB_KINDS) {
       const output = await mixTo(`out-reverb-${reverb}.mp3`, 150, 1, reverb);
       const summary = await summarize(output);
       assert.equal(summary.audioCodec, 'mp3', `混响 ${reverb} 出片失败`);

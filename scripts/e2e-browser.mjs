@@ -849,54 +849,223 @@ async function main() {
     label: '回到作品详情页',
   });
 
-  /* --------------------- 3.3 编辑页排版：两列分组 + 合成按钮常驻 --------------------- */
-  step('编辑页排版：分组两列排布，滚动时「合成」一直在视口里');
-  // 无头 Chrome 默认视口只有 800px 宽，低于两列分组的断点；临时放大到桌面尺寸再验
+  /* --------------------- 3.3 编辑页排版：一屏放完 + 分组常驻展开 --------------------- */
+  step('编辑页排版：所有元素一屏放完，分组不可折叠');
+  // 无头 Chrome 默认视口只有 800px 宽；编辑页按桌面尺寸验，逐个视口高度确认不出滚动条
+  const VIEWPORTS = [
+    { width: 1440, height: 900, label: '1440x900' },
+    { width: 1280, height: 800, label: '1280x800' },
+    { width: 1366, height: 768, label: '1366x768' },
+    { width: 1024, height: 768, label: '1024x768' },
+  ];
+  for (const viewport of VIEWPORTS) {
+    await page.send('Emulation.setDeviceMetricsOverride', {
+      width: viewport.width,
+      height: viewport.height,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await sleep(300);
+    const editLayout = await evaluate(
+      page,
+      `(() => {
+        const doc = document.documentElement;
+        const panel = document.querySelector('.mix-panel');
+        const apply = document.querySelector('.mix-apply');
+        if (!panel || !apply) return JSON.stringify({ error: '没有 .mix-panel 或 .mix-apply' });
+
+        // 一屏放完：页面本身不允许出现滚动条（横竖都不行）
+        const overflowY = doc.scrollHeight - window.innerHeight;
+        const overflowX = doc.scrollWidth - window.innerWidth;
+
+        // 分组常驻展开：面板里一个 details/summary 都不该有（修音不能折叠）
+        const collapsible = panel.querySelectorAll('details, summary').length;
+
+        // 每个交互控件都要落在视口内（被裁掉的控件等于不存在）
+        const offscreen = [...panel.querySelectorAll('input, button')]
+          .map((n) => ({ n, rect: n.getBoundingClientRect() }))
+          .filter(({ rect }) => rect.width > 0 && (rect.top < 0 || rect.bottom > window.innerHeight + 0.5))
+          .map(({ n, rect }) => (n.textContent || n.className).trim().slice(0, 10) + '@' + Math.round(rect.top));
+
+        const applyRect = apply.getBoundingClientRect();
+        const groups = [...document.querySelectorAll('.mix-group-head')].map((n) =>
+          n.firstElementChild.textContent.trim());
+        return JSON.stringify({
+          overflowY,
+          overflowX,
+          collapsible,
+          offscreen,
+          groups,
+          applyInViewport: applyRect.top >= 0 && applyRect.bottom <= window.innerHeight,
+          presetCount: panel.querySelectorAll('.option-grid:not(.option-grid-4) .reverb-option').length,
+          reverbCount: panel.querySelectorAll('.option-grid-4 .reverb-option').length,
+        });
+      })()`,
+      `检查编辑页排版（${viewport.label}）`,
+    );
+    const layout = JSON.parse(editLayout);
+    if (layout.error) throw new Error(`编辑页排版不对：${layout}`);
+    if (layout.overflowY > 1) {
+      throw new Error(`${viewport.label} 编辑页出现了纵向滚动条（溢出 ${layout.overflowY}px），不满足「一屏放完」`);
+    }
+    if (layout.overflowX > 1) {
+      throw new Error(`${viewport.label} 编辑页出现了横向滚动条（溢出 ${layout.overflowX}px）`);
+    }
+    if (layout.collapsible > 0) {
+      throw new Error(`混音面板里还有 ${layout.collapsible} 个可折叠元素（修音等分组必须常驻展开）`);
+    }
+    if (layout.offscreen.length) {
+      throw new Error(`${viewport.label} 有控件被挤出视口：${layout.offscreen.join(' / ')}`);
+    }
+    if (!layout.applyInViewport) throw new Error(`${viewport.label}「合成」按钮不在视口内`);
+    if (layout.presetCount !== 10) throw new Error(`预设应有 10 个，实际 ${layout.presetCount}`);
+    if (layout.reverbCount !== 8) throw new Error(`混响应有 8 种，实际 ${layout.reverbCount}`);
+    pass(
+      `${viewport.label}：一屏放完（无滚动条）、预设 ${layout.presetCount} 种 / 混响 ${layout.reverbCount} 种、` +
+        `分组 ${layout.groups.join('·')} 全部常驻展开`,
+    );
+  }
+  await page.send('Emulation.clearDeviceMetricsOverride');
+
+  /* ------------- 3.3b 悬停说明：说明文字收进小图标，hover / 聚焦才展开 ------------- */
+  step('悬停说明：说明收进 i / ! 小图标，hover 与键盘聚焦都能展开');
   await page.send('Emulation.setDeviceMetricsOverride', {
-    width: 1280,
-    height: 800,
+    width: 1440,
+    height: 900,
     deviceScaleFactor: 1,
     mobile: false,
   });
-  const editLayout = await evaluate(
+  await sleep(300);
+
+  const hintState = await evaluate(
     page,
-    `(async () => {
-      const groups = document.querySelector('.mix-groups');
-      const apply = document.querySelector('.mix-apply');
-      if (!groups || !apply) return JSON.stringify({ error: '没有 .mix-groups 或 .mix-apply' });
-
-      const columns = getComputedStyle(groups).gridTemplateColumns.split(' ').length;
-
-      // 滚到页面最底部：粘性按钮必须仍然落在视口里
-      window.scrollTo(0, document.body.scrollHeight);
-      await new Promise((r) => setTimeout(r, 400));
-      const rect = apply.getBoundingClientRect();
+    `(() => {
+      const icons = [...document.querySelectorAll('.hint-icon')];
+      const bubbles = [...document.querySelectorAll('.hint-bubble')];
+      // 默认全部收起
+      const allHidden = bubbles.every((b) => getComputedStyle(b).visibility === 'hidden');
+      // 收起的气泡是绝对定位、照样占布局：伸到视口外会把文档撑出滚动条
+      const bubblesInViewport = bubbles.every((b) => {
+        const r = b.getBoundingClientRect();
+        return r.width === 0 || (r.left >= -0.5 && r.right <= window.innerWidth + 0.5);
+      });
+      // 读屏不依赖悬停：全文必须在 aria-label 里
+      const ariaOk = icons.every((b) => (b.getAttribute('aria-label') || '').length > 8);
+      // 图标本身是按钮（可聚焦、触屏可点），且气泡对读屏隐藏
+      const markupOk = icons.every((b) => b.tagName === 'BUTTON') &&
+        bubbles.every((b) => b.getAttribute('aria-hidden') === 'true');
+      // 常驻说明文字确实没了：面板里不该再有成段的 .mix-hint / preview 说明
+      const staleText = document.querySelectorAll('.mix-hint').length;
       return JSON.stringify({
-        columns,
-        position: getComputedStyle(apply).position,
-        visible: rect.top >= 0 && rect.bottom <= window.innerHeight + 1,
-        inViewport: rect.bottom > 0 && rect.top < window.innerHeight,
+        icons: icons.length,
+        warns: document.querySelectorAll('.hint-warn').length,
+        allHidden,
+        bubblesInViewport,
+        ariaOk,
+        markupOk,
+        staleText,
       });
     })()`,
-    '检查编辑页排版',
+    '检查悬停说明默认状态',
   );
-  await page.send('Emulation.clearDeviceMetricsOverride');
-  const layout = JSON.parse(editLayout);
-  if (layout.error) throw new Error(`编辑页排版不对：${layout}`);
-  if (layout.columns !== 2) {
-    throw new Error(`混音分组应两列排布，实际 ${layout.columns} 列`);
-  }
-  if (layout.position !== 'sticky') {
-    throw new Error(`「合成」应粘在面板底部，实际 position=${layout.position}`);
-  }
-  if (!layout.inViewport) {
-    throw new Error('滚到页面底部时「合成」不在视口里');
-  }
-  pass(
-    `分组两列排布，「合成」粘在面板底部（滚到底仍在视口内：${layout.visible ? '完整可见' : '部分可见'}）`,
-  );
+  const hints = JSON.parse(hintState);
+  if (hints.icons < 6) throw new Error(`说明图标太少：${hintState}`);
+  if (hints.warns < 2) throw new Error(`warn 语气图标应有 2 个（去齿音 / 降噪），实际 ${hints.warns}`);
+  if (!hints.allHidden) throw new Error(`有气泡默认就是展开的：${hintState}`);
+  if (!hints.bubblesInViewport) throw new Error(`收起的气泡伸到了视口外（会把文档撑出滚动条）：${hintState}`);
+  if (!hints.ariaOk) throw new Error(`有图标没带完整 aria-label：${hintState}`);
+  if (!hints.markupOk) throw new Error(`图标/气泡的标记不对：${hintState}`);
+  if (hints.staleText) throw new Error(`还残留 ${hints.staleText} 处常驻说明文字`);
+  pass(`${hints.icons} 个说明图标默认收起、不撑布局，其中 ${hints.warns} 个是 warn 语气`);
 
-  /* ------------------------------ 3.4 实时试听 ------------------------------ */
+  // hover：鼠标移到图标上，气泡要展开且落在视口内
+  // （变量名带 hint 前缀：后面视频上传那段也用 root/nodeIds）
+  const { root: hintRoot } = await page.send('DOM.getDocument', { depth: -1, pierce: true });
+  const { nodeIds: hintNodeIds } = await page.send('DOM.querySelectorAll', {
+    nodeId: hintRoot.nodeId,
+    selector: '.mix-panel .hint-icon',
+  });
+  if (!hintNodeIds?.length) throw new Error('混音面板里找不到说明图标');
+  const hintIconBox = await page.send('DOM.getBoxModel', { nodeId: hintNodeIds[0] });
+  await page.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x: hintIconBox.model.content[0] + hintIconBox.model.width / 2,
+    y: hintIconBox.model.content[1] + hintIconBox.model.height / 2,
+  });
+  await sleep(250);
+  const hovered = await evaluate(
+    page,
+    `(() => {
+      const bubble = document.querySelector('.mix-panel .hint-icon').closest('.hint').querySelector('.hint-bubble');
+      const cs = getComputedStyle(bubble);
+      const r = bubble.getBoundingClientRect();
+      return JSON.stringify({
+        visibility: cs.visibility,
+        opacity: cs.opacity,
+        text: bubble.textContent.trim(),
+        inViewport: r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth,
+      });
+    })()`,
+    'hover 展开气泡',
+  );
+  const hover = JSON.parse(hovered);
+  if (hover.visibility !== 'visible' || Number(hover.opacity) < 0.9 || hover.text.length < 8) {
+    throw new Error(`hover 没有展开气泡：${hovered}`);
+  }
+  if (!hover.inViewport) throw new Error(`展开的气泡不在视口内：${hovered}`);
+  pass(`hover 展开气泡：「${hover.text.slice(0, 16)}…」`);
+
+  // 鼠标移开 → 收起
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 4, y: 4 });
+  await sleep(250);
+  const rehidden = await evaluate(
+    page,
+    `getComputedStyle(document.querySelector('.mix-panel .hint-bubble')).visibility`,
+    '鼠标移开',
+  );
+  if (rehidden !== 'hidden') throw new Error(`鼠标移开后气泡没收起（${rehidden}）`);
+  pass('鼠标移开后气泡收起');
+
+  // 键盘聚焦也要能展开（Tab / 触屏点按走这条路）
+  const focused = await evaluate(
+    page,
+    `(() => {
+      const icon = document.querySelector('.hint-warn .hint-icon');
+      if (!icon) return JSON.stringify({ error: '没有 warn 图标' });
+      icon.focus();
+      const bubble = icon.closest('.hint').querySelector('.hint-bubble');
+      return JSON.stringify({
+        visibility: getComputedStyle(bubble).visibility,
+        text: bubble.textContent.trim(),
+      });
+    })()`,
+    '键盘聚焦展开气泡',
+  );
+  const focus = JSON.parse(focused);
+  if (focus.error || focus.visibility !== 'visible' || focus.text.length < 8) {
+    throw new Error(`键盘聚焦没有展开气泡：${focused}`);
+  }
+  pass(`键盘聚焦也能展开（warn 语气：「${focus.text.slice(0, 14)}…」）`);
+
+  // 点说明图标不该误触旁边的控件（图标在 label 外，点它不等于勾选降噪）
+  const noSideEffect = await evaluate(
+    page,
+    `(() => {
+      const before = document.querySelector('#mix-noise-reduction').checked;
+      const hint = [...document.querySelectorAll('.hint')].find((h) =>
+        h.querySelector('.hint-icon').closest('.mix-check'));
+      hint.querySelector('.hint-icon').click();
+      const after = document.querySelector('#mix-noise-reduction').checked;
+      return JSON.stringify({ before, after });
+    })()`,
+    '点说明图标不误触控件',
+  );
+  const sideEffect = JSON.parse(noSideEffect);
+  if (sideEffect.before !== sideEffect.after) {
+    throw new Error(`点说明图标把降噪复选框切换了：${noSideEffect}`);
+  }
+  pass('点说明图标不会误触旁边的控件');
+  await page.send('Emulation.clearDeviceMetricsOverride');
   /* --------------------- 3.4 混音面板：分组 / 预设 --------------------- */
   step('混音面板：分组建在、点预设会写进参数');
   const panel = await evaluate(
@@ -936,7 +1105,7 @@ async function main() {
   const previewStart = await evaluate(
     page,
     `(async () => {
-      const button = document.querySelector('.preview-transport button');
+      const button = document.querySelector('.preview-transport [data-preview-toggle]');
       if (!button || button.disabled) return '试听按钮不可用';
       button.click();
       return 'ok';
@@ -948,7 +1117,7 @@ async function main() {
   // 引擎要现场解码干声 + 伴奏，起播后按钮才会翻成「暂停」
   await waitFor(
     page,
-    `(() => { const b = document.querySelector('.preview-transport button'); return b && b.textContent.includes('暂停'); })()`,
+    `(() => { const b = document.querySelector('.preview-transport [data-preview-toggle]'); return b && b.textContent.includes('暂停'); })()`,
     { timeoutMs: 60_000, label: '预览进入播放中' },
   );
   pass('实时试听已起播（浏览器内 Web Audio 混音，无 ffmpeg 参与）');
@@ -963,7 +1132,7 @@ async function main() {
    * currentTime 不推进，所以不能断言位置前进，只能断言它没被甩到结尾。
    */
   const readTransport = `(() => {
-    const button = document.querySelector('.preview-transport button');
+    const button = document.querySelector('.preview-transport [data-preview-toggle]');
     const bar = document.querySelector('.preview-transport input[type=range]');
     const time = document.querySelector('.preview-time');
     return JSON.stringify({
@@ -1006,10 +1175,8 @@ async function main() {
   const offsetState = await evaluate(
     page,
     `(async () => {
-      const group = [...document.querySelectorAll('.mix-group')]
-        .find((n) => (n.querySelector('summary') || {}).textContent.includes('人声对齐微调'));
-      if (group) group.open = true;
-      const input = group ? group.querySelector('input.ms-input') : null;
+      // 分组不再折叠，毫秒输入框直接在页面上（.ms-input）
+      const input = document.querySelector('.mix-offset-row input.ms-input');
       if (!input) return JSON.stringify({ error: '找不到人声对齐微调的毫秒输入框' });
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
       setter.call(input, '300');
@@ -1031,18 +1198,19 @@ async function main() {
   pass(`改人声对齐后续播正常（${offsetResult.time}）`);
 
   // 测试曲只有 3 秒，趁还在播立刻拖滑块：不点「合成」，参数实时送进引擎，
-  // 播放不中断、无报错
+  // 播放不中断、无报错。
+  // 滑块按 data-mix-param 定位（不再靠「第几个 range」—— 面板里滑块越来越多，
+  // 排布一改就会点错参数）。
   const liveTweak = await evaluate(
     page,
     `(async () => {
-      const sliders = [...document.querySelectorAll('.mix-panel input[type=range]')];
-      if (sliders.length < 1) return '找不到滑块';
-      const slider = sliders[0];
+      const slider = document.querySelector('.mix-panel input[data-mix-param="vocalGain"]');
+      if (!slider) return '找不到人声音量滑块';
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
       setter.call(slider, '1.5');
       slider.dispatchEvent(new Event('input', { bubbles: true }));
       await new Promise((r) => setTimeout(r, 800));
-      const button = document.querySelector('.preview-transport button');
+      const button = document.querySelector('.preview-transport [data-preview-toggle]');
       return button && button.textContent.includes('暂停') ? 'ok' : '播放被参数改动打断了';
     })()`,
     '拖动滑块不断播',
@@ -1063,7 +1231,7 @@ async function main() {
 
   await evaluate(
     page,
-    `(() => { const b = document.querySelector('.preview-transport button'); if (b && b.textContent.includes('暂停')) b.click(); return true; })()`,
+    `(() => { const b = document.querySelector('.preview-transport [data-preview-toggle]'); if (b && b.textContent.includes('暂停')) b.click(); return true; })()`,
     '暂停预览',
   );
 
@@ -1073,9 +1241,8 @@ async function main() {
   const synth = await evaluate(
     page,
     `(async () => {
-      const sliders = [...document.querySelectorAll('.mix-panel input[type=range]')];
-      if (sliders.length < 1) return '找不到滑块';
-      const slider = sliders[0];
+      const slider = document.querySelector('.mix-panel input[data-mix-param="vocalGain"]');
+      if (!slider) return '找不到人声音量滑块';
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
       setter.call(slider, '0.5');
       slider.dispatchEvent(new Event('input', { bubbles: true }));

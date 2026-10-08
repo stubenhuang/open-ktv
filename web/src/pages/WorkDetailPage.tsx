@@ -14,6 +14,10 @@ import { errorMessage, formatDateTime, formatDuration } from '../utils';
  * 成品 MP3 的播放/下载都在作品库列表页；这里只负责「试听 + 调参 + 合成」，
  * 点「合成」发一次混音请求后直接返回作品库（定位到这首作品），
  * 在列表里等「正在合成… → 已就绪」即可。
+ *
+ * 排版硬要求：**所有元素一屏放完，不出滚动条**。做法见 styles.css 的
+ * 「作品编辑页：一屏放完」一节 —— 紧凑排版 + 按视口高度逐级压缩，
+ * 不锁高度也不裁内容（锁 height + overflow:hidden 会在矮窗口上把「合成」裁掉）。
  */
 export default function WorkDetailPage() {
   const { workId = '' } = useParams();
@@ -166,8 +170,8 @@ export default function WorkDetailPage() {
   const mixing = work.status === 'mixing';
 
   return (
-    <div>
-      <div className="page-head">
+    <div className="detail-page">
+      <div className="page-head detail-head">
         <div style={{ minWidth: 0 }}>
           {editing ? (
             <div className="detail-title-row">
@@ -256,7 +260,7 @@ export default function WorkDetailPage() {
       )}
 
       {work.trackId && (
-        <div className="detail-stack">
+        <div className="detail-body">
           <LivePreview
             engine={previewEngine}
             status={previewStatus}

@@ -1,12 +1,18 @@
 import type { ReactNode } from 'react';
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import DiscoverPage from './pages/DiscoverPage';
 import LibraryPage from './pages/LibraryPage';
 import SingPage from './pages/SingPage';
 import WorkDetailPage from './pages/WorkDetailPage';
 import WorksPage from './pages/WorksPage';
 
+/** 作品编辑页：/works/:workId（编辑页要求「一屏放完」，见 .app-main-fit） */
+const WORK_DETAIL_RE = /^\/works\/[^/]+$/;
+
 function Layout({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation();
+  // 编辑页自己管高度：不吃 .app-main 那 72px 的底部滚动余量，否则一屏放不下
+  const fitOneScreen = WORK_DETAIL_RE.test(pathname);
   return (
     <div className="app-shell">
       <nav className="app-nav">
@@ -32,7 +38,7 @@ function Layout({ children }: { children: ReactNode }) {
           </NavLink>
         </div>
       </nav>
-      <main className="app-main">{children}</main>
+      <main className={`app-main${fitOneScreen ? ' app-main-fit' : ''}`}>{children}</main>
     </div>
   );
 }

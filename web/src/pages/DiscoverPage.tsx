@@ -265,7 +265,7 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
         >
           搜索
         </button>
-        <div className="reverb-options">
+        <div className="option-row">
           {(
             [
               ['all', '全部'],

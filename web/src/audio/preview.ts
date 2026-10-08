@@ -31,7 +31,7 @@ import { errorMessage } from '../utils';
  *    压缩的 makeup 已经并进 vocalGain（见 vocalChainLinearGain），这里不再补一次；
  *  - deEss：静态高架下压，对服务端 deesser 的听感近似；
  *  - vocalGain/accompGain：实测归一化增益 × 用户滑块 × 压缩补偿（shared/mix.ts 的公式）；
- *  - convolver：程序生成的指数衰减噪声 IR，对服务端 aecho 四档混响的听感近似；
+ *  - convolver：程序生成的指数衰减噪声 IR，对服务端 aecho 八档混响的听感近似；
  *  - limiter：DynamicsCompressor，近似服务端末端 alimiter=0.95，防预览削波；
  *  - 对齐偏移不用 DelayNode（改 delayTime 会有爆音），改用「晚到的一轨晚起播」
  *    的调度方式（与服务端 mixTimeline 同一套符号规则：offset ≥ 0 人声晚进，

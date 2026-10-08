@@ -18,14 +18,22 @@ export const LOUDNESS_TARGET = {
 } as const;
 
 /**
- * 混响档次。这里用的是 aecho（延迟回声）而不是卷积混响 ——
+ * 混响档次（8 档）。这里用的是 aecho（延迟回声）而不是卷积混响 ——
  * 不需要外挂脉冲响应文件，零依赖，听感够用。
+ *
+ * 档位顺序与 shared/types.ts 的 REVERB_KINDS 一致（空间由小到大），
+ * 延迟/衰减也按这个方向递增；前端预览的 REVERB_PREVIEW 跟着同一顺序走，
+ * 这样「试听听到的空间感」和「成品 MP3 的空间感」才是同一个方向。
  */
 export const REVERB_FILTER: Record<ReverbKind, string | null> = {
   dry: null,
   room: 'aecho=0.8:0.85:18:0.25',
+  plate: 'aecho=0.8:0.88:28:0.3',
   hall: 'aecho=0.8:0.9:55:0.35',
   stage: 'aecho=0.9:0.92:110:0.45',
+  cathedral: 'aecho=0.9:0.93:170:0.5',
+  arena: 'aecho=0.9:0.94:240:0.55',
+  canyon: 'aecho=0.9:0.95:330:0.6',
 };
 
 export interface MixLevels {

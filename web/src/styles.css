@@ -143,6 +143,14 @@ input[type='checkbox'] {
   padding: 26px 28px 72px;
 }
 
+/*
+ * 作品编辑页（/works/:workId）：要求「所有元素一屏放完，不滚动」。
+ * 底部那 72px 是给长列表的滚动余量，编辑页用不上，先收掉换成实际内容。
+ */
+.app-main-fit {
+  padding: 20px 28px 22px;
+}
+
 .page-head {
   display: flex;
   align-items: flex-end;
@@ -927,81 +935,55 @@ input[type='range']:disabled::-webkit-slider-thumb {
   height: 34px;
 }
 
-.mix-panel {
+/* ------------------------ 作品编辑页：一屏放完 ------------------------ */
+
+/*
+ * 编辑页的硬要求：所有元素在一个页面内展示，不出现页面滚动条。
+ *
+ * 做法是「留白排版 + 按视口高度逐级压缩」，刻意**不锁高度、不裁内容** ——
+ * height:100vh + overflow:hidden 在矮窗口上会把「合成」按钮整块裁掉，
+ * 用户连合成都点不到，比多几像素滚动糟得多。真正保证「不滚动」的是
+ * 这套排版本身够紧凑（e2e 里用 scrollHeight <= innerHeight 守着）。
+ *
+ * 间距分三档，全部按实测调过（1440x900 / 1280x800 / 1366x768 / 1024x768 / 820x900）：
+ *  · 基准（窗口高 > 820px）—— 模块间 28px，控件行距也放宽；
+ *  · max-height:820px        —— 笔记本 800px 高以内，间距收到 16px；
+ *  · max-height:780px        —— 768px 高的 Windows 笔记本，再收到 14px。
+ * 说明文字收进悬停气泡后腾出了 ~140px，这三档才敢一起放宽。
+ */
+.detail-page {
   display: flex;
   flex-direction: column;
-  gap: 17px;
+  gap: 28px;
 }
 
-/* 音量两条滑块：宽屏并排（各占一半），窄屏自动回落单列 */
-.mix-volume-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 14px;
+/* 标题行贴顶对齐、去掉默认下边距：这一屏里每一像素都要花在控件上 */
+.detail-head {
+  align-items: center;
+  margin-bottom: 0;
 }
 
-@media (min-width: 560px) {
-  .mix-volume-grid {
-    grid-template-columns: 1fr 1fr;
-    gap: 18px;
-  }
+.detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
 }
 
-/*
- * 混音分组：宽屏两列（音量/音效 一排，修音/对齐 一排），编辑页不再要滚很久。
- * 各组高度不一是正常的，顶端对齐就行；第一行不画上边框（那是行分隔线）。
- */
-.mix-groups {
-  display: grid;
-  grid-template-columns: 1fr;
-  row-gap: 18px;
+/* 实时试听卡：标题 + 播放 + 进度 + 时间 + 徽章，一行放完 */
+.preview-card {
+  padding: 20px;
 }
 
-@media (min-width: 900px) {
-  .mix-groups {
-    grid-template-columns: 1fr 1fr;
-    column-gap: 22px;
-    align-items: start;
-  }
-
-  .mix-groups > .mix-group:nth-child(-n + 2) {
-    border-top: none;
-    padding-top: 0;
-    margin-top: 0;
-  }
-}
-
-/* 合成：本页唯一主操作，通栏 pill */
-.mix-apply {
-  width: 100%;
-  justify-content: center;
-  margin-top: 2px;
-}
-
-/*
- * 合成按钮粘在面板底部：参数区再长，滚动时它也一直待在视口里，
- * 不用滚到页面最底下才点得到。出血到卡片边缘，滚到底时自然回落成面板末元素。
- */
-.mix-apply {
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
-  width: calc(100% + 36px);
-  margin-left: -18px;
-  margin-right: -18px;
-  padding-top: 14px;
-  padding-bottom: 14px;
-  background: var(--bg-card);
-  border-top: 1px solid var(--border);
-  border-radius: 0 0 var(--radius) var(--radius);
-  box-shadow: 0 -10px 22px rgba(5, 7, 13, 0.55);
-}
-
-/* 实时试听的传输条：播放按钮 + 进度 + 时间 */
 .preview-transport {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.preview-title {
+  flex: 0 0 auto;
+  font-size: 15px;
 }
 
 .preview-transport .btn-primary {
@@ -1009,7 +991,7 @@ input[type='range']:disabled::-webkit-slider-thumb {
 }
 
 .preview-transport input[type='range'] {
-  flex: 1;
+  flex: 1 1 120px;
   min-width: 0;
 }
 
@@ -1020,17 +1002,316 @@ input[type='range']:disabled::-webkit-slider-thumb {
   white-space: nowrap;
 }
 
-/* 选择按钮一律一行排布：装得下就一行，装不下再折行（预设 6 个也能一行放下） */
-.reverb-options {
+.preview-hint {
+  margin-top: 8px;
+  line-height: 1.5;
+}
+
+/* --------------------------------- 悬停说明 --------------------------------- */
+
+/*
+ * 说明文字的第二种形态：常驻一行 → 悬停/聚焦才展开的气泡。
+ *
+ * 编辑页要求「所有元素一屏放完、不滚动」，每个控件都挂一行解释会把面板撑出
+ * 两屏；但说明本身是有用的信息，不能删。所以收进标签旁的小图标：
+ *  · info（圆形 i）—— 这个控件是干什么的；
+ *  · warn（圆形 !）—— 试听与成品行为不一致 / 容易误用的地方。
+ *
+ * 气泡是绝对定位的：visibility:hidden 时**照样占布局**，伸到视口外就会给文档
+ * 添出滚动条（e2e 的「一屏放完」断言盯着这个）。所以展开方向是受控的：
+ *  · 默认朝右 —— 图标一律挂在标签左侧，右边永远有地方；
+ *  · placement=top —— 朝上展开，给贴视口底部的控件用。
+ */
+.hint {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
+.hint-icon {
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--bg-input);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.hint-icon:hover {
+  color: var(--text);
+  border-color: var(--accent-2);
+  background: var(--accent-2-soft);
+}
+
+.hint-icon:focus-visible {
+  outline: none;
+  color: var(--text);
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px var(--accent-2-soft);
+}
+
+/* warn 语气用警示黄：只给「试听里听不到 / 和成品不一样」的地方 */
+.hint-warn .hint-icon {
+  color: var(--warn);
+  border-color: rgba(255, 181, 46, 0.4);
+}
+
+.hint-warn .hint-icon:hover,
+.hint-warn .hint-icon:focus-visible {
+  color: var(--warn);
+  border-color: var(--warn);
+  background: rgba(255, 181, 46, 0.14);
+  box-shadow: 0 0 0 3px rgba(255, 181, 46, 0.14);
+}
+
+.hint-bubble {
+  position: absolute;
+  z-index: 40;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: max-content;
+  /*
+   * 窄屏再收一档：手机宽度下图标右边只剩两百多像素，固定 240px 会把最右
+   * 那个气泡顶出视口 —— 而收起的气泡照样占布局，会撑出横向滚动条。
+   */
+  max-width: min(240px, 58vw);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  box-shadow: var(--shadow);
+  color: var(--text-dim);
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+  /* 气泡不吃指针：否则鼠标一移上气泡，图标就失去了 hover */
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease;
+}
+
+/* 朝左展开：双列排版下落在右半列的控件（去齿音）用它，否则气泡会顶出视口右侧 */
+.hint[data-placement='left'] .hint-bubble {
+  left: auto;
+  right: calc(100% + 8px);
+}
+
+/* 朝上展开：贴着视口底部的控件用它。左对齐图标（不居中），图标在页面左侧时才不会向左越界 */
+.hint[data-placement='top'] .hint-bubble {
+  left: 0;
+  top: auto;
+  bottom: calc(100% + 8px);
+  transform: none;
+}
+
+/*
+ * 单列排版（<760px，与 .mix-columns 的两列断点一致）时所有图标都回到页面左侧，
+ * 朝左展开反而跑出视口 —— 翻回朝右。
+ */
+@media (max-width: 759px) {
+  .hint[data-flip-narrow] .hint-bubble {
+    left: calc(100% + 8px);
+    right: auto;
+  }
+}
+
+/* hover 与键盘聚焦都能唤出（:focus-within 覆盖 Tab 与触屏点按） */
+.hint:hover .hint-bubble,
+.hint:focus-within .hint-bubble {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* 标签 + 图标：图标跟在文字后面，基线对齐 */
+.label-with-hint {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* ------------------------------ 混音面板 ------------------------------ */
+
+.mix-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  /* 覆盖 .card 的 18px：面板是页面上最大的一块，内边距也跟着放宽 */
+  padding: 24px;
+}
+
+.mix-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.mix-panel-title {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+/*
+ * 两列排布：左列「音效」（预设 10 + 混响 8 + 均衡 3，全面板最高的一列），
+ * 右列「音量 / 修音 / 对齐 + 合成」。两列高度接近，整块面板才塞得进一屏。
+ * 装不下两列时（窄屏）回落单列，那时页面恢复成正常文档流。
+ */
+.mix-columns {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+@media (min-width: 760px) {
+  .mix-columns {
+    grid-template-columns: 1fr 1fr;
+    column-gap: 22px;
+    align-items: start;
+  }
+}
+
+.mix-col {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  min-width: 0;
+}
+
+/* 分组常驻展开：没有 <details>，分组头只是分区标题（不可点、也没有箭头） */
+.mix-group {
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+}
+
+.mix-col > .mix-group:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.mix-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 2px 0 14px;
+  user-select: none;
+}
+
+.mix-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* 音量两条滑块：宽屏并排（各占一半），窄屏自动回落单列 */
+.mix-volume-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+}
+
+@media (min-width: 560px) {
+  .mix-volume-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 22px;
+  }
+}
+
+/* 修音：压缩量 / 去齿音并排，降噪单独一行 */
+.mix-fix-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+}
+
+@media (min-width: 560px) {
+  .mix-fix-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 22px;
+  }
+}
+
+.mix-check {
+  gap: 8px;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+/* 降噪那一行：label 只包「复选框 + 文字」，说明图标在 label 外（否则点图标会勾选复选框） */
+.mix-check-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+/* 均衡三段并排：每段「标签 + 值」在上、滑块在下，比竖排三条省一半高度 */
+.eq-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+/* 对齐微调：毫秒输入框 + 滑块同一行 */
+.mix-offset-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mix-offset-row input[type='range'] {
+  flex: 1;
+  min-width: 0;
+}
+
+/*
+ * 一排选项按钮：装得下就一行，装不下再折行（点歌台的「全部/音频/视频」用它）。
+ * 混音面板的预设/混响不用这个 —— 那边要固定列数的网格（见 .option-grid）。
+ */
+.option-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-.reverb-option {
+.option-row .reverb-option {
   flex: 1 1 auto;
+}
+
+/*
+ * 预设 / 混响按钮：固定列数的网格，不再是「能放几行放几行」的流式换行 ——
+ * 10 个预设 5×2、8 种混响 4×2，行数确定，面板高度才可预测。
+ */
+.option-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.option-grid-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.reverb-option {
   min-width: 0;
-  padding: 8px 9px;
+  padding: 13px 8px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   background: var(--bg-soft);
@@ -1038,6 +1319,8 @@ input[type='range']:disabled::-webkit-slider-thumb {
   font-size: 13.5px;
   text-align: center;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
@@ -1053,11 +1336,135 @@ input[type='range']:disabled::-webkit-slider-thumb {
   font-weight: 600;
 }
 
-/* 作品编辑页：单列列表式排版（实时试听 → 混音调整） */
-.detail-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+/* 合成：本页唯一主操作，通栏 pill，收在右列底部 */
+.mix-apply {
+  width: 100%;
+  justify-content: center;
+  /* 与上方「对齐微调」分组再拉开一点：它是这一列最后的落脚点 */
+  margin-top: 4px;
+}
+
+/*
+ * 矮视口逐级压缩：间距、卡片内边距一起收，把「一屏放完」守住。
+ * 压缩的只是留白，控件本身不动 —— 滑块和按钮在任何高度下都点得到。
+ *
+ * 断点取 880px 而不是 820px：基准档那套 28px 间距要 ~860px 的窗口才铺得开，
+ * 断点放在 820px 会让 821～860px 高的窗口（很常见的笔记本视口）吃基准档 →
+ * 直接溢出 40px 出滚动条。放到 880px，这一整段都用压缩档，实测 819px 也放得下。
+ */
+@media (max-height: 880px) {
+  .app-main-fit {
+    padding: 16px 24px 18px;
+  }
+
+  .detail-page,
+  .detail-body,
+  .mix-panel,
+  .mix-columns,
+  .mix-group-body,
+  .mix-col {
+    gap: 20px;
+  }
+
+  .preview-card,
+  .mix-panel {
+    padding: 18px 20px;
+  }
+
+  .mix-group {
+    padding-top: 14px;
+  }
+
+  .mix-group-head {
+    padding-bottom: 10px;
+  }
+
+  /* 只收面板内的行距：.field 是全局类，别波及上传弹窗 / 演唱页 */
+  .mix-panel .field {
+    gap: 6px;
+  }
+
+  .reverb-option {
+    padding: 11px 6px;
+  }
+
+  .option-grid {
+    gap: 8px;
+  }
+}
+
+/* 再矮一档（768px 高的 Windows 笔记本）：只收留白，控件尺寸不变 */
+@media (max-height: 780px) {
+  .app-main-fit {
+    padding: 14px 24px 14px;
+  }
+
+  .detail-page,
+  .detail-body {
+    gap: 18px;
+  }
+
+  .mix-panel,
+  .mix-columns,
+  .mix-group-body,
+  .mix-col {
+    gap: 18px;
+  }
+
+  .mix-group-head {
+    padding: 0 0 8px;
+  }
+}
+
+/*
+ * 再矮一档（720p 屏幕、或 768px 笔记本减去浏览器工具栏后的真实视口）：
+ * 这一档的存在是为了「不滚动」—— 1366x768 的 Windows 笔记本，Chrome 视口
+ * 其实只剩 670px 左右，前两档的间距会把它顶出滚动条。控件尺寸仍不缩。
+ */
+@media (max-height: 740px) {
+  .app-main-fit {
+    padding: 10px 24px 12px;
+  }
+
+  .detail-page,
+  .detail-body,
+  .mix-panel,
+  .mix-columns,
+  .mix-group-body,
+  .mix-col {
+    gap: 12px;
+  }
+
+  .preview-card,
+  .mix-panel {
+    padding: 12px 14px;
+  }
+
+  .mix-group {
+    padding-top: 10px;
+  }
+
+  .mix-group-head {
+    padding: 0 0 4px;
+  }
+
+  .reverb-option {
+    padding: 8px 6px;
+  }
+}
+
+/* 窄屏：按钮网格减少列数，避免两字标签被挤成省略号 */
+@media (max-width: 620px) {
+  .option-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 420px) {
+  .option-grid,
+  .option-grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 /* 详情页标题行：渐变 🎤 chip + 标题 + 改名，不再把按钮/徽章塞进 h1 里 */
@@ -1330,55 +1737,4 @@ input[type='range']:disabled::-webkit-slider-thumb {
   white-space: pre;
 }
 
-/* ------------------------------ 混音面板分组 ------------------------------ */
-
-.mix-panel > .mix-groups > .mix-group:first-child {
-  border-top: none;
-  padding-top: 0;
-  margin-top: 0;
-}
-
-.mix-group {
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
-  margin-top: 4px;
-}
-
-.mix-group-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 14px;
-  padding: 4px 0;
-  list-style: none;
-  user-select: none;
-  transition: color 0.15s;
-}
-
-.mix-group-head:hover {
-  color: var(--accent);
-}
-
-/* 去掉默认三角，换一个随展开状态旋转的小箭头 */
-.mix-group-head::-webkit-details-marker {
-  display: none;
-}
-
-.mix-group-head::before {
-  content: '▸';
-  color: var(--text-faint);
-  margin-right: 6px;
-  transition: transform 150ms ease;
-  display: inline-block;
-}
-
-.mix-group[open] > .mix-group-head::before {
-  transform: rotate(90deg);
-}
-
-.mix-group-body {
-  padding: 8px 0 12px;
-}
+/* 混音面板的分组样式已合并到上面的「作品编辑页：一屏放完 / 混音面板」两节 */

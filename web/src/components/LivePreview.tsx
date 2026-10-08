@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PreviewEngine } from '../audio/preview';
+import { Hint } from './Hint';
 import { log } from '../log';
 import { formatDuration } from '../utils';
 
@@ -26,6 +27,10 @@ const SEEK_COMMIT_MS = 120;
 
 /**
  * 「实时试听」卡片：播放/暂停 + 进度条。
+ *
+ * 一行传输条（标题 + 播放 + 进度 + 时间 + 徽章）；「这是什么」的长说明
+ * 收到标题旁的悬停图标里（见 Hint.tsx）—— 编辑页要一屏放完，常驻两行
+ * 解释会把面板顶出视口。出错时的提示仍然常驻：那是错误，不是说明。
  *
  * 它只负责 transport UI；参数改动的实时生效由父组件把 MixPanel 的
  * onParamsChange 接到 PreviewEngine.setParams 上完成。
@@ -134,16 +139,18 @@ export function LivePreview({ engine, status, error, onRequestPlay }: Props) {
   const disabled = status === 'loading';
 
   return (
-    <div className="card">
-      <div className="row-between" style={{ marginBottom: 12 }}>
-        <strong>实时试听</strong>
-        <span className="badge badge-accent">改动立即生效</span>
-      </div>
-
+    <div className="card preview-card">
       <div className="preview-transport">
+        <strong className="preview-title">
+          实时试听
+          <Hint text="干声 + 伴奏在浏览器里实时混音：拖滑块、输入毫秒数、换混响都会立刻生效，不打断播放。这只是预览 —— 点下面的「合成」服务端才会真正出新版 MP3。" />
+        </strong>
         <button
           type="button"
           className="btn btn-primary"
+          /* 自动化定位钩子：传输条里现在还有说明图标（也是 button），
+             按「第几个 button」点会点到图标上 —— 和数据属性定位滑块同一个道理 */
+          data-preview-toggle
           disabled={disabled}
           onClick={handleToggle}
         >
@@ -176,18 +183,14 @@ export function LivePreview({ engine, status, error, onRequestPlay }: Props) {
         <span className="preview-time">
           {formatDuration(position)} / {formatDuration(duration)}
         </span>
+        <span className="badge badge-accent">改动立即生效</span>
       </div>
 
       {error ? (
-        <div className="small" style={{ marginTop: 10, color: 'var(--danger)' }}>
+        <div className="small preview-hint" style={{ color: 'var(--danger)' }}>
           预览失败：{error}（可以回作品库听已生成的 MP3，或再点一次「试听」重试）
         </div>
-      ) : (
-        <div className="small faint" style={{ marginTop: 10 }}>
-          干声 + 伴奏在浏览器里实时混音：拖滑块、输入毫秒数、换混响都会立刻生效，不打断播放。
-          这只是预览 —— 点下面的「合成」服务端才会真正出新版 MP3，然后自动返回作品库。
-        </div>
-      )}
+      ) : null}
     </div>
   );
 }

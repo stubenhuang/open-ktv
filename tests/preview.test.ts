@@ -17,7 +17,7 @@ import {
   vocalChainLinearGain,
 } from '../shared/mix.ts';
 import { computeLevels } from '../server/src/mix.ts';
-import { DEFAULT_MIX_PARAMS, VOCAL_PRESETS, type MixParams } from '../shared/types.ts';
+import { DEFAULT_MIX_PARAMS, REVERB_KINDS, VOCAL_PRESETS, type MixParams } from '../shared/types.ts';
 
 const baseParams: MixParams = { ...DEFAULT_MIX_PARAMS };
 
@@ -114,18 +114,26 @@ describe('toPreviewParams', () => {
 });
 
 describe('预览混响参数表', () => {
-  it('四档齐全，dry 旁通', () => {
+  it('八档齐全，dry 旁通', () => {
     assert.equal(REVERB_PREVIEW.dry, null);
-    for (const kind of ['room', 'hall', 'stage'] as const) {
+    for (const kind of REVERB_KINDS) {
       const spec = REVERB_PREVIEW[kind];
+      if (kind === 'dry') continue;
       assert.ok(spec, `${kind} 缺少参数`);
       assert.ok(spec.seconds > 0 && spec.wet > 0 && spec.wet < 1 && spec.decay > 0);
     }
   });
 
-  it('尾巴长度递进：room < hall < stage', () => {
-    assert.ok(REVERB_PREVIEW.room!.seconds < REVERB_PREVIEW.hall!.seconds);
-    assert.ok(REVERB_PREVIEW.hall!.seconds < REVERB_PREVIEW.stage!.seconds);
+  it('尾巴长度按 REVERB_KINDS 的顺序递进（档位表两端必须同序）', () => {
+    const kinds = REVERB_KINDS.filter((kind) => kind !== 'dry');
+    for (let i = 1; i < kinds.length; i += 1) {
+      const previous = REVERB_PREVIEW[kinds[i - 1]!]!;
+      const current = REVERB_PREVIEW[kinds[i]!]!;
+      assert.ok(
+        current.seconds > previous.seconds,
+        `${kinds[i]} 的尾巴应比 ${kinds[i - 1]} 长（${current.seconds} vs ${previous.seconds}）`,
+      );
+    }
   });
 });
 

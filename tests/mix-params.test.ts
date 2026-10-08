@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { sanitizeMixParams } from '../server/src/routes/works.ts';
-import { DEFAULT_MIX_PARAMS, MIX_LIMITS, VOCAL_PRESETS, type MixParams } from '../shared/types.ts';
+import { DEFAULT_MIX_PARAMS, MIX_LIMITS, REVERB_KINDS, VOCAL_PRESETS, type MixParams } from '../shared/types.ts';
 
 /** 造一份完整的 MixParams：只写要测的字段，其余用默认值 */
 function mixParams(overrides: Partial<MixParams> = {}): MixParams {
@@ -51,9 +51,11 @@ describe('sanitizeMixParams', () => {
   it('混响档位白名单外的值回落 base', () => {
     assert.equal(sanitizeMixParams({ reverb: '教堂' }, DEFAULT_MIX_PARAMS).reverb, DEFAULT_MIX_PARAMS.reverb);
     assert.equal(sanitizeMixParams({ reverb: 'stage' }, DEFAULT_MIX_PARAMS).reverb, 'stage');
-    for (const reverb of ['dry', 'room', 'hall', 'stage'] as const) {
+    // 白名单就是 REVERB_KINDS 本身：档位表扩到 8 种，这里要全量覆盖
+    for (const reverb of REVERB_KINDS) {
       assert.equal(sanitizeMixParams({ reverb }, DEFAULT_MIX_PARAMS).reverb, reverb);
     }
+    assert.equal(REVERB_KINDS.length, 8, '混响档位数应为 8');
   });
 
   it('未提供的字段沿用 base，不是默认值', () => {
@@ -93,6 +95,7 @@ describe('sanitizeMixParams', () => {
     for (const preset of VOCAL_PRESETS) {
       assert.equal(sanitizeMixParams({ vocalPreset: preset }, DEFAULT_MIX_PARAMS).vocalPreset, preset);
     }
+    assert.equal(VOCAL_PRESETS.length, 10, '预设数应为 10');
   });
 
   it('noiseReduction 只认真正的布尔值', () => {
