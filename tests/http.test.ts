@@ -49,6 +49,30 @@ async function makeMp3(): Promise<Buffer> {
   return fs.readFileSync(file);
 }
 
+/** 造一个 1 秒的 mp4（h264 + aac）—— 视频伴奏，上传应被拒 */
+async function makeMp4(): Promise<Buffer> {
+  const file = path.join(dataDir, 'fixture.mp4');
+  await helpers.ffmpegOk([
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc2=size=160x120:rate=10:duration=1',
+    '-f',
+    'lavfi',
+    '-i',
+    'sine=frequency=440:sample_rate=48000:duration=1',
+    '-pix_fmt',
+    'yuv420p',
+    '-c:v',
+    'libx264',
+    '-c:a',
+    'aac',
+    '-shortest',
+    file,
+  ]);
+  return fs.readFileSync(file);
+}
+
 async function uploadTrack(mp3: Buffer, fileName = '周杰伦 - 晴天.mp3'): Promise<Response> {
   const form = new FormData();
   form.append('file', new Blob([mp3], { type: 'audio/mpeg' }), fileName);
@@ -79,6 +103,18 @@ describe('HTTP API（真实 Express + 临时数据目录）', () => {
     const response = await fetch(`${baseUrl}/api/tracks`, { method: 'POST', body: form });
     assert.equal(response.status, 400);
     assert.match(((await response.json()) as { error: string }).error, /表单字段名应为 file/);
+  });
+
+  it('上传视频被拒：伴奏库只收音频（靠 ffprobe 判定，不看扩展名）', async () => {
+    const form = new FormData();
+    form.append('file', new Blob([await makeMp4()], { type: 'video/mp4' }), 'mv.mp4');
+    const response = await fetch(`${baseUrl}/api/tracks`, { method: 'POST', body: form });
+    assert.equal(response.status, 400);
+    assert.match(((await response.json()) as { error: string }).error, /音频/);
+
+    // 混进库里一条都不行
+    const list = (await (await fetch(`${baseUrl}/api/tracks`)).json()) as { kind: string }[];
+    assert.equal(list.some((item) => item.kind === 'video'), false);
   });
 
   it('上传伴奏：探测、入库、直接可用（mp3 免转码）', async () => {
@@ -290,10 +326,89 @@ describe('HTTP API（真实 Express + 临时数据目录）', () => {
     assert.equal(typeof body.error, 'string');
   });
 
+  it('删除伴奏不再被作品拦截：作品保留，脱钩后不能再合成', async () => {
+    // 直接造「伴奏 + 作品」：这里要验的是删除语义，不必真走一遍录音上传
+    const db = await import('../server/src/db.ts');
+    const { DEFAULT_MIX_PARAMS } = await import('../shared/types.ts');
+    const trackId = 'http-delete-with-works';
+    db.insertTrack({
+      id: trackId,
+      title: 'HTTP删除测试伴奏',
+      artist: null,
+      kind: 'audio',
+      originalName: 'x.mp3',
+      originalPath: path.join(dataDir, 'x.mp3'),
+      playablePath: path.join(dataDir, 'x.mp3'),
+      proxyKind: 'none',
+      mime: 'audio/mpeg',
+      size: 1024,
+      duration: 3,
+      status: 'ready',
+      error: null,
+    });
+    db.insertWork({
+      id: 'http-delete-work',
+      trackId,
+      title: 'HTTP删除测试作品',
+      vocalPath: path.join(dataDir, 'vocal.wav'),
+      vocalDuration: 3,
+      autoOffsetMs: 100,
+      mixParams: DEFAULT_MIX_PARAMS,
+      status: 'ready',
+    });
+
+    const removed = await fetch(`${baseUrl}/api/tracks/${trackId}`, { method: 'DELETE' });
+    assert.equal(removed.status, 200, '有作品也照删，不再 409');
+    assert.deepEqual(await removed.json(), { ok: true, keptWorks: 1 });
+
+    assert.equal((await fetch(`${baseUrl}/api/tracks/${trackId}`)).status, 404, '伴奏没了');
+
+    // 作品记录和接口都还在，只是脱钩了
+    const detail = (await (await fetch(`${baseUrl}/api/works/http-delete-work`)).json()) as {
+      trackId: string | null;
+      trackTitle: string | null;
+    };
+    assert.equal(detail.trackId, null, '外键 SET NULL 把作品脱钩');
+    assert.equal(detail.trackTitle, null, '列表/详情都该反映「伴奏已删除」');
+
+    const list = (await (await fetch(`${baseUrl}/api/works`)).json()) as {
+      id: string;
+      trackTitle: string | null;
+    }[];
+    assert.ok(list.some((item) => item.id === 'http-delete-work'), '作品库列表仍包含它');
+
+    // 没有伴奏就不能再合成：任务应立即失败并说明原因
+    const remix = await fetch(`${baseUrl}/api/works/http-delete-work/mix`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    assert.equal(remix.status, 202);
+
+    const deadline = Date.now() + 5000;
+    let failedError: string | null = null;
+    while (Date.now() < deadline) {
+      const work = (await (await fetch(`${baseUrl}/api/works/http-delete-work`)).json()) as {
+        status: string;
+        error: string | null;
+      };
+      if (work.status === 'failed') {
+        failedError = work.error;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.match(failedError ?? '', /伴奏已删除/, '没伴奏时合成应直接失败并说明原因');
+
+    // 收尾：作品本身仍可删
+    const workRemoved = await fetch(`${baseUrl}/api/works/http-delete-work`, { method: 'DELETE' });
+    assert.equal(workRemoved.status, 200);
+  });
+
   it('删除伴奏后查不到了', async () => {
     const response = await fetch(`${baseUrl}/api/tracks/${trackId}`, { method: 'DELETE' });
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { ok: true });
+    assert.deepEqual(await response.json(), { ok: true, keptWorks: 0 });
 
     const gone = await fetch(`${baseUrl}/api/tracks/${trackId}`);
     assert.equal(gone.status, 404);

@@ -83,7 +83,13 @@ export default function WorksPage() {
                   {work.title}
                 </div>
                 <div className="track-meta">
-                  {work.trackTitle && <span>伴奏：{work.trackTitle}</span>}
+                  {work.trackTitle ? (
+                    <span>伴奏：{work.trackTitle}</span>
+                  ) : (
+                    <span className="badge badge-fail" title="伴奏已删除，成品还能听，但不能重新合成">
+                      伴奏已删除
+                    </span>
+                  )}
                   <span className="mono">{formatDuration(work.vocalDuration)}</span>
                   <span>{formatDateTime(work.createdAt)}</span>
                 </div>

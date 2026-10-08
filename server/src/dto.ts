@@ -53,9 +53,9 @@ export function trackToDto(record: TrackRecord): Track {
   return { ...trackToSummary(record), lyrics: record.lyrics };
 }
 
-/** 列表项：带进度，不带歌词正文 */
-export function trackToListItem(record: TrackRecord): TrackListItem {
-  return { ...trackToSummary(record), progress: trackProgress(record) };
+/** 列表项：带进度与作品数，不带歌词正文 */
+export function trackToListItem(record: TrackRecord, workCount: number): TrackListItem {
+  return { ...trackToSummary(record), progress: trackProgress(record), workCount };
 }
 
 /** 单条伴奏详情：歌词正文与转码进度都要（演唱页两者都用得上） */

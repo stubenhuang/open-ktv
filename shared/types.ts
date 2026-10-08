@@ -149,6 +149,11 @@ export interface Track extends TrackSummary {
 /** 列表接口返回的伴奏，附带转码进度（0–1，仅 processing 时有值） */
 export interface TrackListItem extends TrackSummary {
   progress: number | null;
+  /**
+   * 这个伴奏下有几个作品。
+   * 只给列表：删除伴奏时作品会保留（不能再混音），卡片上要把这个数量说清楚。
+   */
+  workCount: number;
 }
 
 /**
@@ -160,7 +165,13 @@ export interface TrackDetail extends Track {
 
 export interface Work {
   id: string;
-  trackId: string;
+  /**
+   * 伴奏 id；null = 伴奏已被删除。
+   *
+   * 删除伴奏不再拦截（作品与伴奏解耦）：作品记录和成品 MP3 都保留，
+   * 只是不能再试听 / 重新合成。数据库靠 ON DELETE SET NULL 自动脱钩。
+   */
+  trackId: string | null;
   title: string;
   /** 秒 */
   vocalDuration: number;

@@ -102,6 +102,7 @@ function startMix(workId: string): void {
     async (report) => {
       const work = getWork(workId);
       if (!work) throw new Error('作品记录已不存在');
+      if (!work.trackId) throw new Error('伴奏已删除，这个作品不能再重新合成');
       const track = getTrack(work.trackId);
       if (!track) throw new Error('对应的伴奏已被删除');
 
@@ -201,14 +202,15 @@ router.post(
 );
 
 router.get('/', (_req, res) => {
-  const items = listWorks().map((work) => workToListItem(work, getTrack(work.trackId)));
+  // 伴奏被删掉的作品（track_id 为 null）照样列出来：成品 MP3 还能播放/下载
+  const items = listWorks().map((work) => workToListItem(work, work.trackId ? getTrack(work.trackId) : undefined));
   res.json(items);
 });
 
 router.get(
   '/:id',
   withWork((_req, res, work) => {
-    const track = getTrack(work.trackId);
+    const track = work.trackId ? getTrack(work.trackId) : undefined;
     res.json({ ...workToDto(work), trackTitle: track?.title ?? null, trackKind: track?.kind ?? null });
   }),
 );

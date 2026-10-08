@@ -100,6 +100,76 @@ describe('tracks 表', () => {
     db.deleteTrack('d1');
     assert.equal(db.getTrack('d1'), undefined);
   });
+
+  it('deleteTrack 不再被作品拦截：作品的 track_id 被置空，作品记录还在', () => {
+    db.insertTrack(newTrack('d-keep'));
+    db.insertWork(newWork('w-keep', 'd-keep'));
+
+    db.deleteTrack('d-keep');
+
+    assert.equal(db.getTrack('d-keep'), undefined, '伴奏没了');
+    const survived = db.getWork('w-keep');
+    assert.ok(survived, '作品记录要留着（成品 MP3 还能播放/下载）');
+    assert.equal(survived.trackId, null, '外键 ON DELETE SET NULL 自动脱钩');
+    assert.equal(survived.title, '作品w-keep', '作品自身的内容不该被抹掉');
+  });
+});
+
+describe('works 外键迁移（删伴奏与作品解耦）', () => {
+  it('老库（NOT NULL + NO ACTION）重建后：删伴奏不再拦，作品 track_id 置空', () => {
+    // 先把 works 表换回老形态：track_id NOT NULL、外键 NO ACTION（= 有作品就删不掉）
+    exec('DROP TABLE works');
+    exec(`CREATE TABLE works (
+      id TEXT PRIMARY KEY,
+      track_id TEXT NOT NULL REFERENCES tracks(id),
+      title TEXT NOT NULL,
+      vocal_path TEXT NOT NULL,
+      vocal_duration REAL NOT NULL,
+      auto_offset_ms INTEGER NOT NULL,
+      mix_params TEXT NOT NULL,
+      mp3_path TEXT,
+      status TEXT NOT NULL,
+      error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      levels TEXT,
+      align_ver INTEGER NOT NULL DEFAULT 1
+    )`);
+
+    // 老外键下删伴奏应该被拦住（SQLite 约束错误）—— 这正是迁移要解决的问题
+    db.insertTrack(newTrack('mig-old'));
+    db.insertWork(newWork('mig-old-w', 'mig-old'));
+    assert.throws(() => db.deleteTrack('mig-old'), /FOREIGN KEY|constraint/i);
+
+    // 重新初始化：应检测到老外键并重建表
+    db.initDb();
+
+    // 数据还在（重建表不能丢作品）
+    const work = db.getWork('mig-old-w');
+    assert.ok(work, '迁移不能丢作品');
+    assert.equal(work.title, '作品mig-old-w');
+
+    // 现在可以删了，作品保留并脱钩
+    db.deleteTrack('mig-old');
+    assert.equal(db.getWork('mig-old-w')!.trackId, null);
+    assert.equal(db.getTrack('mig-old'), undefined);
+
+    // 新插入的作品照常带 track_id，外键仍然生效（伴奏不存在时插作品照样抛错）
+    db.insertTrack(newTrack('mig-new'));
+    db.insertWork(newWork('mig-new-w', 'mig-new'));
+    assert.equal(db.getWork('mig-new-w')!.trackId, 'mig-new');
+    assert.throws(() => db.insertWork(newWork('mig-bad', '不存在的伴奏')));
+  });
+
+  it('新库重复 initDb 不会反复重建表', () => {
+    // 迁移是幂等的：第二次 initDb 检测到已是 SET NULL，什么都不做
+    db.initDb();
+    db.insertTrack(newTrack('idem'));
+    db.insertWork(newWork('idem-w', 'idem'));
+    db.initDb();
+    db.deleteTrack('idem');
+    assert.equal(db.getWork('idem-w')!.trackId, null);
+  });
 });
 
 describe('tracks 歌词与曲库来源', () => {

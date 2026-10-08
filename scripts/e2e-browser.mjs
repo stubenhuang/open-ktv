@@ -270,7 +270,7 @@ async function makeFakeMicTone() {
   return file;
 }
 
-/** 造一个 mkv（浏览器放不了，必须走服务端转码）—— 验证视频伴奏这条路 */
+/** 造一个 mkv（视频伴奏）—— 现在用它验证「伴奏库不再支持视频」这条拦截 */
 async function makeTestVideo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'open-ktv-video-'));
   const file = path.join(dir, 'CDP端到端测试视频伴奏.mkv');
@@ -314,7 +314,9 @@ const TEST_PREFIX = '端到端测试';
 
 /**
  * 把上次没跑完留下的测试数据清干净。
- * 顺序不能反：被作品引用的伴奏服务端会拒绝删除（409）。
+ *
+ * 先删作品再删伴奏：删伴奏本身不再被作品拦截（作品的 track_id 会被置空），
+ * 但先删作品才不会留下一堆「伴奏已删除」的孤儿作品。
  */
 async function purgeStaleTestData(page) {
   return evaluate(
@@ -341,39 +343,84 @@ async function purgeStaleTestData(page) {
   );
 }
 
+/** 打开伴奏库的上传弹窗（点上传区 → 等 .upload-modal-panel 出现） */
+async function openUploadDialog(page) {
+  const clicked = await evaluate(
+    page,
+    `(() => {
+      const zone = document.querySelector('.dropzone');
+      if (!zone) return '页面上没有上传区';
+      zone.click();
+      return 'ok';
+    })()`,
+    '点上传区',
+  );
+  if (clicked !== 'ok') throw new Error(`打不开上传弹窗：${clicked}`);
+  await waitFor(page, `document.querySelector('.upload-modal-panel') !== null`, {
+    timeoutMs: 10_000,
+    label: '上传弹窗打开',
+  });
+}
+
 /**
- * 通过页面上的文件选择框上传，并返回这次**新增**的伴奏记录。
+ * 通过上传弹窗选文件并提交，返回这次**新增**的伴奏记录。
  *
- * 关键是不能靠「找到同名条目」来判断 —— 上次跑失败的残留会撞名，
- * 结果测试拿着旧记录跑，新上传的那条反而被漏掉。这里改成对比上传前后的 id 集合。
+ * 伴奏库的上传走二级弹窗（音频必选 + 歌词可选），所以不能直接把文件挂到
+ * 页面的 input 上 —— 要先点上传区把弹窗打开，文件选择框在弹窗里。
+ *
+ * @param page CDP 页面
+ * @param audioPath 音频文件路径
+ * @param lyricsPath 可选：歌词文件路径（会一起带进弹窗）
  */
-async function uploadViaFileInput(page, filePath) {
+async function uploadViaFileInput(page, audioPath, lyricsPath = null) {
   const before = await evaluate(
     page,
     `(async () => (await (await fetch('/api/tracks')).json()).map((t) => t.id))()`,
     '读取上传前的伴奏 id',
   );
 
-  // 伴奏列表异步加载完会重渲染，可能让刚才拿到的 node id 失效
-  // （CDP 报 "Could not find node with given id"）—— 重取几次即可
-  let attached = false;
-  let lastError = null;
-  for (let attempt = 0; attempt < 3 && !attached; attempt += 1) {
-    try {
-      const { root } = await page.send('DOM.getDocument', { depth: -1, pierce: true });
-      const { nodeId } = await page.send('DOM.querySelector', {
-        nodeId: root.nodeId,
-        selector: 'input[type=file]',
-      });
-      if (!nodeId) throw new Error('页面上找不到文件选择框');
-      await page.send('DOM.setFileInputFiles', { nodeId, files: [filePath] });
-      attached = true;
-    } catch (err) {
-      lastError = err;
-      await sleep(300);
+  await openUploadDialog(page);
+
+  // 弹窗里有两个文件选择框：[0] 音频、[1] 歌词（各在自己的 .field 里，按序号取）
+  const attach = async (index, filePath) => {
+    let attached = false;
+    let lastError = null;
+    for (let attempt = 0; attempt < 3 && !attached; attempt += 1) {
+      try {
+        const { root } = await page.send('DOM.getDocument', { depth: -1, pierce: true });
+        const { nodeIds } = await page.send('DOM.querySelectorAll', {
+          nodeId: root.nodeId,
+          selector: '.upload-modal-panel input[type=file]',
+        });
+        const nodeId = nodeIds?.[index];
+        if (!nodeId) throw new Error(`弹窗里找不到第 ${index + 1} 个文件选择框`);
+        await page.send('DOM.setFileInputFiles', { nodeId, files: [filePath] });
+        attached = true;
+      } catch (err) {
+        lastError = err;
+        await sleep(300);
+      }
     }
+    if (!attached) throw lastError instanceof Error ? lastError : new Error('挂文件到输入框失败');
+  };
+
+  await attach(0, audioPath);
+  if (lyricsPath) {
+    await attach(1, lyricsPath);
   }
-  if (!attached) throw lastError instanceof Error ? lastError : new Error('挂文件到输入框失败');
+
+  const submitted = await evaluate(
+    page,
+    `(() => {
+      const button = [...document.querySelectorAll('.upload-modal-panel button')]
+        .find((b) => b.textContent.trim() === '开始上传');
+      if (!button || button.disabled) return '「开始上传」不可用（音频没选上？）';
+      button.click();
+      return 'ok';
+    })()`,
+    '点开始上传',
+  );
+  if (submitted !== 'ok') throw new Error(`上传没触发：${submitted}`);
 
   const beforeJson = JSON.stringify(before);
   await waitFor(
@@ -386,7 +433,7 @@ async function uploadViaFileInput(page, filePath) {
       if (fresh.status === 'failed') return 'failed:' + (fresh.error || '未知原因');
       return fresh.status === 'ready' ? fresh : false;
     })()`,
-    { timeoutMs: 120_000, label: `上传并等待就绪：${path.basename(filePath)}` },
+    { timeoutMs: 120_000, label: `上传并等待就绪：${path.basename(audioPath)}` },
   );
 
   const created = await evaluate(
@@ -414,6 +461,16 @@ async function main() {
   const audioFile = await makeTestAudio();
   step(`生成测试伴奏：${path.basename(audioFile)}`);
 
+  // 上传弹窗里一起带上的歌词文件（验证「音频 + 可选歌词」这条路）
+  const lrcFile = path.join(path.dirname(audioFile), 'CDP端到端测试歌词.lrc');
+  fs.writeFileSync(
+    lrcFile,
+    ['[00:00.00]弹窗带来的第一句', '[00:01.00]弹窗带来的第二句', '[00:02.00]弹窗带来的第三句'].join(
+      '\n',
+    ),
+    'utf8',
+  );
+
   const page = await openPage(`${BASE_URL}/`);
   client = page;
   await waitFor(page, `document.body.innerText.includes('伴奏库')`, {
@@ -431,15 +488,30 @@ async function main() {
   }
 
   /* ------------------------------ 1. 上传伴奏 ------------------------------ */
-  step('通过文件选择框上传伴奏');
-  // 等伴奏列表加载完再上传：加载中的重渲染会让文件输入框的 CDP node id 失效
+  step('通过上传弹窗选音频 + 歌词');
+  // 等伴奏列表加载完再上传：加载中的重渲染会让节点的 CDP id 失效
   await waitFor(page, `!document.body.innerText.includes('正在加载')`, {
     timeoutMs: 30_000,
     label: '伴奏库加载完成',
   });
-  const audioTrack = await uploadViaFileInput(page, audioFile);
+  const audioTrack = await uploadViaFileInput(page, audioFile, lrcFile);
   const trackId = audioTrack.id;
   pass(`上传走通了：${audioTrack.title}（${trackId}）`);
+
+  // 歌词是跟着弹窗一起提交的：上传完成即应入库
+  const dialogLyrics = await evaluate(
+    page,
+    `(async () => {
+      const track = await (await fetch('/api/tracks/${trackId}')).json();
+      return JSON.stringify({ hasLyrics: track.hasLyrics, lyrics: track.lyrics });
+    })()`,
+    '核对弹窗上传的歌词',
+  );
+  const dialogLyricsState = JSON.parse(dialogLyrics);
+  if (!dialogLyricsState.hasLyrics || !dialogLyricsState.lyrics.includes('弹窗带来的第一句')) {
+    throw new Error(`弹窗里选的歌词没入库：${dialogLyrics}`);
+  }
+  pass('弹窗里选的 .lrc 跟伴奏一起入库了');
 
   /* ------------------------------ 1.5 贴歌词 ------------------------------ */
   step('给伴奏贴一份 LRC 歌词');
@@ -489,6 +561,35 @@ async function main() {
     label: '「开始演唱」按钮可用（说明麦克风已接入）',
   });
   pass('麦克风已接入，实时音量条在跑');
+
+  // 小窗（待唱状态）歌词字号梯：三档必须严格递减，否则「下一句次大」就看不出来。
+  // 注意 t=0 时第一句就已经算「当前行」了（时间是 0，落在第一行的时间窗里）。
+  const smallLadder = await evaluate(
+    page,
+    `(() => {
+      const view = document.querySelector('.lyrics-view');
+      if (!view) return { error: '没有 .lyrics-view' };
+      const size = (selector) => {
+        const node = view.querySelector(selector);
+        return node ? Number.parseFloat(getComputedStyle(node).fontSize) : null;
+      };
+      return {
+        active: size('.lyric-active'),
+        next: size('.lyric-next'),
+        plain: size('.lyric-line:not(.lyric-active):not(.lyric-next)'),
+      };
+    })()`,
+    '检查小窗歌词字号梯',
+  );
+  if (smallLadder.error) throw new Error(smallLadder.error);
+  if (!(smallLadder.active > smallLadder.next && smallLadder.next > smallLadder.plain)) {
+    throw new Error(
+      `小窗字号梯应递减：当前 ${smallLadder.active}px > 下一句 ${smallLadder.next}px > 普通 ${smallLadder.plain}px`,
+    );
+  }
+  pass(
+    `小窗歌词字号梯：普通 ${smallLadder.plain}px / 下一句 ${smallLadder.next}px / 当前 ${smallLadder.active}px`,
+  );
 
   const levelMoving = await evaluate(
     page,
@@ -568,7 +669,20 @@ async function main() {
       const first = activeText();
       await new Promise((r) => setTimeout(r, 1400));
       const second = activeText();
-      return JSON.stringify({ count: lines.length, first, second });
+      // 字号梯：当前行 > 下一句 > 普通行（再加一档，和没唱到的行拉开层次）
+      const fontSize = (selector) => {
+        const node = view.querySelector(selector);
+        return node ? Number.parseFloat(getComputedStyle(node).fontSize) : null;
+      };
+      return JSON.stringify({
+        count: lines.length,
+        first,
+        second,
+        hasNext: Boolean(view.querySelector('.lyric-next')),
+        active: fontSize('.lyric-active'),
+        next: fontSize('.lyric-next'),
+        plain: fontSize('.lyric-line:not(.lyric-active):not(.lyric-next):not(.lyric-past)'),
+      });
     })()`,
     '检查歌词跟唱',
   );
@@ -581,7 +695,22 @@ async function main() {
   if (lyricsState.first === lyricsState.second) {
     throw new Error(`歌词没有随播放推进：${lyricsProbe}`);
   }
-  pass(`歌词跟唱正常：「${lyricsState.first}」→「${lyricsState.second}」`);
+  if (!lyricsState.hasNext) throw new Error('没有「下一句」行（.lyric-next）');
+  if (!(lyricsState.active > lyricsState.next)) {
+    throw new Error(
+      `全屏里当前行应比下一句大：当前 ${lyricsState.active}px、下一句 ${lyricsState.next}px`,
+    );
+  }
+  // 普通行不一定存在（测试歌只有 3 行，唱到第 2 句时第三句就是「下一句」）
+  if (lyricsState.plain !== null && !(lyricsState.next > lyricsState.plain)) {
+    throw new Error(
+      `全屏里下一句应比普通行大：下一句 ${lyricsState.next}px、普通 ${lyricsState.plain}px`,
+    );
+  }
+  pass(
+    `歌词跟唱正常：「${lyricsState.first}」→「${lyricsState.second}」，字号梯 ` +
+      `${lyricsState.plain ?? '-'}/${lyricsState.next}/${lyricsState.active}px`,
+  );
 
   // 逐字填充：当前行被拆成字符 span，且随播放一个字一个字点亮
   // （采样窗控制在 1.2s 内：测试伴奏只有 6 秒，后面还要留时间点「完成录制」）
@@ -719,6 +848,53 @@ async function main() {
     timeoutMs: 30_000,
     label: '回到作品详情页',
   });
+
+  /* --------------------- 3.3 编辑页排版：两列分组 + 合成按钮常驻 --------------------- */
+  step('编辑页排版：分组两列排布，滚动时「合成」一直在视口里');
+  // 无头 Chrome 默认视口只有 800px 宽，低于两列分组的断点；临时放大到桌面尺寸再验
+  await page.send('Emulation.setDeviceMetricsOverride', {
+    width: 1280,
+    height: 800,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  const editLayout = await evaluate(
+    page,
+    `(async () => {
+      const groups = document.querySelector('.mix-groups');
+      const apply = document.querySelector('.mix-apply');
+      if (!groups || !apply) return JSON.stringify({ error: '没有 .mix-groups 或 .mix-apply' });
+
+      const columns = getComputedStyle(groups).gridTemplateColumns.split(' ').length;
+
+      // 滚到页面最底部：粘性按钮必须仍然落在视口里
+      window.scrollTo(0, document.body.scrollHeight);
+      await new Promise((r) => setTimeout(r, 400));
+      const rect = apply.getBoundingClientRect();
+      return JSON.stringify({
+        columns,
+        position: getComputedStyle(apply).position,
+        visible: rect.top >= 0 && rect.bottom <= window.innerHeight + 1,
+        inViewport: rect.bottom > 0 && rect.top < window.innerHeight,
+      });
+    })()`,
+    '检查编辑页排版',
+  );
+  await page.send('Emulation.clearDeviceMetricsOverride');
+  const layout = JSON.parse(editLayout);
+  if (layout.error) throw new Error(`编辑页排版不对：${layout}`);
+  if (layout.columns !== 2) {
+    throw new Error(`混音分组应两列排布，实际 ${layout.columns} 列`);
+  }
+  if (layout.position !== 'sticky') {
+    throw new Error(`「合成」应粘在面板底部，实际 position=${layout.position}`);
+  }
+  if (!layout.inViewport) {
+    throw new Error('滚到页面底部时「合成」不在视口里');
+  }
+  pass(
+    `分组两列排布，「合成」粘在面板底部（滚到底仍在视口内：${layout.visible ? '完整可见' : '部分可见'}）`,
+  );
 
   /* ------------------------------ 3.4 实时试听 ------------------------------ */
   /* --------------------- 3.4 混音面板：分组 / 预设 --------------------- */
@@ -1066,65 +1242,75 @@ async function main() {
       `掉音窗口 ${vocal.dropouts}/${vocal.windows}`,
   );
 
-  /* ----------------------------- 4. 视频伴奏链路 ---------------------------- */
-  step('上传 mkv 视频伴奏，验证转码 + 画面播放');
+  /* ------------------------ 4. 伴奏库不再支持视频 ------------------------ */
+  step('上传视频被拒（弹窗前端拦截 + 服务端兜底）');
 
   const videoFile = await makeTestVideo();
-  // 先回到有文件选择框的页面
   await page.send('Page.navigate', { url: `${BASE_URL}/` });
-  await waitFor(page, `document.querySelector('input[type=file]') !== null`, {
-    label: '伴奏库文件选择框',
+  await waitFor(page, `document.body.innerText.includes('伴奏库')`, {
+    label: '伴奏库重新渲染',
   });
 
-  const videoTrack = await uploadViaFileInput(page, videoFile);
-  pass(`mkv 自动转码完成：${videoTrack.title}（${videoTrack.id}）`);
-
-  const videoTrackId = videoTrack;
-  if (videoTrackId.kind !== 'video') {
-    throw new Error(`视频伴奏分类不对：${JSON.stringify(videoTrackId)}`);
-  }
-  if (videoTrackId.proxyKind !== 'video') {
-    throw new Error(`mkv 应该被转码成 mp4 代理，实际 proxyKind=${videoTrackId.proxyKind}`);
-  }
-  pass(`分类正确：kind=video，proxyKind=${videoTrackId.proxyKind}`);
-
-  await page.send('Page.navigate', { url: `${BASE_URL}/sing/${videoTrackId.id}` });
-  await waitFor(page, `document.querySelector('.stage video') !== null`, {
-    timeoutMs: 30_000,
-    label: '演唱页渲染出 <video>',
+  // ① 前端：弹窗里选到非音频文件，行内报错、不产生新伴奏
+  await openUploadDialog(page);
+  const { root } = await page.send('DOM.getDocument', { depth: -1, pierce: true });
+  const { nodeIds } = await page.send('DOM.querySelectorAll', {
+    nodeId: root.nodeId,
+    selector: '.upload-modal-panel input[type=file]',
   });
+  if (!nodeIds?.[0]) throw new Error('上传弹窗里没有音频选择框');
+  await page.send('DOM.setFileInputFiles', { nodeId: nodeIds[0], files: [videoFile] });
 
-  const videoPlayback = await evaluate(
+  await waitFor(
     page,
-    `(async () => {
-      const video = document.querySelector('.stage video');
-      const response = await fetch(video.src);
-      const ok = response.ok && (response.headers.get('content-type') || '').includes('video/mp4');
-      const bytes = (await response.arrayBuffer()).byteLength;
-      // 真的把视频解出来播一下，确认浏览器认这个转码产物
-      let canPlay = false;
-      try {
-        await video.play();
-        await new Promise((r) => setTimeout(r, 1200));
-        canPlay = video.currentTime > 0.1 && video.videoWidth > 0 && video.videoHeight > 0;
-        video.pause();
-      } catch (err) {
-        canPlay = 'play 失败：' + String(err && err.message);
-      }
-      return { ok, bytes, canPlay, width: video.videoWidth, height: video.videoHeight };
-    })()`,
-    '验证视频播放',
+    `document.querySelector('.upload-modal-panel').innerText.includes('只支持音频文件')`,
+    { timeoutMs: 10_000, label: '弹窗提示只支持音频' },
   );
+  pass('弹窗拦下了视频文件（行内提示，不提交）');
 
-  if (!videoPlayback.ok || !(videoPlayback.bytes > 1000)) {
-    throw new Error(`视频代理取不到：${JSON.stringify(videoPlayback)}`);
-  }
-  if (videoPlayback.canPlay !== true) {
-    throw new Error(`转码后的视频播不动：${JSON.stringify(videoPlayback)}`);
-  }
-  pass(
-    `转码后的视频能播：${videoPlayback.width}x${videoPlayback.height}，${videoPlayback.bytes} 字节`,
+  const submitDisabled = await evaluate(
+    page,
+    `(() => {
+      const button = [...document.querySelectorAll('.upload-modal-panel button')]
+        .find((b) => b.textContent.trim() === '开始上传');
+      return button ? button.disabled : 'no-button';
+    })()`,
+    '检查开始上传是否禁用',
   );
+  if (submitDisabled !== true) {
+    throw new Error(`只选了非法文件时「开始上传」应保持禁用，实际 ${submitDisabled}`);
+  }
+  await evaluate(page, clickByText('取消'), '关掉上传弹窗');
+
+  // ② 服务端：绕过前端直传同一个 mkv，必须被 ffprobe 判定拦下
+  const rejected = await fetch(`${BASE_URL}/api/tracks`, {
+    method: 'POST',
+    body: (() => {
+      const form = new FormData();
+      form.append(
+        'file',
+        new Blob([fs.readFileSync(videoFile)], { type: 'video/x-matroska' }),
+        path.basename(videoFile),
+      );
+      return form;
+    })(),
+  });
+  if (rejected.status !== 400) {
+    throw new Error(`视频上传应返回 400，实际 ${rejected.status}`);
+  }
+  const rejectedBody = await rejected.json();
+  if (!/音频/.test(rejectedBody.error ?? '')) {
+    throw new Error(`视频被拒的文案不对：${JSON.stringify(rejectedBody)}`);
+  }
+  pass('服务端也拦下了视频（400：只支持音频格式）');
+
+  const stillAudioOnly = await evaluate(
+    page,
+    `(async () => (await (await fetch('/api/tracks')).json()).every((t) => t.kind !== 'video'))()`,
+    '确认库里没有视频伴奏',
+  );
+  if (stillAudioOnly !== true) throw new Error('视频混进库里了');
+  pass('库里没有视频伴奏');
 
   /* ------------------------------ 5. 点歌台渲染 ----------------------------- */
   step('打开点歌台（曲库源没配也要能正常渲染）');
@@ -1152,6 +1338,61 @@ async function main() {
   if (!discover.navHasLink) throw new Error('导航里没有「点歌台」入口');
   pass(discover.hasGuide ? '点歌台渲染正常（未配置源 → 显示配置指引）' : '点歌台渲染正常（已配置源 → 显示搜索框）');
 
+  // 有源时才验「搜索按钮」：打字不发请求，点按钮（或回车）才发。
+  // 用包一层 fetch 来数 /api/library/search 的调用次数。
+  if (!discover.hasGuide) {
+    step('点歌台：打字不自动搜，点「搜索」才发请求');
+
+    const searched = await evaluate(
+      page,
+      `(async () => {
+        const input = document.querySelector('.library-search-bar input');
+        const button = [...document.querySelectorAll('.library-search-bar button')]
+          .find((b) => b.textContent.trim() === '搜索');
+        if (!input || !button) return JSON.stringify({ error: '缺搜索框或搜索按钮' });
+
+        // 数搜索请求：包一层 fetch，记 /api/library/search 的次数
+        window.__searchCalls = 0;
+        const native = window.fetch;
+        window.fetch = (...args) => {
+          if (String(args[0]).includes('/api/library/search')) window.__searchCalls += 1;
+          return native(...args);
+        };
+        window.__restoreFetch = () => { window.fetch = native; };
+
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(input, '晴');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 900));
+
+        const afterTyping = window.__searchCalls;
+        setter.call(input, '晴天');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 900));
+        const afterMoreTyping = window.__searchCalls;
+
+        button.click();
+        await new Promise((r) => setTimeout(r, 300));
+        const afterClick = window.__searchCalls;
+
+        // 数完就撤，别影响后面的步骤
+        window.__restoreFetch();
+
+        return JSON.stringify({ afterTyping, afterMoreTyping, afterClick });
+      })()`,
+      '检查搜索按钮行为',
+    );
+    const searchState = JSON.parse(searched);
+    if (searchState.error) throw new Error(searchState.error);
+    if (searchState.afterTyping !== 0 || searchState.afterMoreTyping !== 0) {
+      throw new Error(`打字时不该发搜索请求，实际发了 ${searchState.afterMoreTyping} 次`);
+    }
+    if (searchState.afterClick < 1) {
+      throw new Error('点「搜索」没有发请求');
+    }
+    pass(`打字 0 次请求，点「搜索」立刻发起（${searchState.afterClick} 次）`);
+  }
+
   // 只有想验点歌链路时才跑这段（默认不跑，避免 e2e 依赖外部资源）：
   //   E2E_LIBRARY_SOURCE=1 LIBRARY_SOURCES="本地测试源=<清单URL>" FIVESING_ENABLED=0 npm run dev
   // FIVESING_ENABLED=0 很重要 —— 不然搜索会连带命中内置 5sing 的结果，
@@ -1161,17 +1402,22 @@ async function main() {
 
     const searched = await evaluate(
       page,
-      `(async () => {
+      `(() => {
         const input = document.querySelector('.library-search-bar input');
         if (!input) return '没有搜索框';
+        const button = [...document.querySelectorAll('.library-search-bar button')]
+          .find((b) => b.textContent.trim() === '搜索');
+        if (!button) return '没有搜索按钮';
         const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
         setter.call(input, '晴天');
+        // 刻意只派发 input：点歌台不再边打字边搜，必须点「搜索」才发请求
         input.dispatchEvent(new Event('input', { bubbles: true }));
+        button.click();
         return 'ok';
       })()`,
-      '输入搜索词',
+      '输入搜索词并点搜索',
     );
-    if (searched !== 'ok') throw new Error(`搜索框不可用：${searched}`);
+    if (searched !== 'ok') throw new Error(`搜索不可用：${searched}`);
 
     await waitFor(
       page,
@@ -1273,7 +1519,7 @@ async function main() {
   await evaluate(
     page,
     `(async () => {
-      // 顺序很重要：先删作品，再删伴奏 —— 被作品引用的伴奏服务端会拒绝删除（409）
+      // 先删作品再删伴奏：删伴奏不再被作品拦截，但先删作品才不会留下孤儿作品
       await fetch('/api/works/${workId}', { method: 'DELETE' });
       return true;
     })()`,

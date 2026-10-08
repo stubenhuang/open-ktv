@@ -59,7 +59,7 @@ export default function WorkDetailPage() {
 
   /** 懒加载：第一次点「试听」才解码（顺带满足自动播放策略的用户手势要求）。返回起播的引擎，失败返回 null */
   const handlePreviewPlay = async (): Promise<PreviewEngine | null> => {
-    if (!work || previewRef.current || previewStatus === 'loading') return null;
+    if (!work || !work.trackId || previewRef.current || previewStatus === 'loading') return null;
     setPreviewStatus('loading');
     setPreviewError(null);
     try {
@@ -247,20 +247,30 @@ export default function WorkDetailPage() {
         </div>
       )}
 
-      <div className="detail-stack">
-        <LivePreview
-          engine={previewEngine}
-          status={previewStatus}
-          error={previewError}
-          onRequestPlay={handlePreviewPlay}
-        />
-        <MixPanel
-          value={work.mixParams}
-          busy={busy}
-          onApply={(params) => void handleApply(params)}
-          onParamsChange={handleParamsChange}
-        />
-      </div>
+      {/* 伴奏被删掉的作品：干声和成品 MP3 都还在，但没有伴奏就不能再混音 */}
+      {!work.trackId && (
+        <div className="alert alert-warn">
+          这个作品用的伴奏已经被删除了。已生成的 MP3 还能在作品库里播放 / 下载，
+          但实时试听和重新合成都需要伴奏文件，所以这里不再提供调整。
+        </div>
+      )}
+
+      {work.trackId && (
+        <div className="detail-stack">
+          <LivePreview
+            engine={previewEngine}
+            status={previewStatus}
+            error={previewError}
+            onRequestPlay={handlePreviewPlay}
+          />
+          <MixPanel
+            value={work.mixParams}
+            busy={busy}
+            onApply={(params) => void handleApply(params)}
+            onParamsChange={handleParamsChange}
+          />
+        </div>
+      )}
     </div>
   );
 }

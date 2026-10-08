@@ -68,6 +68,8 @@ router.post(
         mime: file.mimetype || null,
         size: file.size,
         source: 'upload',
+        // 手动上传只收音频（伴奏库不再支持视频）；点歌下载不走这个开关
+        allowVideo: false,
       });
       res.status(201).json(trackToDetail(result.track));
     },
@@ -75,7 +77,8 @@ router.post(
 );
 
 router.get('/', (_req, res) => {
-  res.json(listTracks().map(trackToListItem));
+  // workCount 给删除确认用：删伴奏不再拦截作品，但要把「会保留几个作品」说清楚
+  res.json(listTracks().map((track) => trackToListItem(track, countWorksForTrack(track.id))));
 });
 
 router.get(
@@ -333,16 +336,19 @@ router.post(
   }),
 );
 
+/**
+ * 删除伴奏。
+ *
+ * 与作品解耦：以前「伴奏下有 N 个作品」会 409 拦住，用户得先去作品库删一圈。
+ * 现在直接删 —— 作品记录和成品 MP3 都保留（由 works.track_id 的
+ * ON DELETE SET NULL 自动脱钩），只是不能再试听 / 重新合成，
+ * 作品库那边会把它们标成「伴奏已删除」。
+ */
 router.delete(
   '/:id',
   withTrack((_req, res, record) => {
-    const workCount = countWorksForTrack(record.id);
-    if (workCount > 0) {
-      res.status(409).json({
-        error: `这个伴奏下还有 ${workCount} 个作品，请先到作品库删除它们再删伴奏`,
-      });
-      return;
-    }
+    // 删前数一下：日志和响应都要告诉调用方留下了几个作品
+    const keptWorks = countWorksForTrack(record.id);
 
     deleteTrack(record.id);
     forgetTrackLoudness(record.id);
@@ -354,8 +360,8 @@ router.delete(
     void fs.promises.rm(path.join(PROXIES_DIR, `${record.id}.mp4`), { force: true });
     void fs.promises.rm(path.join(PROXIES_DIR, `${record.id}.mp3`), { force: true });
 
-    log.info(`删除伴奏 ${record.title}`, { id: record.id });
-    res.json({ ok: true });
+    log.info(`删除伴奏 ${record.title}`, { id: record.id, keptWorks });
+    res.json({ ok: true, keptWorks });
   }),
 );
 

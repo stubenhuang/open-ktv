@@ -304,6 +304,13 @@ input[type='checkbox'] {
   border-color: rgba(255, 181, 46, 0.35);
 }
 
+/* 中性提示（例如「伴奏已删除，但保留了 N 个作品」） */
+.alert-info {
+  color: #b8ecff;
+  background: var(--accent-2-soft);
+  border-color: rgba(56, 217, 255, 0.35);
+}
+
 /* 文案里的行内操作（例如「临时用内置麦克风」）：长得像链接，不跟主按钮抢位置 */
 .link-btn {
   padding: 0;
@@ -417,6 +424,88 @@ input[type='checkbox'] {
   background: linear-gradient(90deg, var(--accent-2), var(--accent));
   border-radius: 999px;
   transition: width 0.2s;
+}
+
+/* ------------------------- 上传伴奏的二级弹窗 ------------------------- */
+
+/*
+ * z-index 要压过演唱页的全屏歌词层（.stage-fullscreen 是 90）——
+ * 上传弹窗理论上只出现在伴奏库，但遮罩一旦被盖住就成了「点了没反应」。
+ */
+.upload-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(5, 7, 13, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.upload-modal-panel {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 18px 20px 20px;
+}
+
+.upload-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+/* 伪文件选择框：真的 input 藏起来，样式自己画，点它等于点系统文件选择器 */
+.upload-picker {
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.upload-picker:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.upload-picker.disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.upload-picker.disabled:hover {
+  border-color: var(--border-strong);
+  background: none;
+}
+
+.upload-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.upload-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+}
+
+.upload-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* -------------------------------- 伴奏列表 -------------------------------- */
@@ -858,11 +947,54 @@ input[type='range']:disabled::-webkit-slider-thumb {
   }
 }
 
+/*
+ * 混音分组：宽屏两列（音量/音效 一排，修音/对齐 一排），编辑页不再要滚很久。
+ * 各组高度不一是正常的，顶端对齐就行；第一行不画上边框（那是行分隔线）。
+ */
+.mix-groups {
+  display: grid;
+  grid-template-columns: 1fr;
+  row-gap: 18px;
+}
+
+@media (min-width: 900px) {
+  .mix-groups {
+    grid-template-columns: 1fr 1fr;
+    column-gap: 22px;
+    align-items: start;
+  }
+
+  .mix-groups > .mix-group:nth-child(-n + 2) {
+    border-top: none;
+    padding-top: 0;
+    margin-top: 0;
+  }
+}
+
 /* 合成：本页唯一主操作，通栏 pill */
 .mix-apply {
   width: 100%;
   justify-content: center;
   margin-top: 2px;
+}
+
+/*
+ * 合成按钮粘在面板底部：参数区再长，滚动时它也一直待在视口里，
+ * 不用滚到页面最底下才点得到。出血到卡片边缘，滚到底时自然回落成面板末元素。
+ */
+.mix-apply {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  width: calc(100% + 36px);
+  margin-left: -18px;
+  margin-right: -18px;
+  padding-top: 14px;
+  padding-bottom: 14px;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius) var(--radius);
+  box-shadow: 0 -10px 22px rgba(5, 7, 13, 0.55);
 }
 
 /* 实时试听的传输条：播放按钮 + 进度 + 时间 */
@@ -990,6 +1122,9 @@ input[type='range']:disabled::-webkit-slider-thumb {
  * 行高（小窗 34px / 全屏 72px）与 web/src/utils.ts 的 LYRIC_LINE_HEIGHT、
  * LYRIC_FULLSCREEN_LINE_HEIGHT 必须一致 —— 滚动位置是按「行下标 × 行高」
  * 算出来的，改一边就要改另一边。
+ *
+ * 字号梯（小窗 / 全屏）：普通行 20/34 → 下一句 23/40 → 当前行 27/54，
+ * 长句再按 lyricLineSizeClass 缩档。行高不变，放大后的字仍在一行里放得下。
  */
 .lyrics-view {
   position: relative;
@@ -1040,30 +1175,43 @@ input[type='range']:disabled::-webkit-slider-thumb {
 }
 
 .lyrics-view-fullscreen .lyric-line {
-  font-size: 30px;
+  font-size: 34px;
   font-weight: 600;
   padding: 0 12px;
 }
 
 /* 长句缩字号（档位由 lyricLineSizeClass 按字符数判），免得 nowrap 裁掉 */
 .lyrics-view-fullscreen .lyric-fs-sm {
-  font-size: 26px;
+  font-size: 30px;
 }
 
 .lyrics-view-fullscreen .lyric-fs-xs {
-  font-size: 22px;
+  font-size: 26px;
 }
 
-.lyrics-view-fullscreen .lyric-active {
-  font-size: 48px;
-}
-
-.lyrics-view-fullscreen .lyric-active.lyric-fs-sm {
+/* 下一句：比普通行大一号、亮一档，比当前行小一号 */
+.lyrics-view-fullscreen .lyric-next {
   font-size: 40px;
 }
 
+.lyrics-view-fullscreen .lyric-next.lyric-fs-sm {
+  font-size: 34px;
+}
+
+.lyrics-view-fullscreen .lyric-next.lyric-fs-xs {
+  font-size: 30px;
+}
+
+.lyrics-view-fullscreen .lyric-active {
+  font-size: 54px;
+}
+
+.lyrics-view-fullscreen .lyric-active.lyric-fs-sm {
+  font-size: 46px;
+}
+
 .lyrics-view-fullscreen .lyric-active.lyric-fs-xs {
-  font-size: 32px;
+  font-size: 38px;
 }
 
 .lyrics-track {
@@ -1076,7 +1224,7 @@ input[type='range']:disabled::-webkit-slider-thumb {
 
 .lyric-line {
   height: 34px;
-  font-size: 19px;
+  font-size: 20px;
   font-weight: 500;
   text-align: center;
   padding: 0 18px;
@@ -1097,10 +1245,18 @@ input[type='range']:disabled::-webkit-slider-thumb {
   opacity: 0.55;
 }
 
+/* 下一句：次大一档，和「还没唱到的行」拉开层次，抬头就知道马上唱什么 */
+.lyric-next {
+  color: var(--text-dim);
+  opacity: 0.92;
+  font-size: 23px;
+  font-weight: 600;
+}
+
 /* 当前行：放大 + 主色高亮，一眼能看到唱到哪了 */
 .lyric-active {
   color: var(--accent-2);
-  font-size: 24px;
+  font-size: 27px;
   font-weight: 700;
   text-shadow: 0 0 18px rgba(56, 217, 255, 0.45);
 }
@@ -1176,7 +1332,7 @@ input[type='range']:disabled::-webkit-slider-thumb {
 
 /* ------------------------------ 混音面板分组 ------------------------------ */
 
-.mix-panel > .mix-group:first-child {
+.mix-panel > .mix-groups > .mix-group:first-child {
   border-top: none;
   padding-top: 0;
   margin-top: 0;

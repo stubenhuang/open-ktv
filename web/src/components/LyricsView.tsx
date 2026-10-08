@@ -136,6 +136,12 @@ export function LyricsView({ lyrics, lyricsOffsetMs, mediaEl, canSeek, overlay =
   // 还没进第一句时按第 0 行定位（不然后面几十行会被推到屏幕外）
   const offsetY = lyricTrackOffsetY(activeIndex, lineHeight, visibleLines);
 
+  /**
+   * 「下一句」：比普通行大一号，比当前行小一号 —— 抬头就能看到马上要唱什么。
+   * activeIndex 为 −1（还没开口）时下一句就是第 0 行；唱到最后一句时没有下一句。
+   */
+  const nextIndex = activeIndex >= 0 ? activeIndex + 1 : 0;
+
   const seekTo = (lineIndex: number) => {
     if (!mediaEl || !canSeek) return;
     const line = doc.lines[lineIndex];
@@ -152,7 +158,8 @@ export function LyricsView({ lyrics, lyricsOffsetMs, mediaEl, canSeek, overlay =
     >
       <div className="lyrics-track" style={{ transform: `translateY(${offsetY}px)` }}>
         {doc.lines.map((line, index) => {
-          const state = index === activeIndex ? 'active' : index < activeIndex ? 'past' : 'future';
+          const state =
+            index === activeIndex ? 'active' : index === nextIndex ? 'next' : index < activeIndex ? 'past' : 'future';
           // 只有当前行拆字（唱到哪个字亮哪个字）；其余行保持纯文本，
           // 这样 DOM 里同时只有一行的 span，ellipsis 等原有样式也不受影响
           const chars = index === activeIndex && line.text ? Array.from(line.text) : null;

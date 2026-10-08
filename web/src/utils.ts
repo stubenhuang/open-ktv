@@ -75,6 +75,57 @@ export function isBuiltinMic(deviceId: string, label: string): boolean {
   return /macbook|imac/i.test(name);
 }
 
+/* ------------------------------ 伴奏上传的文件筛选 ------------------------------ */
+
+/**
+ * 伴奏库只收音频。这些扩展名是「type 为空时」的兜底判据 ——
+ * 不少系统（尤其是 Linux / NAS 上的文件）给的 MIME 是空串，
+ * 只认 audio/* 会把一堆合法的 flac、ape 误杀。
+ */
+const AUDIO_EXTENSIONS = new Set([
+  '.mp3',
+  '.wav',
+  '.flac',
+  '.m4a',
+  '.aac',
+  '.ogg',
+  '.oga',
+  '.opus',
+  '.wma',
+  '.ape',
+  '.aiff',
+  '.aif',
+  '.caf',
+  '.amr',
+  '.ac3',
+  '.dts',
+  '.wv',
+  '.tta',
+]);
+
+/** 取小写扩展名（含点）；没有扩展名返回空串 */
+function fileExtension(name: string): string {
+  const match = /\.([a-z0-9]+)$/i.exec(name ?? '');
+  return match ? `.${match[1]!.toLowerCase()}` : '';
+}
+
+/**
+ * 这个文件能不能当伴奏上传。
+ *
+ * MIME 和扩展名**任一**命中就算音频：视频文件（.mp4 / .mkv 等）两边都不沾，
+ * 改名成 .mp3 也还有服务端 ffprobe 兜底（见 server/src/tracks/ingest.ts）。
+ */
+export function isAudioFile(file: { name: string; type: string }): boolean {
+  if (file.type && file.type.startsWith('audio/')) return true;
+  return AUDIO_EXTENSIONS.has(fileExtension(file.name));
+}
+
+/** 歌词文件只认 .lrc / .txt（与服务端 POST /api/tracks/:id/lyrics 同口径） */
+export function isLyricsFileName(name: string): boolean {
+  const extension = fileExtension(name);
+  return extension === '.lrc' || extension === '.txt';
+}
+
 /* ------------------------------ 歌词滚动布局 ------------------------------ */
 
 /**

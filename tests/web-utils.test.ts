@@ -7,7 +7,9 @@ import {
   formatDateTime,
   formatDuration,
   formatTimer,
+  isAudioFile,
   isBuiltinMic,
+  isLyricsFileName,
   lyricLineSizeClass,
   lyricTrackOffsetY,
 } from '../web/src/utils.ts';
@@ -146,6 +148,46 @@ describe('全屏歌词的行高与字号档', () => {
 
   it('空串不缩号', () => {
     assert.equal(lyricLineSizeClass(''), '');
+  });
+});
+
+describe('isAudioFile（伴奏库只收音频）', () => {
+  it('音频 MIME 直接放行', () => {
+    assert.equal(isAudioFile({ name: '晴天.mp3', type: 'audio/mpeg' }), true);
+    assert.equal(isAudioFile({ name: 'whatever.xyz', type: 'audio/mp4' }), true);
+  });
+
+  it('MIME 为空时靠扩展名兜底（NAS / Linux 上很常见）', () => {
+    assert.equal(isAudioFile({ name: '晴天.MP3', type: '' }), true, '扩展名大小写不敏感');
+    assert.equal(isAudioFile({ name: 'live.flac', type: '' }), true);
+    assert.equal(isAudioFile({ name: 'a.m4a', type: '' }), true);
+    assert.equal(isAudioFile({ name: 'a.ape', type: '' }), true);
+    assert.equal(isAudioFile({ name: 'no-extension', type: '' }), false);
+  });
+
+  it('视频格式一律拒绝（伴奏库不再支持视频）', () => {
+    assert.equal(isAudioFile({ name: 'mv.mp4', type: 'video/mp4' }), false);
+    assert.equal(isAudioFile({ name: 'mv.mkv', type: '' }), false);
+    assert.equal(isAudioFile({ name: 'mv.avi', type: 'video/x-msvideo' }), false);
+    assert.equal(isAudioFile({ name: 'mv.flv', type: '' }), false);
+    assert.equal(isAudioFile({ name: 'mv.webm', type: 'video/webm' }), false);
+    assert.equal(isAudioFile({ name: 'mv.mov', type: 'video/quicktime' }), false);
+  });
+
+  it('歌词文件不是伴奏', () => {
+    assert.equal(isAudioFile({ name: '晴天.lrc', type: 'text/plain' }), false);
+    assert.equal(isAudioFile({ name: '晴天.txt', type: '' }), false);
+  });
+});
+
+describe('isLyricsFileName', () => {
+  it('只认 .lrc / .txt，大小写不敏感', () => {
+    assert.equal(isLyricsFileName('晴天.lrc'), true);
+    assert.equal(isLyricsFileName('晴天.LRC'), true);
+    assert.equal(isLyricsFileName('晴天.txt'), true);
+    assert.equal(isLyricsFileName('晴天.docx'), false);
+    assert.equal(isLyricsFileName('晴天.mp3'), false);
+    assert.equal(isLyricsFileName('没有扩展名'), false);
   });
 });
 

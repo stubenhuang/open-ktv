@@ -83,6 +83,11 @@ export interface IngestInput {
   libraryRef?: string | null;
   /** 随伴奏一起拿到的 LRC 歌词（曲库源可选提供） */
   lyrics?: string | null;
+  /**
+   * 是否接受视频伴奏。手动上传传 false —— 伴奏库只收音频；
+   * 点歌下载（曲库源里可能就有 MV）不传，默认放开。
+   */
+  allowVideo?: boolean;
 }
 
 export interface IngestResult {
@@ -114,6 +119,15 @@ export async function ingestFile(input: IngestInput): Promise<IngestResult> {
   } catch (error) {
     // 探测失败（文件损坏 / ffprobe 缺失）一律按「这个文件不能用」回报
     throw new IngestError(error instanceof Error ? error.message : '无法解析这个文件');
+  }
+
+  // 伴奏库只收音频：视频伴奏（MV）不再支持上传。
+  // 判定靠 ffprobe 而不是扩展名 —— 把 .mp4 改名成 .mp3 也照样拦得住。
+  // 前端那道扩展名/MIME 校验只是少传一次大文件，这里才是口径。
+  if (probed.kind === 'video' && input.allowVideo === false) {
+    throw new IngestError(
+      '伴奏库只支持音频格式（mp3 / wav / flac / m4a / ogg 等），视频文件请先提取音频再上传',
+    );
   }
 
   if (!findAudioStream(probed.raw)) {

@@ -42,7 +42,7 @@ interface TrackRow {
 
 interface WorkRow {
   id: string;
-  track_id: string;
+  track_id: string | null;
   title: string;
   vocal_path: string;
   vocal_duration: number;
@@ -127,7 +127,7 @@ export function initDb(): void {
 
     CREATE TABLE IF NOT EXISTS works (
       id             TEXT PRIMARY KEY,
-      track_id       TEXT NOT NULL REFERENCES tracks(id),
+      track_id       TEXT REFERENCES tracks(id) ON DELETE SET NULL,
       title          TEXT NOT NULL,
       vocal_path     TEXT NOT NULL,
       vocal_duration REAL NOT NULL,
@@ -159,6 +159,10 @@ export function initDb(): void {
   // 只有真的补过 align_ver（老库）才需要换算，新库插的就是版本 2
   if (addedAlignVer) migrateLegacyAlignment(db);
 
+  // 删伴奏与作品解耦：外键要从「拦住删除」换成「删除时置空」。
+  // 必须在 ensureColumns(works) 之后跑 —— 重建表时要连 levels / align_ver 一起拷。
+  ensureWorksForeignKey(db);
+
   ensureColumns(db, 'tracks', [
     { name: 'lyrics', ddl: 'ALTER TABLE tracks ADD COLUMN lyrics TEXT' },
     {
@@ -179,6 +183,74 @@ export function initDb(): void {
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_tracks_library_ref
        ON tracks(library_ref) WHERE library_ref IS NOT NULL`,
   );
+}
+
+/**
+ * works.track_id 的外键动作；老库是 NO ACTION（= 伴奏有作品就删不掉），新库是 SET NULL。
+ */
+function worksForeignKeyAction(connection: DatabaseSync): string | null {
+  const rows = connection.prepare('PRAGMA foreign_key_list(works)').all() as unknown as {
+    from: string;
+    on_delete: string;
+  }[];
+  const foreignKey = rows.find((row) => row.from === 'track_id');
+  return foreignKey ? foreignKey.on_delete.toUpperCase() : null;
+}
+
+/**
+ * 把 works.track_id 的外键换成 ON DELETE SET NULL（老库一次性迁移）。
+ *
+ * 背景：以前「伴奏下有作品」会成为删除伴奏的拦截条件（409），作品和伴奏死死耦合。
+ * 现在删伴奏不再拦截 —— 作品记录和成品 MP3 都留着，只是不能再混音。
+ * 外键跟着改成 SET NULL，删除伴奏时由 SQLite 自动把作品的 track_id 抹平，
+ * 不需要应用层记得去补这一刀。
+ *
+ * SQLite 改不了已建成表的外键动作，只能「建新表 → 拷数据 → 换名字」。
+ * 整个重建包在一个事务里，中途失败就 ROLLBACK，老库原样不动。
+ */
+function ensureWorksForeignKey(connection: DatabaseSync): void {
+  if (worksForeignKeyAction(connection) === 'SET NULL') return;
+
+  log.info('老库迁移：works.track_id 外键改为 ON DELETE SET NULL（删伴奏不再拦截作品）');
+  // 外键开关在事务里是 no-op，必须在 BEGIN 之前关、COMMIT 之后再开
+  connection.exec('PRAGMA foreign_keys = OFF');
+  try {
+    connection.exec(`
+      BEGIN;
+      CREATE TABLE works_reborn (
+        id             TEXT PRIMARY KEY,
+        track_id       TEXT REFERENCES tracks(id) ON DELETE SET NULL,
+        title          TEXT NOT NULL,
+        vocal_path     TEXT NOT NULL,
+        vocal_duration REAL NOT NULL,
+        auto_offset_ms INTEGER NOT NULL,
+        mix_params     TEXT NOT NULL,
+        mp3_path       TEXT,
+        status         TEXT NOT NULL,
+        error          TEXT,
+        created_at     INTEGER NOT NULL,
+        updated_at     INTEGER NOT NULL,
+        levels         TEXT,
+        align_ver      INTEGER NOT NULL DEFAULT 1
+      );
+      INSERT INTO works_reborn (id, track_id, title, vocal_path, vocal_duration, auto_offset_ms,
+                                mix_params, mp3_path, status, error, created_at, updated_at,
+                                levels, align_ver)
+        SELECT id, track_id, title, vocal_path, vocal_duration, auto_offset_ms,
+               mix_params, mp3_path, status, error, created_at, updated_at, levels, align_ver
+          FROM works;
+      DROP TABLE works;
+      ALTER TABLE works_reborn RENAME TO works;
+      CREATE INDEX IF NOT EXISTS idx_works_track ON works(track_id);
+      CREATE INDEX IF NOT EXISTS idx_works_created ON works(created_at DESC);
+      COMMIT;
+    `);
+  } catch (error) {
+    connection.exec('ROLLBACK');
+    throw error;
+  } finally {
+    connection.exec('PRAGMA foreign_keys = ON');
+  }
 }
 
 /**
@@ -347,6 +419,7 @@ function parseLevels(raw: string | null): WorkLevels | null {
 function toWork(row: WorkRow): WorkRecord {
   return {
     id: row.id,
+    // null = 伴奏已被删除（外键 SET NULL）；作品本身还留着
     trackId: row.track_id,
     title: row.title,
     vocalPath: row.vocal_path,

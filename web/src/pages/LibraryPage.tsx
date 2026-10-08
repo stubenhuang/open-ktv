@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { LRC_LIMITS } from '../../../shared/types';
 import { api, trackMediaUrl, type TrackListItem } from '../api';
+import { UploadDialog, type UploadDraft } from '../components/UploadDialog';
 import { usePolling } from '../hooks/usePolling';
-import { errorMessage, formatBytes, formatDuration } from '../utils';
+import { errorMessage, formatBytes, formatDuration, isAudioFile, isLyricsFileName } from '../utils';
 
 interface UploadItem {
   key: string;
@@ -20,6 +21,8 @@ export default function LibraryPage() {
   const [tracks, setTracks] = useState<TrackListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** 删除伴奏后的一次性提示（保留了几个作品这类事后才需要知道的事） */
+  const [notice, setNotice] = useState<string | null>(null);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -35,7 +38,8 @@ export default function LibraryPage() {
   const [lyricsDirty, setLyricsDirty] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  /** 上传弹窗；null = 关着。打开时的初始选择也挂在它上面（拖拽预填） */
+  const [dialog, setDialog] = useState<UploadDraft | null>(null);
   const lyricsInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -62,9 +66,16 @@ export default function LibraryPage() {
     setUploads((items) => items.map((item) => (item.key === key ? { ...item, ...patch } : item)));
   };
 
-  const handleFiles = useCallback(
-    async (files: FileList | File[]) => {
-      const list = Array.from(files);
+  /**
+   * 上传一批伴奏（弹窗提交后调这里）。
+   *
+   * 串行上传：同时传几个大文件只会互相拖慢，还容易让转码队列排长队。
+   * 歌词只跟第一个音频走 —— 多选音频时弹窗已经禁用了歌词选择。
+   */
+  const handleUpload = useCallback(
+    async (audioFiles: File[], lyricsFile: File | null) => {
+      setDialog(null);
+      const list = audioFiles;
       if (list.length === 0) return;
 
       const created: UploadItem[] = list.map((file) => {
@@ -80,30 +91,69 @@ export default function LibraryPage() {
       });
       setUploads((items) => [...created, ...items]);
 
-      // 串行上传：同时传几个大文件只会互相拖慢，还容易让转码队列排长队
       for (let index = 0; index < list.length; index += 1) {
         const file = list[index]!;
         const item = created[index]!;
         try {
-          await api.uploadTrack(file, (ratio) => patchUpload(item.key, { progress: ratio }));
+          const uploaded = await api.uploadTrack(file, (ratio) =>
+            patchUpload(item.key, { progress: ratio }),
+          );
           patchUpload(item.key, { progress: 1, done: true });
+          // 歌词跟着第一个音频一起入库；失败只记在这一项上，不波及音频本身
+          if (index === 0 && lyricsFile) {
+            try {
+              await api.uploadLyrics(uploaded.id, lyricsFile);
+            } catch (err) {
+              patchUpload(item.key, { error: `伴奏已上传，但歌词没上去：${errorMessage(err)}` });
+            }
+          }
         } catch (err) {
           patchUpload(item.key, { error: errorMessage(err, '上传失败') });
         }
         void load();
       }
-
-      if (fileInputRef.current) fileInputRef.current.value = '';
     },
     [load],
   );
 
+  /** 拖到上传区的文件：音频进弹窗的音频列表，.lrc/.txt 进歌词，其它的只提示不拦 */
+  const openDialogWithFiles = (files: File[]) => {
+    const audio = files.filter(isAudioFile);
+    const lyrics = files.filter((file) => isLyricsFileName(file.name));
+    const ignored = files.filter((file) => !isAudioFile(file) && !isLyricsFileName(file.name));
+
+    const notes: string[] = [];
+    if (ignored.length > 0) {
+      notes.push(
+        `忽略了 ${ignored.length} 个文件：${ignored.map((file) => file.name).join('、')}` +
+          '（伴奏库只收音频和 .lrc 歌词）',
+      );
+    }
+    if (lyrics.length > 1) {
+      notes.push(`歌词只取了第一个：${lyrics[0]!.name}`);
+    }
+
+    setDialog({ audio, lyrics: lyrics[0] ?? null, note: notes.join('；') || null });
+  };
+
   const handleDelete = async (track: TrackListItem) => {
-    if (!window.confirm(`确定删除伴奏「${track.title}」吗？原文件也会一起删掉。`)) return;
+    // 作品与伴奏解耦：有作品也照删。确认框里说清作品会怎样，别让用户事后才发现。
+    const worksNote =
+      track.workCount > 0
+        ? `\n它下面的 ${track.workCount} 个作品会保留（成品 MP3 仍可播放 / 下载），但不能再调混音或重新合成。`
+        : '';
+    if (!window.confirm(`确定删除伴奏「${track.title}」吗？原文件也会一起删掉。${worksNote}`)) {
+      return;
+    }
     setBusyId(track.id);
     try {
-      await api.deleteTrack(track.id);
+      const result = await api.deleteTrack(track.id);
       if (previewId === track.id) setPreviewId(null);
+      setNotice(
+        result.keptWorks > 0
+          ? `已删除伴奏「${track.title}」，保留 ${result.keptWorks} 个作品（成品仍可播放 / 下载，但不能重新合成）。`
+          : null,
+      );
       await load();
     } catch (err) {
       setError(errorMessage(err, '删除失败'));
@@ -208,7 +258,8 @@ export default function LibraryPage() {
         <div>
           <h1 className="page-title">伴奏库</h1>
           <p className="page-sub">
-            上传音频或视频伴奏（支持 mkv / avi / flv 等，浏览器放不了的会自动转码）。单个文件最大 1GB。
+            上传音频伴奏（mp3 / wav / flac / m4a / ogg 等，浏览器放不了的会自动转码）。
+            单个文件最大 1GB，可选一起带上 .lrc 歌词。
           </p>
         </div>
       </div>
@@ -222,9 +273,23 @@ export default function LibraryPage() {
         </div>
       )}
 
+      {notice && (
+        <div className="alert alert-info">
+          {notice}
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            style={{ marginLeft: 10 }}
+            onClick={() => setNotice(null)}
+          >
+            知道了
+          </button>
+        </div>
+      )}
+
       <div
         className={`dropzone${dragging ? ' dragging' : ''}`}
-        onClick={() => fileInputRef.current?.click()}
+        onClick={() => setDialog({ audio: [], lyrics: null, note: null })}
         onDragOver={(event) => {
           event.preventDefault();
           setDragging(true);
@@ -233,24 +298,23 @@ export default function LibraryPage() {
         onDrop={(event) => {
           event.preventDefault();
           setDragging(false);
-          void handleFiles(event.dataTransfer.files);
+          openDialogWithFiles(Array.from(event.dataTransfer.files));
         }}
       >
-        <div className="dropzone-title">把伴奏文件拖到这里，或点击选择</div>
+        <div className="dropzone-title">把音频文件拖到这里，或点击选择</div>
         <div className="small faint">
-          支持 mp3 / wav / flac / m4a / mp4 / mkv / webm / avi / mov / flv 等，可一次选多个
+          只支持音频：mp3 / wav / flac / m4a / aac / ogg / wma / ape 等，可一次选多个；
+          .lrc 歌词文件可以一起拖进来
         </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept="audio/*,video/*,.mkv,.flv,.avi,.ts,.m4a,.flac,.wav,.ape"
-          style={{ display: 'none' }}
-          onChange={(event) => {
-            if (event.target.files) void handleFiles(event.target.files);
-          }}
-        />
       </div>
+
+      {dialog && (
+        <UploadDialog
+          draft={dialog}
+          onClose={() => setDialog(null)}
+          onSubmit={(audio, lyrics) => void handleUpload(audio, lyrics)}
+        />
+      )}
 
       {uploads.length > 0 && (
         <div className="upload-list">
@@ -427,6 +491,14 @@ export default function LibraryPage() {
                         {track.proxyKind !== 'none' && <span className="badge badge-kind">已转码</span>}
                         {track.hasLyrics && <span className="badge badge-ok">有歌词</span>}
                         {track.source === 'library' && <span className="badge badge-kind">点歌</span>}
+                        {track.workCount > 0 && (
+                          <span
+                            className="badge badge-kind"
+                            title="删除伴奏时这些作品会保留，但不能重新合成"
+                          >
+                            {track.workCount} 个作品
+                          </span>
+                        )}
                         {track.status === 'processing' && (
                           <span className="badge badge-work">
                             转码中 {Math.round((track.progress ?? 0) * 100)}%

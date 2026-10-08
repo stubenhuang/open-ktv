@@ -80,16 +80,23 @@ describe('trackToDto / trackToListItem / trackToDetail', () => {
   });
 
   it('hasLyrics 跟着歌词走，列表不下发歌词正文', () => {
-    const withoutLyrics = trackToListItem(makeTrack());
+    const withoutLyrics = trackToListItem(makeTrack(), 0);
     assert.equal(withoutLyrics.hasLyrics, false);
     assert.equal('lyrics' in withoutLyrics, false, '列表项不该带歌词正文');
 
-    const withLyrics = trackToListItem(makeTrack({ lyrics: LYRICS }));
+    const withLyrics = trackToListItem(makeTrack({ lyrics: LYRICS }), 0);
     assert.equal(withLyrics.hasLyrics, true);
     assert.equal('lyrics' in withLyrics, false);
 
     // 空串按「没有歌词」处理，避免前端显示一个空歌词页
-    assert.equal(trackToListItem(makeTrack({ lyrics: '' })).hasLyrics, false);
+    assert.equal(trackToListItem(makeTrack({ lyrics: '' }), 0).hasLyrics, false);
+  });
+
+  it('列表带 workCount（删除伴奏时要把「留下几个作品」说清楚）', () => {
+    assert.equal(trackToListItem(makeTrack(), 0).workCount, 0);
+    assert.equal(trackToListItem(makeTrack(), 3).workCount, 3);
+    // 详情/单条接口不带这个计数
+    assert.equal('workCount' in trackToDetail(makeTrack()), false);
   });
 
   it('详情同时带歌词正文与进度', () => {
@@ -101,18 +108,18 @@ describe('trackToDto / trackToListItem / trackToDetail', () => {
   });
 
   it('曲库来源透传', () => {
-    const item = trackToListItem(makeTrack({ source: 'library', libraryRef: 'http-index:abc' }));
+    const item = trackToListItem(makeTrack({ source: 'library', libraryRef: 'http-index:abc' }), 0);
     assert.equal(item.source, 'library');
     assert.equal('libraryRef' in item, false);
   });
 
   it('非 processing 状态 progress 为 null', () => {
-    assert.equal(trackToListItem(makeTrack({ status: 'ready' })).progress, null);
-    assert.equal(trackToListItem(makeTrack({ status: 'failed' })).progress, null);
+    assert.equal(trackToListItem(makeTrack({ status: 'ready' }), 0).progress, null);
+    assert.equal(trackToListItem(makeTrack({ status: 'failed' }), 0).progress, null);
   });
 
   it('processing 但没有排队任务时 progress 兜底 0', () => {
-    assert.equal(trackToListItem(makeTrack({ status: 'processing' })).progress, 0);
+    assert.equal(trackToListItem(makeTrack({ status: 'processing' }), 0).progress, 0);
   });
 
   it('processing 时 progress 来自任务队列', async () => {
@@ -123,7 +130,7 @@ describe('trackToDto / trackToListItem / trackToDetail', () => {
       }, () => resolve());
     });
 
-    assert.equal(trackToListItem(makeTrack({ status: 'processing' })).progress, 0.42);
+    assert.equal(trackToListItem(makeTrack({ status: 'processing' }), 0).progress, 0.42);
   });
 });
 

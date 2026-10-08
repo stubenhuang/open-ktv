@@ -9,8 +9,6 @@ import {
 } from '../api';
 import { errorMessage, formatBytes, formatDuration } from '../utils';
 
-/** 搜索防抖：敲字过程中不该每个字符都打一次接口 */
-const SEARCH_DEBOUNCE_MS = 300;
 /** 任务轮询间隔 */
 const TASK_POLL_MS = 700;
 
@@ -78,7 +76,7 @@ export default function DiscoverPage() {
   }, []);
 
   // 首次进来就把曲库列出来（空关键词 = 全部），不用先打字。
-  // 只跑一次：query/kind 的变化由下面那个防抖 effect 负责。
+  // 只跑一次：之后的搜索全部由「搜索」按钮 / 回车 / 切分类触发。
   const initialSearchDone = useRef(false);
   useEffect(() => {
     if (initialSearchDone.current) return;
@@ -86,12 +84,21 @@ export default function DiscoverPage() {
     void runSearch('', 'all');
   }, [runSearch]);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void runSearch(query, kind);
-    }, SEARCH_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
+  /**
+   * 点「搜索」或回车：拿当前输入框和分类真的打一次接口。
+   *
+   * 刻意不做输入防抖/自动搜索 —— 敲歌名时每个字符都打一次接口，
+   * 既刷爆服务端，也让结果列表噼里啪啦地闪。分类 chip 的点击同理算明确意图，
+   * 切完立刻按新分类重搜（用的还是输入框里的当前关键词）。
+   */
+  const submitSearch = useCallback(() => {
+    void runSearch(query, kind);
   }, [query, kind, runSearch]);
+
+  const handleKindChange = (value: KindFilter) => {
+    setKind(value);
+    void runSearch(query, value);
+  };
 
   /* ------------------------------ 任务轮询 ------------------------------ */
 
@@ -242,10 +249,22 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
           className="text-input"
           style={{ flex: '1 1 240px' }}
           value={query}
-          placeholder="搜索歌名或歌手…"
+          placeholder="搜索歌名或歌手，按「搜索」生效…"
           autoFocus
           onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') submitSearch();
+          }}
         />
+        <button
+          type="button"
+          className="btn btn-primary"
+          style={{ flex: '0 0 auto' }}
+          disabled={searching}
+          onClick={submitSearch}
+        >
+          搜索
+        </button>
         <div className="reverb-options">
           {(
             [
@@ -258,7 +277,7 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
               key={value}
               type="button"
               className={`reverb-option${kind === value ? ' active' : ''}`}
-              onClick={() => setKind(value)}
+              onClick={() => handleKindChange(value)}
             >
               {label}
             </button>

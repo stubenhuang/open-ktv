@@ -150,8 +150,11 @@ export const api = {
   retryTrack: (id: string) =>
     request<TrackDetail>(`/api/tracks/${encodeURIComponent(id)}/retry`, { method: 'POST' }),
 
+  /** 删除伴奏；keptWorks = 一并保留下来的作品数（作品与伴奏已解耦） */
   deleteTrack: (id: string) =>
-    request<{ ok: true }>(`/api/tracks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    request<{ ok: true; keptWorks: number }>(`/api/tracks/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
 
   listWorks: () => request<WorkListItem[]>('/api/works'),
 

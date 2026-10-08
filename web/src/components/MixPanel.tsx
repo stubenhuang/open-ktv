@@ -151,185 +151,188 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
         </p>
       </div>
 
-      <Group title="音量">
-        <div className="mix-volume-grid">
-          <div className="field">
-            <div className="field-label">
-              <span>人声音量</span>
-              <span className="field-value">{gainLabel(params.vocalGain)}</span>
-            </div>
-            <input
-              type="range"
-              min={MIX_LIMITS.gain.min}
-              max={MIX_LIMITS.gain.max}
-              step={MIX_LIMITS.gain.step}
-              value={params.vocalGain}
-              onChange={(event) => update({ vocalGain: Number(event.target.value) })}
-            />
-          </div>
-
-          <div className="field">
-            <div className="field-label">
-              <span>伴奏音量</span>
-              <span className="field-value">{gainLabel(params.accompGain)}</span>
-            </div>
-            <input
-              type="range"
-              min={MIX_LIMITS.gain.min}
-              max={MIX_LIMITS.gain.max}
-              step={MIX_LIMITS.gain.step}
-              value={params.accompGain}
-              onChange={(event) => update({ accompGain: Number(event.target.value) })}
-            />
-          </div>
-        </div>
-      </Group>
-
-      <Group title="音效">
-        <div className="field">
-          <div className="field-label">
-            <span>预设</span>
-            <span className="faint small">
-              {activePreset ? `当前：${VOCAL_PRESET_LABELS[activePreset]}` : '已手动调整'}
-            </span>
-          </div>
-          <div className="reverb-options">
-            {VOCAL_PRESETS.map((preset) => (
-              <button
-                key={preset}
-                type="button"
-                className={`reverb-option${activePreset === preset ? ' active' : ''}`}
-                onClick={() => applyPreset(preset)}
-              >
-                {VOCAL_PRESET_LABELS[preset]}
-              </button>
-            ))}
-          </div>
-          <div className="small faint">点一下就把那组参数写进下面的滑块，之后还能继续手调。</div>
-        </div>
-
-        <div className="field" style={{ marginTop: 14 }}>
-          <div className="field-label">
-            <span>人声混响</span>
-          </div>
-          <div className="reverb-options">
-            {REVERB_KINDS.map((reverb) => (
-              <button
-                key={reverb}
-                type="button"
-                className={`reverb-option${params.reverb === reverb ? ' active' : ''}`}
-                onClick={() => update({ reverb })}
-              >
-                {REVERB_LABELS[reverb]}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="field" style={{ marginTop: 14 }}>
-          <div className="field-label">
-            <span>均衡</span>
-            <span className="faint small">低 200Hz · 中 1.2kHz · 高 4kHz</span>
-          </div>
-          {(
-            [
-              ['eqLowDb', '低频'],
-              ['eqMidDb', '中频'],
-              ['eqHighDb', '高频'],
-            ] as const
-          ).map(([key, label]) => (
-            <div key={key} className="row" style={{ gap: 10, marginTop: 8 }}>
-              <span className="small muted" style={{ width: 42, flex: '0 0 auto' }}>
-                {label}
-              </span>
+      {/* 分组宽屏两列排：编辑页不用滚很久才见得到「合成」 */}
+      <div className="mix-groups">
+        <Group title="音量">
+          <div className="mix-volume-grid">
+            <div className="field">
+              <div className="field-label">
+                <span>人声音量</span>
+                <span className="field-value">{gainLabel(params.vocalGain)}</span>
+              </div>
               <input
                 type="range"
-                style={{ flex: 1 }}
-                min={MIX_LIMITS.eqDb.min}
-                max={MIX_LIMITS.eqDb.max}
-                step={MIX_LIMITS.eqDb.step}
-                value={params[key]}
-                onChange={(event) => update({ [key]: Number(event.target.value) } as Partial<MixParams>)}
+                min={MIX_LIMITS.gain.min}
+                max={MIX_LIMITS.gain.max}
+                step={MIX_LIMITS.gain.step}
+                value={params.vocalGain}
+                onChange={(event) => update({ vocalGain: Number(event.target.value) })}
               />
-              <span className="small mono" style={{ width: 58, textAlign: 'right', flex: '0 0 auto' }}>
-                {dbLabel(params[key])}
+            </div>
+
+            <div className="field">
+              <div className="field-label">
+                <span>伴奏音量</span>
+                <span className="field-value">{gainLabel(params.accompGain)}</span>
+              </div>
+              <input
+                type="range"
+                min={MIX_LIMITS.gain.min}
+                max={MIX_LIMITS.gain.max}
+                step={MIX_LIMITS.gain.step}
+                value={params.accompGain}
+                onChange={(event) => update({ accompGain: Number(event.target.value) })}
+              />
+            </div>
+          </div>
+        </Group>
+
+        <Group title="音效">
+          <div className="field">
+            <div className="field-label">
+              <span>预设</span>
+              <span className="faint small">
+                {activePreset ? `当前：${VOCAL_PRESET_LABELS[activePreset]}` : '已手动调整'}
               </span>
             </div>
-          ))}
-        </div>
-      </Group>
-
-      <Group title="修音" open={false}>
-        <div className="field">
-          <div className="field-label">
-            <span>压缩量</span>
-            <span className="field-value">{Math.round(params.compression * 100)}%</span>
+            <div className="reverb-options">
+              {VOCAL_PRESETS.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  className={`reverb-option${activePreset === preset ? ' active' : ''}`}
+                  onClick={() => applyPreset(preset)}
+                >
+                  {VOCAL_PRESET_LABELS[preset]}
+                </button>
+              ))}
+            </div>
+            <div className="small faint">点一下就把那组参数写进下面的滑块，之后还能继续手调。</div>
           </div>
-          <input
-            type="range"
-            min={MIX_LIMITS.amount.min}
-            max={MIX_LIMITS.amount.max}
-            step={MIX_LIMITS.amount.step}
-            value={params.compression}
-            onChange={(event) => update({ compression: Number(event.target.value) })}
-          />
-          <div className="small faint">把人声的动态压平一些，小声的句子不会被伴奏盖住。</div>
-        </div>
 
-        <div className="field" style={{ marginTop: 14 }}>
-          <div className="field-label">
-            <span>去齿音</span>
-            <span className="field-value">
-              {params.deEss <= 0 ? '关闭' : `${Math.round(params.deEss * 100)}%`}
-            </span>
+          <div className="field" style={{ marginTop: 14 }}>
+            <div className="field-label">
+              <span>人声混响</span>
+            </div>
+            <div className="reverb-options">
+              {REVERB_KINDS.map((reverb) => (
+                <button
+                  key={reverb}
+                  type="button"
+                  className={`reverb-option${params.reverb === reverb ? ' active' : ''}`}
+                  onClick={() => update({ reverb })}
+                >
+                  {REVERB_LABELS[reverb]}
+                </button>
+              ))}
+            </div>
           </div>
-          <input
-            type="range"
-            min={MIX_LIMITS.amount.min}
-            max={MIX_LIMITS.amount.max}
-            step={MIX_LIMITS.amount.step}
-            value={params.deEss}
-            onChange={(event) => update({ deEss: Number(event.target.value) })}
-          />
-          <div className="small faint">压一下「嘶 / 次」这类刺耳的高频。试听里是近似效果。</div>
-        </div>
 
-        <label className="row small muted" style={{ gap: 8, cursor: 'pointer', marginTop: 14 }}>
-          <input
-            type="checkbox"
-            checked={params.noiseReduction}
-            onChange={(event) => update({ noiseReduction: event.target.checked })}
-          />
-          降噪（只该在录音有明显底噪时开；**实时试听里不生效**）
-        </label>
-      </Group>
+          <div className="field" style={{ marginTop: 14 }}>
+            <div className="field-label">
+              <span>均衡</span>
+              <span className="faint small">低 200Hz · 中 1.2kHz · 高 4kHz</span>
+            </div>
+            {(
+              [
+                ['eqLowDb', '低频'],
+                ['eqMidDb', '中频'],
+                ['eqHighDb', '高频'],
+              ] as const
+            ).map(([key, label]) => (
+              <div key={key} className="row" style={{ gap: 10, marginTop: 8 }}>
+                <span className="small muted" style={{ width: 42, flex: '0 0 auto' }}>
+                  {label}
+                </span>
+                <input
+                  type="range"
+                  style={{ flex: 1 }}
+                  min={MIX_LIMITS.eqDb.min}
+                  max={MIX_LIMITS.eqDb.max}
+                  step={MIX_LIMITS.eqDb.step}
+                  value={params[key]}
+                  onChange={(event) => update({ [key]: Number(event.target.value) } as Partial<MixParams>)}
+                />
+                <span className="small mono" style={{ width: 58, textAlign: 'right', flex: '0 0 auto' }}>
+                  {dbLabel(params[key])}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Group>
 
-      <Group title="人声对齐微调" open={false}>
-        <div className="field">
-          <div className="field-label">
-            <span>对齐微调</span>
-            <span className="offset-value">
-              <OffsetMsInput
-                value={params.userOffsetMs}
-                onChange={(next) => update({ userOffsetMs: next })}
-              />
-              <span className="field-value">ms</span>
-            </span>
+        <Group title="修音" open={false}>
+          <div className="field">
+            <div className="field-label">
+              <span>压缩量</span>
+              <span className="field-value">{Math.round(params.compression * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              min={MIX_LIMITS.amount.min}
+              max={MIX_LIMITS.amount.max}
+              step={MIX_LIMITS.amount.step}
+              value={params.compression}
+              onChange={(event) => update({ compression: Number(event.target.value) })}
+            />
+            <div className="small faint">把人声的动态压平一些，小声的句子不会被伴奏盖住。</div>
           </div>
-          <input
-            type="range"
-            min={MIX_LIMITS.userOffsetMs.min}
-            max={MIX_LIMITS.userOffsetMs.max}
-            step={MIX_LIMITS.userOffsetMs.step}
-            value={params.userOffsetMs}
-            onChange={(event) => update({ userOffsetMs: Number(event.target.value) })}
-          />
-          <div className="small faint">
-            范围 ±1000ms：正值 = 人声更晚（人声比伴奏早、抢拍时用）；负值 = 人声更早（人声拖拍时用）。
-            自动对齐已经先扣掉了「起录后、伴奏起播前」那段静音，微调在此基础上正负叠加。
+
+          <div className="field" style={{ marginTop: 14 }}>
+            <div className="field-label">
+              <span>去齿音</span>
+              <span className="field-value">
+                {params.deEss <= 0 ? '关闭' : `${Math.round(params.deEss * 100)}%`}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={MIX_LIMITS.amount.min}
+              max={MIX_LIMITS.amount.max}
+              step={MIX_LIMITS.amount.step}
+              value={params.deEss}
+              onChange={(event) => update({ deEss: Number(event.target.value) })}
+            />
+            <div className="small faint">压一下「嘶 / 次」这类刺耳的高频。试听里是近似效果。</div>
           </div>
-        </div>
-      </Group>
+
+          <label className="row small muted" style={{ gap: 8, cursor: 'pointer', marginTop: 14 }}>
+            <input
+              type="checkbox"
+              checked={params.noiseReduction}
+              onChange={(event) => update({ noiseReduction: event.target.checked })}
+            />
+            降噪（只该在录音有明显底噪时开；**实时试听里不生效**）
+          </label>
+        </Group>
+
+        <Group title="人声对齐微调" open={false}>
+          <div className="field">
+            <div className="field-label">
+              <span>对齐微调</span>
+              <span className="offset-value">
+                <OffsetMsInput
+                  value={params.userOffsetMs}
+                  onChange={(next) => update({ userOffsetMs: next })}
+                />
+                <span className="field-value">ms</span>
+              </span>
+            </div>
+            <input
+              type="range"
+              min={MIX_LIMITS.userOffsetMs.min}
+              max={MIX_LIMITS.userOffsetMs.max}
+              step={MIX_LIMITS.userOffsetMs.step}
+              value={params.userOffsetMs}
+              onChange={(event) => update({ userOffsetMs: Number(event.target.value) })}
+            />
+            <div className="small faint">
+              范围 ±1000ms：正值 = 人声更晚（人声比伴奏早、抢拍时用）；负值 = 人声更早（人声拖拍时用）。
+              自动对齐已经先扣掉了「起录后、伴奏起播前」那段静音，微调在此基础上正负叠加。
+            </div>
+          </div>
+        </Group>
+      </div>
 
       <button
         type="button"
