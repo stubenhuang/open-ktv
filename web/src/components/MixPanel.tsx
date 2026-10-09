@@ -211,8 +211,8 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
     <div className="card mix-panel">
       <div className="mix-panel-head">
         <span className="mix-panel-title">
-          混音调整
-          <Hint text="所有改动都会实时送进上面的「实时试听」；点「合成」服务端用干声重新出一版 MP3，然后自动返回作品库。" />
+          效果调整
+          <Hint text="每项改动都会实时送进上面的「实时试听」；点「合成」用干声重新出一版 MP3，然后返回作品库。" />
         </span>
       </div>
 
@@ -227,7 +227,7 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
               <div className="field-label">
                 <span className="label-with-hint">
                   人声预设
-                  <Hint text="点一下就把那组参数写进下面的滑块，之后还能继续手调；手调过就不再高亮任何预设。" />
+                  <Hint text="点一下把那组参数写进下面的滑块，之后还能继续手调。" />
                 </span>
                 <span className="faint small">
                   {activePreset ? `当前：${VOCAL_PRESET_LABELS[activePreset]}` : '已手动调整'}
@@ -274,9 +274,9 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
               <div className="slider-stack">
                 {(
                   [
-                    ['eqLowDb', '低频'],
-                    ['eqMidDb', '中频'],
-                    ['eqHighDb', '高频'],
+                    ['eqLowDb', '低音'],
+                    ['eqMidDb', '中音'],
+                    ['eqHighDb', '高音'],
                   ] as const
                 ).map(([key, label]) => (
                   <Slider
@@ -327,13 +327,13 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
             <div className="slider-stack">
               <Slider
                 param="compression"
-                label="压缩量"
+                label="压缩"
                 value={params.compression}
                 display={`${Math.round(params.compression * 100)}%`}
                 min={MIX_LIMITS.amount.min}
                 max={MIX_LIMITS.amount.max}
                 step={MIX_LIMITS.amount.step}
-                hint="把人声的动态压平一些，小声的句子不会被伴奏盖住。"
+                hint="把大小声拉近，小声的句子不会被伴奏盖住。"
                 onChange={(compression) => update({ compression })}
               />
               <Slider
@@ -344,7 +344,7 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
                 min={MIX_LIMITS.amount.min}
                 max={MIX_LIMITS.amount.max}
                 step={MIX_LIMITS.amount.step}
-                hint="压掉「嘶 / 次」这类刺耳的高频。试听里是静态高架下压的近似效果，成品里才是真正的 deesser。"
+                hint="压掉「嘶 / 次」这类刺耳的高频。试听里是近似效果，成品里才是真正的处理。"
                 tone="warn"
                 placement="left"
                 flipNarrow
@@ -368,12 +368,12 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
             </div>
           </Group>
 
-          <Group title="人声对齐微调" hint="±1000ms">
+          <Group title="人声对齐" hint="±1000ms">
             <div className="mix-offset-row">
               {/* 说明挂在行首：整行都是「这一个参数」，朝上展开（这是右列最底下一个控件） */}
               <Hint
                 placement="top"
-                text="正值 = 人声更晚（抢拍时用），负值 = 人声更早（拖拍用）。自动对齐已经先扣掉了「起录后、伴奏起播前」那段静音，微调在此基础上正负叠加。"
+                text="正值 = 人声更晚（抢拍），负值 = 更早（拖拍）。起录时那段静音已自动扣除。"
               />
               <OffsetMsInput
                 value={params.userOffsetMs}

@@ -662,13 +662,16 @@ input[type='checkbox'] {
   transition: width 0.2s;
 }
 
-/* ------------------------- 上传伴奏的二级弹窗 ------------------------- */
+/* ------------------------- 通用二级弹窗（上传 / 编辑伴奏） ------------------------- */
 
 /*
  * z-index 要压过演唱页的全屏歌词层（.stage-fullscreen 是 90）——
- * 上传弹窗理论上只出现在伴奏库，但遮罩一旦被盖住就成了「点了没反应」。
+ * 弹窗理论上只出现在伴奏库，但遮罩一旦被盖住就成了「点了没反应」。
+ *
+ * 原来是 .upload-modal 专用；编辑弹窗复用同一套模态外观后改名成中性的
+ * .app-modal（ UploadDialog 里的旧类名已同步换掉）。
  */
-.upload-modal {
+.app-modal {
   position: fixed;
   inset: 0;
   z-index: 120;
@@ -680,7 +683,7 @@ input[type='checkbox'] {
   backdrop-filter: blur(6px);
 }
 
-.upload-modal-panel {
+.app-modal-panel {
   width: min(560px, 100%);
   max-height: calc(100vh - 40px);
   overflow: auto;
@@ -691,12 +694,24 @@ input[type='checkbox'] {
   padding: 18px 20px 20px;
 }
 
-.upload-modal-head {
+/* 编辑伴奏弹窗内容更宽（两列字段 + 歌词文本框），560px 太挤 */
+.edit-modal-panel {
+  width: min(640px, 100%);
+}
+
+.app-modal-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
   margin-bottom: 14px;
+}
+
+/* 弹窗内字段的纵向节奏：和上传弹窗一致（label + 控件 + 说明各一段） */
+.app-modal-panel .field + .field,
+.app-modal-panel .field + .row,
+.app-modal-panel .row + .field {
+  margin-top: 14px;
 }
 
 /* 伪文件选择框：真的 input 藏起来，样式自己画，点它等于点系统文件选择器 */
@@ -820,20 +835,11 @@ input[type='checkbox'] {
   justify-content: flex-end;
 }
 
-.edit-form {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  align-items: center;
-  width: 100%;
-}
-
-/* 歌词编辑区要纵向排开，不能再按单行铺 */
-.edit-form-stack {
-  flex-direction: column;
-  align-items: stretch;
-}
-
+/*
+ * 歌词编辑区（编辑弹窗里的多行文本框）：纵向排开，等宽字体按列对齐读时间戳。
+ * 原来的 .edit-form / .edit-form-stack 是列表行内编辑用的，表单搬进
+ * TrackEditDialog 后一并删掉。
+ */
 .lyrics-textarea {
   width: 100%;
   min-height: 132px;
@@ -2034,6 +2040,31 @@ input[type='range']:disabled::-webkit-slider-thumb {
   color: var(--accent-2);
   overflow-x: auto;
   white-space: pre;
+}
+
+/*
+ * 配置指引卡：常驻只留「是什么 + 怎么办」一句话，env / JSON 细节折进来。
+ * 大多数用户永远不需要看这段，摊开会把整页变成运维文档。
+ */
+.library-config-details {
+  margin-top: 10px;
+}
+
+.library-config-details > summary {
+  cursor: pointer;
+  color: var(--accent-2);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  width: fit-content;
+  padding: 2px 0;
+}
+
+.library-config-details > summary:hover {
+  color: #7fe6ff;
+}
+
+.library-config-details[open] > summary {
+  margin-bottom: 4px;
 }
 
 /* 混音面板的分组样式已合并到上面的「作品编辑页：一屏放完 / 混音面板」两节 */

@@ -143,7 +143,7 @@ export function LivePreview({ engine, status, error, onRequestPlay }: Props) {
       <div className="preview-transport">
         <strong className="preview-title">
           实时试听
-          <Hint text="干声 + 伴奏在浏览器里实时混音：拖滑块、输入毫秒数、换混响都会立刻生效，不打断播放。这只是预览 —— 点下面的「合成」服务端才会真正出新版 MP3。" />
+          <Hint text="干声 + 伴奏在浏览器里实时混音：拖滑块、改毫秒都会立刻生效，不打断播放。这只是预览 —— 点「合成」服务端才真正出新版 MP3。" />
         </strong>
         <button
           type="button"

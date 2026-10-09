@@ -71,7 +71,7 @@ export default function WorksPage() {
       <div className="page-head">
         <div>
           <h1 className="page-title">我的作品</h1>
-          <p className="page-sub">每次演唱都会合成一版 192kbps 立体声 MP3，可以随时重新调整混音。</p>
+          <p className="page-sub">每唱一次都会存下一版 MP3，随时回听、下载或调整效果。</p>
         </div>
         <Link className="btn" to="/">
           去伴奏库
@@ -144,8 +144,8 @@ export default function WorksPage() {
               )}
 
               <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                <Link className="btn btn-sm" to={`/works/${work.id}`}>
-                  调混音
+                <Link className="btn btn-sm" to={`/works/${work.id}`} title="试听效果、调整参数并重新合成">
+                  调整效果
                 </Link>
                 <a
                   className="btn btn-sm"

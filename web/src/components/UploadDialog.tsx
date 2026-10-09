@@ -156,7 +156,7 @@ export function UploadDialog({ draft, onClose, onSubmit }: Props) {
 
   return (
     <div
-      className="upload-modal"
+      className="app-modal"
       onMouseDown={(event) => {
         // 点遮罩（弹窗面板以外的区域）关窗；面板内部的点击不关
         if (event.target === event.currentTarget) onClose();
@@ -164,13 +164,13 @@ export function UploadDialog({ draft, onClose, onSubmit }: Props) {
     >
       <div
         ref={panelRef}
-        className="upload-modal-panel"
+        className="app-modal-panel"
         role="dialog"
         aria-modal="true"
         aria-label="上传伴奏"
         tabIndex={-1}
       >
-        <div className="upload-modal-head">
+        <div className="app-modal-head">
           <div>
             <div className="page-title" style={{ fontSize: 18 }}>
               上传伴奏

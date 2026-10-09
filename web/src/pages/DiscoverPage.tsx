@@ -197,7 +197,7 @@ export default function DiscoverPage() {
         <div className="page-head">
           <div>
             <h1 className="page-title">点歌台</h1>
-            <p className="page-sub">搜索曲库 → 点歌（自动下载并入库）→ 去演唱。</p>
+            <p className="page-sub">搜歌名或歌手，点「点歌」自动下载进伴奏库；有歌词会一起带上。</p>
           </div>
         </div>
         <div className="card">
@@ -205,18 +205,29 @@ export default function DiscoverPage() {
             <span aria-hidden="true">📂 </span>还没有配置任何曲库源
           </div>
           <p className="page-sub" style={{ marginTop: 6 }}>
-            内置的 5sing 伴奏源可以用 <code>FIVESING_ENABLED=1</code>（默认就是开的）打开；
-            也可以用 <code>LIBRARY_SOURCES</code> 环境变量配上自己的源。源站只需要托管一份静态
-            JSON，不需要任何服务端逻辑，所以 NAS、对象存储、局域网 HTTP 都能直接用。
+            配上曲库源之后就能在这里搜歌、点歌。伴奏照样能手动上传，不受影响。
           </p>
-          <pre className="library-config-sample">{`FIVESING_ENABLED=1 ./openktv.sh start
+          {/*
+            环境变量和 JSON 格式是给「打算自建源」的人看的，大多数人永远不需要 ——
+            折进 details，卡片保持三行以内；标题「还没有配置任何曲库源」留在外面，
+            页面的主要信息（没源可用 + 怎么办）一眼能读完。
+          */}
+          <details className="library-config-details">
+            <summary>查看怎么配置曲库源</summary>
+            <p className="small faint" style={{ marginTop: 6 }}>
+              内置的 5sing 伴奏源可以用 <code>FIVESING_ENABLED=1</code>（默认就是开的）打开；
+              也可以用 <code>LIBRARY_SOURCES</code> 环境变量配上自己的源。源站只需要托管一份静态
+              JSON，不需要任何服务端逻辑，所以 NAS、对象存储、局域网 HTTP 都能直接用。
+            </p>
+            <pre className="library-config-sample">{`FIVESING_ENABLED=1 ./openktv.sh start
 # 或者用自己的清单：
 LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh start`}</pre>
-          <p className="small faint" style={{ marginTop: 8 }}>
-            清单格式：{`{"version":1,"name":"我的伴奏库","items":[{"id":"qingtian","title":"晴天","artist":"周杰伦","kind":"audio","url":"qingtian.mp3","lrc":"qingtian.lrc"}]}`}
-            <br />
-            配好之后重启服务即可。伴奏照样能手动上传，不受影响。
-          </p>
+            <p className="small faint" style={{ marginTop: 8 }}>
+              清单格式：{`{"version":1,"name":"我的伴奏库","items":[{"id":"qingtian","title":"晴天","artist":"周杰伦","kind":"audio","url":"qingtian.mp3","lrc":"qingtian.lrc"}]}`}
+              <br />
+              配好之后重启服务即可。
+            </p>
+          </details>
         </div>
       </div>
     );
@@ -227,9 +238,7 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
       <div className="page-head">
         <div>
           <h1 className="page-title">点歌台</h1>
-          <p className="page-sub">
-            搜索曲库 → 点歌（服务端自动下载并入库）→ 去演唱。点歌时会自动尝试匹配歌词。
-          </p>
+          <p className="page-sub">搜歌名或歌手，点「点歌」自动下载进伴奏库；有歌词会一起带上。</p>
         </div>
       </div>
 
@@ -254,7 +263,7 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
           <input
             className="text-input"
             value={query}
-            placeholder="搜索歌名或歌手，按「搜索」生效…"
+            placeholder="输入歌名或歌手，点「搜索」"
             autoFocus
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {

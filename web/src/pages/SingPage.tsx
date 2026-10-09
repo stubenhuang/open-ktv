@@ -524,20 +524,25 @@ export default function SingPage() {
                       : mic.devices.length === 0
                         ? '没有可用的外置麦克风，插上麦克风后这里会自动出现。'
                         : micReady
-                          ? '点开始后会先起录 0.15 秒静音再放伴奏，系统精确测量伴奏起播时刻，用来自动对齐。'
+                          ? '准备好了：戴好耳机，点「开始演唱」。'
                           : '正在接入麦克风…'
-                    : '正在初始化音频…'}
+                    : '正在准备音频…'}
                 </span>
               </div>
             </div>
           )}
         </div>
 
+        {/*
+          右侧控制面板按「开唱前后要弄好的事」分四卡：
+          麦克风（有没有声音）→ 耳机监听（听到什么）→ 歌词（字幕对不对）→ 录音说明。
+        */}
         <div className="control-panel">
           <div className="card">
+            <div className="panel-card-title">🎙 麦克风</div>
             <div className="field">
               <div className="field-label">
-                <span>麦克风</span>
+                <span>输入设备</span>
                 {mic.permission !== 'granted' && <span className="faint small">未授权</span>}
               </div>
               <select
@@ -593,9 +598,10 @@ export default function SingPage() {
           </div>
 
           <div className="card">
+            <div className="panel-card-title">🎧 耳机监听</div>
             <div className="field">
               <div className="field-label">
-                <span>伴奏音量（耳机里听到的）</span>
+                <span>伴奏音量</span>
                 <span className="field-value">{Math.round(accompVolume * 100)}%</span>
               </div>
               <input
@@ -606,11 +612,12 @@ export default function SingPage() {
                 value={accompVolume}
                 onChange={(event) => setAccompVolume(Number(event.target.value))}
               />
+              <div className="small faint">耳机里听到的伴奏大小。</div>
             </div>
 
             <div className="field" style={{ marginTop: 16 }}>
               <div className="field-label">
-                <span>自己声音（耳返）</span>
+                <span>人声耳返</span>
                 <span className="field-value">
                   {micMonitoring ? `${Math.round(micVolume * 100)}%` : '已关闭'}
                 </span>
@@ -630,16 +637,17 @@ export default function SingPage() {
                   checked={micMonitoring}
                   onChange={(event) => setMicMonitoring(event.target.checked)}
                 />
-                开启人声耳返（关掉只听得见伴奏）
+                在耳机里听到自己的声音
               </label>
             </div>
           </div>
 
           {track.hasLyrics && (
             <div className="card">
+              <div className="panel-card-title">📄 歌词</div>
               <div className="field">
                 <div className="field-label">
-                  <span>歌词对轴微调</span>
+                  <span>歌词对轴</span>
                   <span className="field-value">
                     {lyricsOffsetMs > 0 ? '+' : ''}
                     {lyricsOffsetMs} ms
@@ -655,7 +663,7 @@ export default function SingPage() {
                 />
                 <div className="row" style={{ justifyContent: 'space-between', marginTop: 6 }}>
                   <span className="small faint">
-                    正值 = 歌词更晚出现。歌词跑在前面就往正拖，改完自动保存。
+                    歌词跟伴奏差半拍时拖这个；正值 = 歌词更晚，自动保存。
                   </span>
                   <button
                     type="button"
@@ -674,8 +682,9 @@ export default function SingPage() {
             <div className="panel-card-title">📋 录音说明</div>
             <ul className="record-notes">
               <li>只录你的干声，伴奏不进录音文件。</li>
-              <li>结束后服务端把干声和伴奏合成 192kbps 立体声 MP3。</li>
-              <li>录完去作品库点「调混音」：实时试听即时生效，点「合成」出新版 MP3。</li>
+              <li>唱完自动把干声和伴奏合成一版 MP3。</li>
+              <li>想换效果，去作品库点「调整效果」：实时试听即时生效，点「合成」出新版 MP3。</li>
+              <li>开始时会先录 0.15 秒静音再放伴奏，用来自动对齐人声，不用手动调。</li>
             </ul>
           </div>
         </div>

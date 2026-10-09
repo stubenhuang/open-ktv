@@ -11,7 +11,7 @@ import { usePolling } from '../hooks/usePolling';
 import { errorMessage, formatDateTime, formatDuration } from '../utils';
 
 /**
- * 作品编辑页：单列列表式排版 —— 实时试听 → 混音调整。
+ * 作品编辑页：单列列表式排版 —— 实时试听 → 效果调整。
  *
  * 成品 MP3 的播放/下载都在作品库列表页；这里只负责「试听 + 调参 + 合成」，
  * 点「合成」发一次混音请求后直接返回作品库（定位到这首作品），
@@ -227,7 +227,7 @@ export default function WorkDetailPage() {
           <div className="detail-sub-row" style={{ marginTop: 6 }}>
             <p className="page-sub" style={{ margin: 0 }}>
               {work.trackTitle ? `伴奏：${work.trackTitle} · ` : ''}
-              演唱时长 {formatDuration(work.vocalDuration)} · {formatDateTime(work.createdAt)}
+              时长 {formatDuration(work.vocalDuration)} · {formatDateTime(work.createdAt)}
             </p>
             {/* 成品 MP3 的徽章跟着状态走：唱完刚落页时能看到初始混音的进度 */}
             {mixing ? (

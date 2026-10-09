@@ -343,7 +343,7 @@ async function purgeStaleTestData(page) {
   );
 }
 
-/** 打开伴奏库的上传弹窗（点上传区 → 等 .upload-modal-panel 出现） */
+/** 打开伴奏库的上传弹窗（点上传区 → 等 .app-modal-panel 出现） */
 async function openUploadDialog(page) {
   const clicked = await evaluate(
     page,
@@ -356,7 +356,7 @@ async function openUploadDialog(page) {
     '点上传区',
   );
   if (clicked !== 'ok') throw new Error(`打不开上传弹窗：${clicked}`);
-  await waitFor(page, `document.querySelector('.upload-modal-panel') !== null`, {
+  await waitFor(page, `document.querySelector('.app-modal-panel') !== null`, {
     timeoutMs: 10_000,
     label: '上传弹窗打开',
   });
@@ -390,7 +390,7 @@ async function uploadViaFileInput(page, audioPath, lyricsPath = null) {
         const { root } = await page.send('DOM.getDocument', { depth: -1, pierce: true });
         const { nodeIds } = await page.send('DOM.querySelectorAll', {
           nodeId: root.nodeId,
-          selector: '.upload-modal-panel input[type=file]',
+          selector: '.app-modal-panel input[type=file]',
         });
         const nodeId = nodeIds?.[index];
         if (!nodeId) throw new Error(`弹窗里找不到第 ${index + 1} 个文件选择框`);
@@ -412,7 +412,7 @@ async function uploadViaFileInput(page, audioPath, lyricsPath = null) {
   const submitted = await evaluate(
     page,
     `(() => {
-      const button = [...document.querySelectorAll('.upload-modal-panel button')]
+      const button = [...document.querySelectorAll('.app-modal-panel button')]
         .find((b) => b.textContent.trim() === '开始上传');
       if (!button || button.disabled) return '「开始上传」不可用（音频没选上？）';
       button.click();
@@ -1423,14 +1423,14 @@ async function main() {
   const { root } = await page.send('DOM.getDocument', { depth: -1, pierce: true });
   const { nodeIds } = await page.send('DOM.querySelectorAll', {
     nodeId: root.nodeId,
-    selector: '.upload-modal-panel input[type=file]',
+    selector: '.app-modal-panel input[type=file]',
   });
   if (!nodeIds?.[0]) throw new Error('上传弹窗里没有音频选择框');
   await page.send('DOM.setFileInputFiles', { nodeId: nodeIds[0], files: [videoFile] });
 
   await waitFor(
     page,
-    `document.querySelector('.upload-modal-panel').innerText.includes('只支持音频文件')`,
+    `document.querySelector('.app-modal-panel').innerText.includes('只支持音频文件')`,
     { timeoutMs: 10_000, label: '弹窗提示只支持音频' },
   );
   pass('弹窗拦下了视频文件（行内提示，不提交）');
@@ -1438,7 +1438,7 @@ async function main() {
   const submitDisabled = await evaluate(
     page,
     `(() => {
-      const button = [...document.querySelectorAll('.upload-modal-panel button')]
+      const button = [...document.querySelectorAll('.app-modal-panel button')]
         .find((b) => b.textContent.trim() === '开始上传');
       return button ? button.disabled : 'no-button';
     })()`,
