@@ -180,3 +180,28 @@ export function lyricLineSizeClass(text: string): 'lyric-fs-sm' | 'lyric-fs-xs' 
   return '';
 }
 
+/* ------------------------------ 作品卡封条配色 ------------------------------ */
+
+/**
+ * 标题 → 确定性色相（0～359）。
+ *
+ * 作品卡顶部那条渐变封条用它取色：同一首歌每次进来颜色一样（用户认得出
+ * 「我那首粉色的」），不同标题错开（一屏八张卡不撞色）。FNV 式滚动哈希，
+ * 纯函数、无依赖 —— 单测见 tests/web-utils.test.ts。
+ */
+export function coverHue(text: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    // Math.imul：32 位整数乘法，避免 JS 浮点把哈希冲淡
+    hash = Math.imul(hash, 16777619);
+  }
+  // >>> 0 转无符号；% 360 落回色相环
+  return (hash >>> 0) % 360;
+}
+
+/** 作品卡封条渐变：主色相 + 旁边 48° 的邻近色，比单色更有层次 */
+export function coverGradient(text: string): string {
+  const hue = coverHue(text);
+  return `linear-gradient(135deg, hsl(${hue} 68% 46%), hsl(${(hue + 48) % 360} 72% 36%))`;
+}

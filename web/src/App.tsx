@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { ConfirmHost } from './components/ConfirmDialog';
+import { ToastStack } from './components/ToastStack';
 import DiscoverPage from './pages/DiscoverPage';
 import LibraryPage from './pages/LibraryPage';
 import SingPage from './pages/SingPage';
@@ -38,7 +40,18 @@ function Layout({ children }: { children: ReactNode }) {
           </NavLink>
         </div>
       </nav>
-      <main className={`app-main${fitOneScreen ? ' app-main-fit' : ''}`}>{children}</main>
+      <main className={`app-main${fitOneScreen ? ' app-main-fit' : ''}`}>
+        {/*
+          按路径 keyed：换页面时整棵子树重挂，.page-fade 的入场动画才会重放。
+          （不用 AnimatePresence 那套，一个 key + 一个 keyframes 就够，还零依赖）
+        */}
+        <div key={pathname} className="page-fade">
+          {children}
+        </div>
+      </main>
+      {/* 轻提示与确认框挂在 shell 上：任何页面 toast() / confirmAction() 都能用 */}
+      <ToastStack />
+      <ConfirmHost />
     </div>
   );
 }

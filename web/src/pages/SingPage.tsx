@@ -35,6 +35,8 @@ export default function SingPage() {
   const [accompVolume, setAccompVolume] = useState(0.9);
   const [micVolume, setMicVolume] = useState(0.65);
   const [micMonitoring, setMicMonitoring] = useState(true);
+  /** 顶部耳机警告的「为什么？」是否展开（常驻会占掉小半屏，但说明不能删） */
+  const [showWhy, setShowWhy] = useState(false);
 
   const mic = useMicDevices();
   const requestedMic = useRef(false);
@@ -368,19 +370,31 @@ export default function SingPage() {
         </Link>
       </div>
 
+      {/*
+        耳机警告：第一行常驻（这是真会毁掉录音的一条），原因收进「为什么？」。
+        整段铺开会从小半屏开始，把舞台和开始按钮全顶到下面去。
+      */}
       <div className="alert alert-warn">
-        🎧 请戴上耳机再唱。为了保证音质，我们特意关掉了浏览器的「降噪 / 回声消除」——
-        那套处理是给语音通话做的，会把歌声当成噪声削掉（实测能削掉 18dB，听感就是断断续续）。
-        代价是不再自动防啸叫：外放时麦克风会把伴奏收回去，轻则串音重则啸叫。
-        另外蓝牙耳机延迟通常 150ms 以上，耳返会明显拖拍，建议用有线耳机。
+        🎧 请戴上耳机再唱。
+        <button type="button" className="link-btn" onClick={() => setShowWhy((value) => !value)}>
+          {showWhy ? '收起' : '为什么？'}
+        </button>
+        {showWhy && (
+          <div className="sing-why">
+            为了保证音质，我们特意关掉了浏览器的「降噪 / 回声消除」—— 那套处理是给语音通话做的，
+            会把歌声当成噪声削掉（实测能削掉 18dB，听感就是断断续续）。代价是不再自动防啸叫：
+            外放时麦克风会把伴奏收回去，轻则串音重则啸叫。另外蓝牙耳机延迟通常 150ms 以上，
+            耳返会明显拖拍，建议用有线耳机。
+          </div>
+        )}
       </div>
 
-      {actionError && <div className="alert alert-error">{actionError}</div>}
+      {actionError && <div className="alert alert-error" role="alert">{actionError}</div>}
 
-      {captureWarning && <div className="alert alert-warn">⚠️ {captureWarning}</div>}
+      {captureWarning && <div className="alert alert-warn" role="alert">⚠️ {captureWarning}</div>}
 
       {mic.error && (
-        <div className="alert alert-error">
+        <div className="alert alert-error" role="alert">
           {mic.error}
           <button
             type="button"
@@ -425,9 +439,15 @@ export default function SingPage() {
                 fullscreen={fullscreen}
               />
             ) : track.kind !== 'video' ? (
+              /* 音频伴奏的「舞台」：慢转的唱片 + 歌名，比一枚大 emoji 有生命力 */
               <div className="stage-audio-visual">
-                <div className="big">🎵</div>
-                <div>{track.title}</div>
+                <div className="stage-disc-wrap">
+                  <div className="stage-disc" />
+                  <span className="stage-disc-note" aria-hidden="true">
+                    🎵
+                  </span>
+                </div>
+                <div className="stage-audio-title">{track.title}</div>
                 <div className="small faint">音频伴奏（无画面）</div>
               </div>
             ) : null}
@@ -651,8 +671,8 @@ export default function SingPage() {
           )}
 
           <div className="card small muted">
-            <strong style={{ color: 'var(--text)' }}>录音说明</strong>
-            <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
+            <div className="panel-card-title">📋 录音说明</div>
+            <ul className="record-notes">
               <li>只录你的干声，伴奏不进录音文件。</li>
               <li>结束后服务端把干声和伴奏合成 192kbps 立体声 MP3。</li>
               <li>录完去作品库点「调混音」：实时试听即时生效，点「合成」出新版 MP3。</li>

@@ -1,7 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { LRC_LIMITS } from '../../../shared/types';
 import { api, trackMediaUrl, type TrackListItem } from '../api';
+import { AudioPlayer } from '../components/AudioPlayer';
+import { confirmAction } from '../components/ConfirmDialog';
+import { EmptyState } from '../components/EmptyState';
+import { TrackSkeletonList } from '../components/Skeleton';
+import { toast } from '../components/ToastStack';
 import { UploadDialog, type UploadDraft } from '../components/UploadDialog';
 import { usePolling } from '../hooks/usePolling';
 import { errorMessage, formatBytes, formatDuration, isAudioFile, isLyricsFileName } from '../utils';
@@ -16,6 +21,9 @@ interface UploadItem {
 }
 
 let uploadKeySeed = 0;
+
+/** 列表排序方式 */
+type SortBy = 'recent' | 'title' | 'duration';
 
 export default function LibraryPage() {
   const [tracks, setTracks] = useState<TrackListItem[]>([]);
@@ -40,6 +48,9 @@ export default function LibraryPage() {
   const [dragging, setDragging] = useState(false);
   /** 上传弹窗；null = 关着。打开时的初始选择也挂在它上面（拖拽预填） */
   const [dialog, setDialog] = useState<UploadDraft | null>(null);
+  /** 列表关键字过滤（纯客户端：曲库就自己家这几首，不值得为它打接口） */
+  const [query, setQuery] = useState('');
+  const [sortBy, setSortBy] = useState<SortBy>('recent');
   const lyricsInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -66,6 +77,25 @@ export default function LibraryPage() {
     setUploads((items) => items.map((item) => (item.key === key ? { ...item, ...patch } : item)));
   };
 
+  /** 关键字 + 排序后的可见列表。歌名按拼音排（localeCompare 的 zh 排序），中文用户找歌更直觉 */
+  const visibleTracks = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    const filtered = keyword
+      ? tracks.filter(
+          (track) =>
+            track.title.toLowerCase().includes(keyword) ||
+            (track.artist ?? '').toLowerCase().includes(keyword),
+        )
+      : tracks;
+    if (sortBy === 'title') {
+      return [...filtered].sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'));
+    }
+    if (sortBy === 'duration') {
+      return [...filtered].sort((a, b) => (b.duration ?? 0) - (a.duration ?? 0));
+    }
+    return filtered;
+  }, [tracks, query, sortBy]);
+
   /**
    * 上传一批伴奏（弹窗提交后调这里）。
    *
@@ -91,6 +121,9 @@ export default function LibraryPage() {
       });
       setUploads((items) => [...created, ...items]);
 
+      let succeeded = 0;
+      let failed = 0;
+
       for (let index = 0; index < list.length; index += 1) {
         const file = list[index]!;
         const item = created[index]!;
@@ -99,6 +132,7 @@ export default function LibraryPage() {
             patchUpload(item.key, { progress: ratio }),
           );
           patchUpload(item.key, { progress: 1, done: true });
+          succeeded += 1;
           // 歌词跟着第一个音频一起入库；失败只记在这一项上，不波及音频本身
           if (index === 0 && lyricsFile) {
             try {
@@ -108,9 +142,26 @@ export default function LibraryPage() {
             }
           }
         } catch (err) {
+          failed += 1;
           patchUpload(item.key, { error: errorMessage(err, '上传失败') });
         }
         void load();
+      }
+
+      // 成功的条目 2.4s 后自动消退（失败的留着，要用户自己关）
+      for (const item of created) {
+        window.setTimeout(() => {
+          // 过滤时重读最新状态：这一项若在消退前刚报了错，就继续留着
+          setUploads((items) => items.filter((one) => one.key !== item.key || one.error !== null));
+        }, 2400);
+      }
+
+      if (succeeded > 0) {
+        toast.ok(
+          failed > 0
+            ? `已上传 ${succeeded} 个伴奏，${failed} 个失败`
+            : `已上传 ${succeeded} 个伴奏，可以在下面试听 / 演唱了`,
+        );
       }
     },
     [load],
@@ -142,9 +193,13 @@ export default function LibraryPage() {
       track.workCount > 0
         ? `\n它下面的 ${track.workCount} 个作品会保留（成品 MP3 仍可播放 / 下载），但不能再调混音或重新合成。`
         : '';
-    if (!window.confirm(`确定删除伴奏「${track.title}」吗？原文件也会一起删掉。${worksNote}`)) {
-      return;
-    }
+    const confirmed = await confirmAction({
+      title: '删除伴奏',
+      message: `确定删除伴奏「${track.title}」吗？原文件也会一起删掉。${worksNote}`,
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!confirmed) return;
     setBusyId(track.id);
     try {
       const result = await api.deleteTrack(track.id);
@@ -154,6 +209,7 @@ export default function LibraryPage() {
           ? `已删除伴奏「${track.title}」，保留 ${result.keptWorks} 个作品（成品仍可播放 / 下载，但不能重新合成）。`
           : null,
       );
+      toast.ok(`已删除伴奏「${track.title}」`);
       await load();
     } catch (err) {
       setError(errorMessage(err, '删除失败'));
@@ -210,6 +266,7 @@ export default function LibraryPage() {
       });
       setEditingId(null);
       setLyricsDirty(false);
+      toast.ok('已保存');
       await load();
     } catch (err) {
       setError(errorMessage(err, '保存失败'));
@@ -227,6 +284,7 @@ export default function LibraryPage() {
       const updated = await api.uploadLyrics(editingId, file);
       setEditLyrics(updated.lyrics ?? '');
       setLyricsDirty(false);
+      toast.ok('歌词已入库');
       await load();
     } catch (err) {
       setError(errorMessage(err, '上传歌词失败'));
@@ -244,6 +302,7 @@ export default function LibraryPage() {
       const updated = await api.fetchTrackLyrics(track.id);
       setEditLyrics(updated.lyrics ?? '');
       setLyricsDirty(false);
+      toast.ok('已自动获取歌词');
       await load();
     } catch (err) {
       setError(errorMessage(err, '自动获取歌词失败'));
@@ -256,7 +315,9 @@ export default function LibraryPage() {
     <div>
       <div className="page-head">
         <div>
-          <h1 className="page-title">伴奏库</h1>
+          <h1 className="page-title">
+            伴奏库 <span className="badge badge-kind">{tracks.length} 首</span>
+          </h1>
           <p className="page-sub">
             上传音频伴奏（mp3 / wav / flac / m4a / ogg 等，浏览器放不了的会自动转码）。
             单个文件最大 1GB，可选一起带上 .lrc 歌词。
@@ -265,7 +326,7 @@ export default function LibraryPage() {
       </div>
 
       {error && (
-        <div className="alert alert-error">
+        <div className="alert alert-error" role="alert">
           {error}
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => void load()}>
             重试
@@ -274,7 +335,7 @@ export default function LibraryPage() {
       )}
 
       {notice && (
-        <div className="alert alert-info">
+        <div className="alert alert-info" role="status">
           {notice}
           <button
             type="button"
@@ -289,7 +350,17 @@ export default function LibraryPage() {
 
       <div
         className={`dropzone${dragging ? ' dragging' : ''}`}
+        role="button"
+        tabIndex={0}
+        aria-label="上传伴奏：点击选择文件，或把音频文件拖到这里"
         onClick={() => setDialog({ audio: [], lyrics: null, note: null })}
+        onKeyDown={(event) => {
+          // 键盘也要能打开上传区（role=button 的约定：Enter / 空格触发）
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            setDialog({ audio: [], lyrics: null, note: null });
+          }
+        }}
         onDragOver={(event) => {
           event.preventDefault();
           setDragging(true);
@@ -301,6 +372,9 @@ export default function LibraryPage() {
           openDialogWithFiles(Array.from(event.dataTransfer.files));
         }}
       >
+        <div className="dropzone-icon" aria-hidden="true">
+          🎧
+        </div>
         <div className="dropzone-title">把音频文件拖到这里，或点击选择</div>
         <div className="small faint">
           只支持音频：mp3 / wav / flac / m4a / aac / ogg / wma / ape 等，可一次选多个；
@@ -320,36 +394,100 @@ export default function LibraryPage() {
         <div className="upload-list">
           {uploads.map((item) => (
             <div key={item.key} className="upload-item">
-              <span style={{ minWidth: 0, flex: '0 1 auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span className="upload-item-name">
                 {item.name}
               </span>
               <span className="faint small mono">{formatBytes(item.size)}</span>
               <div className="progress-track">
                 <div className="progress-fill" style={{ width: `${Math.round(item.progress * 100)}%` }} />
               </div>
-              <span className="small" style={{ minWidth: 84, textAlign: 'right' }}>
+              <span className="small upload-item-status">
                 {item.error ? (
                   <span style={{ color: 'var(--danger)' }}>{item.error}</span>
                 ) : item.done ? (
-                  '已上传'
+                  <span style={{ color: 'var(--ok)' }}>✓ 已上传</span>
                 ) : (
                   `上传 ${Math.round(item.progress * 100)}%`
                 )}
               </span>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                aria-label={`收起 ${item.name} 的上传状态`}
+                onClick={() => setUploads((items) => items.filter((one) => one.key !== item.key))}
+              >
+                ✕
+              </button>
             </div>
           ))}
         </div>
       )}
 
-      {loading ? (
-        <div className="empty-state">正在加载…</div>
-      ) : tracks.length === 0 ? (
-        <div className="empty-state" style={{ marginTop: 20 }}>
-          还没有伴奏。先上传一首，然后就能开唱了。
+      {/* 工具栏：关键字过滤 + 排序。曲库攒到几十首之后，翻列表找歌是高频动作 */}
+      {!loading && tracks.length > 0 && (
+        <div className="library-toolbar">
+          <input
+            className="text-input"
+            type="search"
+            value={query}
+            placeholder="按歌名 / 歌手过滤…"
+            aria-label="按歌名或歌手过滤伴奏"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <select
+            className="select-input"
+            value={sortBy}
+            aria-label="排序方式"
+            onChange={(event) => setSortBy(event.target.value as SortBy)}
+          >
+            <option value="recent">最近上传</option>
+            <option value="title">按歌名</option>
+            <option value="duration">按时长</option>
+          </select>
+          <span className="library-count">
+            {visibleTracks.length === tracks.length
+              ? `共 ${tracks.length} 首`
+              : `${visibleTracks.length} / ${tracks.length} 首`}
+          </span>
         </div>
+      )}
+
+      {loading ? (
+        <TrackSkeletonList />
+      ) : tracks.length === 0 ? (
+        <EmptyState
+          icon="🎵"
+          title="还没有伴奏"
+          description="先上传一首，然后就能开唱了。也可以去点歌台看看有没有现成的。"
+          action={
+            <>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setDialog({ audio: [], lyrics: null, note: null })}
+              >
+                上传第一首
+              </button>
+              <Link className="btn" to="/discover">
+                去点歌台
+              </Link>
+            </>
+          }
+        />
+      ) : visibleTracks.length === 0 ? (
+        <EmptyState
+          icon="🔍"
+          title="没有匹配的伴奏"
+          description={`曲库里没有和「${query.trim()}」相关的歌名或歌手。`}
+          action={
+            <button type="button" className="btn" onClick={() => setQuery('')}>
+              清空过滤
+            </button>
+          }
+        />
       ) : (
         <div className="track-list">
-          {tracks.map((track) => {
+          {visibleTracks.map((track) => {
             const isEditing = editingId === track.id;
             const isPreviewing = previewId === track.id;
 
@@ -565,13 +703,11 @@ export default function LibraryPage() {
                 )}
 
                 {isPreviewing && (
-                  <div style={{ width: '100%' }}>
-                    <audio
+                  <div className="track-preview">
+                    <AudioPlayer
                       src={trackMediaUrl(track.id)}
-                      controls
                       autoPlay
                       onEnded={() => setPreviewId(null)}
-                      style={{ width: '100%', marginTop: 10, height: 34 }}
                     />
                   </div>
                 )}

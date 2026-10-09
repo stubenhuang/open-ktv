@@ -92,6 +92,14 @@ export function UploadDialog({ draft, onClose, onSubmit }: Props) {
   const [error, setError] = useState<string | null>(null);
   /** 行内提示（比如多选音频时歌词被撤下）—— 不是错误，说明发生了什么 */
   const [info, setInfo] = useState<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // 打开时把焦点移进面板：屏幕阅读器接着就能念标题，Tab 也从面板里开始转，
+  // 不会先跑去背后那一页面的控件。（pointer 点击打开不会显示焦点环，
+  // 键盘打开才会 —— :focus-visible 的默认行为）
+  useEffect(() => {
+    panelRef.current?.focus();
+  }, []);
 
   // Esc 关窗；弹窗开着时按 Esc 不该再去触发页面上的其它快捷键
   useEffect(() => {
@@ -154,7 +162,14 @@ export function UploadDialog({ draft, onClose, onSubmit }: Props) {
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="upload-modal-panel" role="dialog" aria-modal="true" aria-label="上传伴奏">
+      <div
+        ref={panelRef}
+        className="upload-modal-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="上传伴奏"
+        tabIndex={-1}
+      >
         <div className="upload-modal-head">
           <div>
             <div className="page-title" style={{ fontSize: 18 }}>

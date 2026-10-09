@@ -7,6 +7,8 @@ import {
   type LibrarySourceStatus,
   type LibraryTaskDto,
 } from '../api';
+import { EmptyState } from '../components/EmptyState';
+import { TrackSkeletonList } from '../components/Skeleton';
 import { errorMessage, formatBytes, formatDuration } from '../utils';
 
 /** 任务轮询间隔 */
@@ -200,7 +202,7 @@ export default function DiscoverPage() {
         </div>
         <div className="card">
           <div className="page-title" style={{ fontSize: 16 }}>
-            还没有配置任何曲库源
+            <span aria-hidden="true">📂 </span>还没有配置任何曲库源
           </div>
           <p className="page-sub" style={{ marginTop: 6 }}>
             内置的 5sing 伴奏源可以用 <code>FIVESING_ENABLED=1</code>（默认就是开的）打开；
@@ -232,7 +234,7 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
       </div>
 
       {error && (
-        <div className="alert alert-error">
+        <div className="alert alert-error" role="alert">
           {error}
           <button
             type="button"
@@ -245,17 +247,35 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
       )}
 
       <div className="card library-search-bar">
-        <input
-          className="text-input"
-          style={{ flex: '1 1 240px' }}
-          value={query}
-          placeholder="搜索歌名或歌手，按「搜索」生效…"
-          autoFocus
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') submitSearch();
-          }}
-        />
+        <div className="search-with-icon">
+          <span className="search-icon" aria-hidden="true">
+            🔍
+          </span>
+          <input
+            className="text-input"
+            value={query}
+            placeholder="搜索歌名或歌手，按「搜索」生效…"
+            autoFocus
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') submitSearch();
+            }}
+          />
+          {query && (
+            <button
+              type="button"
+              className="search-clear"
+              aria-label="清空搜索词"
+              onClick={() => {
+                setQuery('');
+                // 清空是明确的意图：直接回到「全部」，省得用户再按一次搜索
+                void runSearch('', kind);
+              }}
+            >
+              ✕
+            </button>
+          )}
+        </div>
         <button
           type="button"
           className="btn btn-primary"
@@ -301,10 +321,32 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
         </div>
       )}
 
-      {searched && items.length === 0 && !searching ? (
-        <div className="empty-state" style={{ marginTop: 20 }}>
-          {query ? `没搜到「${query}」相关的伴奏。` : '曲库里还没有伴奏。'}
-        </div>
+      {searching ? (
+        <TrackSkeletonList />
+      ) : searched && items.length === 0 ? (
+        <EmptyState
+          icon="🔍"
+          title={query ? `没搜到「${query}」相关的伴奏` : '曲库里还没有伴奏'}
+          description="换个关键词试试，或者去伴奏库自己上传一首。"
+          action={
+            query ? (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setQuery('');
+                  void runSearch('', kind);
+                }}
+              >
+                清空搜索词
+              </button>
+            ) : (
+              <Link className="btn btn-primary" to="/">
+                去伴奏库上传
+              </Link>
+            )
+          }
+        />
       ) : (
         <div className="track-list">
           {items.map((item) => {
@@ -346,6 +388,9 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
                           style={{ width: `${Math.round((task?.progress ?? 0) * 100)}%` }}
                         />
                       </div>
+                      <span className="small muted download-percent">
+                        {Math.round((task?.progress ?? 0) * 100)}%
+                      </span>
                       <span className="small muted" style={{ minWidth: 66 }}>
                         {task?.state === 'queued' ? '排队中…' : '下载中…'}
                       </span>

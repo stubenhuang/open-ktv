@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { api, workAudioUrl, type WorkListItem } from '../api';
+import { AudioPlayer } from '../components/AudioPlayer';
+import { confirmAction } from '../components/ConfirmDialog';
+import { EmptyState } from '../components/EmptyState';
+import { WorkSkeletonGrid } from '../components/Skeleton';
+import { toast } from '../components/ToastStack';
 import { usePolling } from '../hooks/usePolling';
-import { errorMessage, formatDateTime, formatDuration } from '../utils';
+import { coverGradient, errorMessage, formatDateTime, formatDuration } from '../utils';
 
 export default function WorksPage() {
   const location = useLocation();
@@ -45,9 +50,16 @@ export default function WorksPage() {
   usePolling(() => void load(), 1500, hasMixing);
 
   const handleDelete = async (work: WorkListItem) => {
-    if (!window.confirm(`确定删除作品「${work.title}」吗？录音干声和成品 MP3 都会一起删掉。`)) return;
+    const confirmed = await confirmAction({
+      title: '删除作品',
+      message: `确定删除作品「${work.title}」吗？录音干声和成品 MP3 都会一起删掉。`,
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!confirmed) return;
     try {
       await api.deleteWork(work.id);
+      toast.ok(`已删除作品「${work.title}」`);
       await load();
     } catch (err) {
       setError(errorMessage(err, '删除失败'));
@@ -66,18 +78,40 @@ export default function WorksPage() {
         </Link>
       </div>
 
-      {error && <div className="alert alert-error">{error}</div>}
+      {error && (
+        <div className="alert alert-error" role="alert">
+          {error}
+        </div>
+      )}
 
       {loading ? (
-        <div className="empty-state">正在加载…</div>
+        <WorkSkeletonGrid />
       ) : works.length === 0 ? (
-        <div className="empty-state">
-          还没有作品。去伴奏库选一首，戴上耳机开始你的第一次演唱吧。
-        </div>
+        <EmptyState
+          icon="🎤"
+          title="还没有作品"
+          description="去伴奏库选一首，戴上耳机开始你的第一次演唱吧。"
+          action={
+            <Link className="btn btn-primary" to="/">
+              去伴奏库
+            </Link>
+          }
+        />
       ) : (
         <div className="work-list">
           {works.map((work) => (
             <div key={work.id} className="work-card" data-work-id={work.id}>
+              {/*
+                封条色相由标题哈希决定（coverGradient）：同一首歌每次同色、
+                不同歌错开，一屏八张卡不再是一片同样的灰。
+              */}
+              <div className="work-cover" style={{ background: coverGradient(work.title) }}>
+                <span className="work-cover-icon" aria-hidden="true">
+                  🎵
+                </span>
+                <span className="work-cover-duration">{formatDuration(work.vocalDuration)}</span>
+              </div>
+
               <div>
                 <div className="work-card-title" title={work.title}>
                   {work.title}
@@ -90,7 +124,6 @@ export default function WorksPage() {
                       伴奏已删除
                     </span>
                   )}
-                  <span className="mono">{formatDuration(work.vocalDuration)}</span>
                   <span>{formatDateTime(work.createdAt)}</span>
                 </div>
               </div>
@@ -107,10 +140,10 @@ export default function WorksPage() {
               )}
 
               {work.status === 'ready' && (
-                <audio controls preload="none" src={workAudioUrl(work.id, work.updatedAt)} />
+                <AudioPlayer src={workAudioUrl(work.id, work.updatedAt)} preload="none" />
               )}
 
-              <div className="row" style={{ gap: 8 }}>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                 <Link className="btn btn-sm" to={`/works/${work.id}`}>
                   调混音
                 </Link>

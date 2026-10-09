@@ -22,6 +22,13 @@
   --radius: 12px;
   --radius-sm: 8px;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  /* 主操作渐变（按钮 / 封条 / 高亮统一从这取，避免同一个粉在五处写成五个值） */
+  --accent-grad: linear-gradient(135deg, #ff2d78, #ff5f9e);
+  /* 悬停抬升用的小阴影；大阴影留给弹窗 */
+  --shadow-sm: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 18px 50px rgba(0, 0, 0, 0.5);
+  /* 全站统一的「出场」缓动；线性只留给录音计时这类计数场景 */
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
 
   /*
    * 字体：离线自用，不引任何外部字体（CDN 挂了页面就难看），全部走系统栈。
@@ -62,12 +69,65 @@ body {
   background:
     radial-gradient(1100px 520px at 12% -10%, rgba(255, 45, 120, 0.16), transparent 60%),
     radial-gradient(900px 480px at 96% 4%, rgba(56, 217, 255, 0.12), transparent 62%),
+    /* 极淡的斜向纹理：纯 background 叠加，不用遮罩元素 —— 遮罩会压住弹窗层级、还要管 pointer-events */
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.014) 0 1px, transparent 1px 8px),
     var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
   font-size: var(--fs-lg);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+}
+
+/* 告诉浏览器整套 UI 是深色的：下拉列表、滚动条、表单控件自动跟主题，不用逐个画 */
+:root {
+  color-scheme: dark;
+}
+
+::selection {
+  background: rgba(255, 45, 120, 0.4);
+  color: #fff;
+}
+
+/*
+ * 深色滚动条。Windows / Linux 上默认是白色粗条，在一套深色 UI 里特别突兀；
+ * macOS 是浮层式不显示，写了也不影响。
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--border-strong);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4a5677;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/*
+ * 键盘焦点环。之前只有输入框有 focus 样式，按钮 / 链接 Tab 过去毫无痕迹，
+ * 键盘用户根本不知道焦点在哪。:focus-visible 只在键盘导航时出现，鼠标点击不显。
+ */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 a {
@@ -90,6 +150,28 @@ input,
 select {
   font-family: inherit;
   font-size: inherit;
+}
+
+/*
+ * 减少动效：前庭敏感用户 / 省电模式。过渡压到几乎为零，循环动画直接停。
+ * 录音红点与 spinner 例外保留可见性（停成「不转但不消失」）。
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .rec-dot,
+  .spin,
+  .stage-disc,
+  .stage-disc-note {
+    animation: none !important;
+  }
 }
 
 /* 复选框用主题强调色（如修音组的「降噪」开关），别用浏览器默认蓝 */
@@ -134,7 +216,17 @@ input[type='checkbox'] {
   height: 10px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 14px var(--accent);
+  animation: brand-breathe 3.4s ease-in-out infinite;
+}
+
+@keyframes brand-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 8px rgba(255, 45, 120, 0.65);
+  }
+  50% {
+    box-shadow: 0 0 18px rgba(255, 45, 120, 0.95);
+  }
 }
 
 .app-nav-links {
@@ -147,7 +239,8 @@ input[type='checkbox'] {
   border-radius: 999px;
   color: var(--text-dim);
   font-weight: 500;
-  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
 }
 
 .app-nav-link:hover {
@@ -159,6 +252,26 @@ input[type='checkbox'] {
   color: var(--text);
   background: var(--accent-soft);
   box-shadow: inset 0 0 0 1px rgba(255, 45, 120, 0.4);
+}
+
+/*
+ * 窄屏：三个导航项 + 品牌在一行里会互相挤。让链接区自己横向滚（滚动条藏掉），
+ * 而不是换行把导航撑成两行 —— 导航长高一倍比左右滑难受得多。
+ */
+@media (max-width: 620px) {
+  .app-nav {
+    gap: 12px;
+    padding: 12px 16px;
+  }
+
+  .app-nav-links {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .app-nav-links::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .app-main {
@@ -177,6 +290,27 @@ input[type='checkbox'] {
   padding: 20px 28px 22px;
 }
 
+/*
+ * 路由过渡：换页面时内容淡入并轻微上移，不然「点一下导航、画面硬切换」很跳。
+ * 终态是 transform:none —— 不用 forwards 填充，动画一结束什么都不剩，
+ * 后代里的 position:fixed 元素（演唱页全屏歌词层）不会因此被留住的 transform
+ * 改成「相对祖先定位」。
+ */
+.page-fade {
+  animation: page-in 220ms var(--ease-out);
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .page-head {
   display: flex;
   align-items: flex-end;
@@ -190,6 +324,18 @@ input[type='checkbox'] {
   font-size: var(--fs-2xl);
   font-weight: 700;
   margin: 0;
+}
+
+/* 标题里的计数徽章（伴奏库「N 首」）：和文字基线对齐，别飘上去 */
+.page-title .badge {
+  vertical-align: middle;
+  margin-left: 8px;
+}
+
+/* 列表行里展开的试听播放器：占满一行，和上方内容留点呼吸 */
+.track-preview {
+  width: 100%;
+  padding-top: 2px;
 }
 
 .page-sub {
@@ -218,7 +364,8 @@ input[type='checkbox'] {
   background: var(--bg-soft);
   color: var(--text);
   font-weight: 500;
-  transition: background 0.15s, border-color 0.15s, transform 0.05s;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s var(--ease-out),
+    box-shadow 0.15s;
   white-space: nowrap;
 }
 
@@ -227,12 +374,13 @@ input[type='checkbox'] {
   border-color: #4a5677;
 }
 
+/* 按下去的反馈统一成「缩一丁点」：比 translateY(1px) 更像实体按钮，也不挑按钮形状 */
 .btn:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: scale(0.97);
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent), #ff5f9e);
+  background: var(--accent-grad);
   border-color: transparent;
   color: #fff;
   font-weight: 600;
@@ -240,6 +388,7 @@ input[type='checkbox'] {
 
 .btn-primary:hover:not(:disabled) {
   background: linear-gradient(135deg, #ff4185, #ff74ad);
+  box-shadow: 0 4px 18px rgba(255, 45, 120, 0.35);
 }
 
 .btn-ghost {
@@ -402,6 +551,32 @@ input[type='checkbox'] {
   border-radius: var(--radius);
 }
 
+/* 空态三件套：图标 / 标题 / 说明（+ 可选操作按钮），替代原来的一行灰字 */
+.empty-state-icon {
+  font-size: 42px;
+  line-height: 1;
+  margin-bottom: 12px;
+}
+
+.empty-state-title {
+  color: var(--text);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+.empty-state-desc {
+  margin-top: 5px;
+  font-size: var(--fs-sm);
+}
+
+.empty-state-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
 /* --------------------------------- 上传区 --------------------------------- */
 
 .dropzone {
@@ -409,7 +584,7 @@ input[type='checkbox'] {
   border-radius: var(--radius);
   padding: 30px 20px;
   text-align: center;
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s var(--ease-out);
   background: var(--bg-card);
   cursor: pointer;
 }
@@ -418,6 +593,17 @@ input[type='checkbox'] {
 .dropzone.dragging {
   border-color: var(--accent);
   background: var(--accent-soft);
+}
+
+/* 拖文件悬在上时轻微「迎上去」：明确的视觉确认，不然用户不知道松手会不会生效 */
+.dropzone.dragging {
+  transform: scale(1.01);
+}
+
+.dropzone-icon {
+  font-size: 30px;
+  line-height: 1;
+  margin-bottom: 10px;
 }
 
 .dropzone-title {
@@ -442,6 +628,22 @@ input[type='checkbox'] {
   border-radius: var(--radius-sm);
   padding: 9px 13px;
   font-size: var(--fs-sm);
+}
+
+/* 长文件名截断而不是把进度条挤出屏幕 */
+.upload-item-name {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 状态列定宽：上传中 % → ✓ 已上传 → 错误文案 切换时不跳动 */
+.upload-item-status {
+  flex: 0 0 auto;
+  min-width: 84px;
+  text-align: right;
 }
 
 .progress-track {
@@ -560,11 +762,13 @@ input[type='checkbox'] {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 13px 16px;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, transform 0.15s var(--ease-out), box-shadow 0.15s;
 }
 
 .track-item:hover {
   border-color: var(--border-strong);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
 }
 
 .track-item.selected {
@@ -699,9 +903,12 @@ input[type='checkbox'] {
   color: var(--text-dim);
 }
 
-.stage-audio-visual .big {
-  font-size: 54px;
-  margin-bottom: 8px;
+/* 唱片下面那行歌名：舞台里唯一的文字，提亮一档 */
+.stage-audio-title {
+  color: var(--text);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  margin-bottom: 2px;
 }
 
 /*
@@ -801,10 +1008,14 @@ input[type='checkbox'] {
   border-color: rgba(255, 255, 255, 0.32);
 }
 
-/* 无歌词时全屏中央的那枚大音符 */
-.stage-fullscreen .stage-audio-visual .big {
-  font-size: 92px;
-  margin-bottom: 14px;
+/* 录音中（全屏）且没有歌词时：唱片放大一档撑住画面 */
+.stage-fullscreen .stage-disc-wrap {
+  width: 208px;
+  height: 208px;
+}
+
+.stage-fullscreen .stage-disc-note {
+  font-size: 54px;
 }
 
 .rec-dot {
@@ -989,6 +1200,13 @@ input[type='range']:disabled::-webkit-slider-thumb {
   display: flex;
   flex-direction: column;
   gap: 11px;
+  transition: border-color 0.15s, transform 0.15s var(--ease-out), box-shadow 0.15s;
+}
+
+.work-card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
 }
 
 .work-card-title {
@@ -1395,6 +1613,11 @@ input[type='range']:disabled::-webkit-slider-thumb {
   color: var(--text);
 }
 
+/* 按下去的反馈。transform 不参与布局，编辑页「一屏放完」不受影响 */
+.reverb-option:active {
+  transform: scale(0.97);
+}
+
 .reverb-option.active {
   border-color: var(--accent);
   background: var(--accent-soft);
@@ -1408,6 +1631,11 @@ input[type='range']:disabled::-webkit-slider-thumb {
   justify-content: center;
   /* 与上方「对齐微调」分组再拉开一点：它是这一列最后的落脚点 */
   margin-top: 4px;
+}
+
+/* 悬停光晕（box-shadow 不占布局，「一屏放完」不受影响） */
+.mix-apply:hover:not(:disabled) {
+  box-shadow: 0 6px 24px rgba(255, 45, 120, 0.35);
 }
 
 /*
@@ -1557,6 +1785,7 @@ input[type='range']:disabled::-webkit-slider-thumb {
   font-size: 19px;
   background: linear-gradient(135deg, var(--accent-soft), var(--accent-2-soft));
   border: 1px solid rgba(255, 45, 120, 0.35);
+  box-shadow: 0 4px 14px rgba(255, 45, 120, 0.18);
 }
 
 .detail-title-row .page-title {
@@ -1808,3 +2037,470 @@ input[type='range']:disabled::-webkit-slider-thumb {
 }
 
 /* 混音面板的分组样式已合并到上面的「作品编辑页：一屏放完 / 混音面板」两节 */
+
+/* --------------------------------- 骨架屏 --------------------------------- */
+
+/*
+ * 加载占位。原来三处「正在加载…」是一行灰字，等列表的时间像卡住了；
+ * 骨架屏给出「内容马上来、就长这样」的预期。微光用 transform 平移伪元素，
+ * 不触发重排，成本比改 background-position 低。
+ */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-soft);
+  border-radius: var(--radius-sm);
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+  animation: skeleton-shimmer 1.4s infinite;
+}
+
+@keyframes skeleton-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* 列表行骨架：和 .track-item 等高，加载完替换时页面不跳 */
+.skeleton-track {
+  height: 68px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+}
+
+/* 作品卡骨架：封面 + 两行字 + 播放器 + 操作行的高度（≈250px，换真卡时页面不跳） */
+.skeleton-card {
+  height: 250px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+}
+
+/* --------------------------------- 音频播放器 --------------------------------- */
+
+/*
+ * 自定义小播放器，替代浏览器原生 <audio controls>。
+ * 原生控件是浅色圆角条，和整套深色 UI 放一起像贴了块补丁；而且作品库一屏
+ * 八张卡八条原生控件，视觉噪音很大。这里只保留最常用的三件：播放/暂停、
+ * 进度、时间。内部仍是真实 <audio>（不带 controls），行为与原来一致。
+ */
+.audio-player {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.audio-player-btn {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-soft);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s var(--ease-out);
+}
+
+.audio-player-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.audio-player-btn:active {
+  transform: scale(0.94);
+}
+
+.audio-player-btn.playing {
+  background: var(--accent-grad);
+  border-color: transparent;
+  color: #fff;
+}
+
+.audio-player-btn.playing:hover {
+  color: #fff;
+}
+
+.audio-player-track {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.audio-player-time {
+  flex: 0 0 auto;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  white-space: nowrap;
+}
+
+/* --------------------------------- 轻提示（toast） --------------------------------- */
+
+.toast-stack {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(460px, 92vw);
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: rgba(24, 30, 46, 0.94);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  font-size: var(--fs-md);
+  backdrop-filter: blur(10px);
+  animation: toast-in 200ms var(--ease-out);
+}
+
+.toast-icon {
+  font-weight: 700;
+}
+
+.toast-ok {
+  border-color: rgba(47, 208, 122, 0.5);
+}
+
+.toast-ok .toast-icon {
+  color: var(--ok);
+}
+
+.toast-error {
+  border-color: rgba(255, 77, 79, 0.5);
+}
+
+.toast-error .toast-icon {
+  color: var(--danger);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* --------------------------------- 确认弹窗 --------------------------------- */
+
+/*
+ * 替代 window.confirm：原生确认框是系统样式的灰盒子，和页面完全两个世界，
+ * 按钮位置还不固定（有的系统「确定」在左、有的在右）。这里自己画，
+ * 语义与原来一致 —— Esc / 点遮罩 / 取消都是 false，确认才是 true。
+ */
+.confirm-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(5, 7, 13, 0.72);
+  backdrop-filter: blur(6px);
+  animation: fade-in 150ms ease both;
+}
+
+.confirm-panel {
+  width: min(420px, 100%);
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 20px;
+  animation: panel-in 180ms var(--ease-out) both;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.confirm-title {
+  font-size: var(--fs-xl);
+  font-weight: 700;
+}
+
+.confirm-message {
+  margin-top: 8px;
+  color: var(--text-dim);
+  font-size: var(--fs-md);
+  line-height: 1.6;
+  /* 删除说明里带换行（\n），按原文换行显示 */
+  white-space: pre-wrap;
+}
+
+.confirm-actions {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* --------------------------------- 伴奏库工具栏 --------------------------------- */
+
+.library-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.library-toolbar .text-input {
+  flex: 1 1 220px;
+}
+
+.library-toolbar .select-input {
+  flex: 0 0 auto;
+}
+
+.library-count {
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------- 作品卡封条 --------------------------------- */
+
+/*
+ * 作品卡顶部的渐变封条：色相由标题哈希决定（utils.ts 的 coverHue），
+ * 同一首歌每次进来颜色都一样，不同歌错开 —— 一屏八张卡不再是一片同样的灰，
+ * 也不用真去存封面图（自用项目，伴奏没有封面资源）。
+ */
+.work-cover {
+  height: 76px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 封条上再压一层高光，纯色渐变不那么「平」 */
+.work-cover::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, rgba(255, 255, 255, 0.14), transparent 55%);
+}
+
+.work-cover-icon {
+  font-size: 26px;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
+}
+
+.work-cover-duration {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(5, 7, 13, 0.55);
+  color: #fff;
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  backdrop-filter: blur(4px);
+}
+
+/* --------------------------------- 演唱页 --------------------------------- */
+
+/*
+ * 音频伴奏的「舞台」：以前是一枚 54px 的大 emoji，空得像占位符。
+ * 改成慢转的唱片（纯 CSS 同心圆纹理），中间的音符反向旋转保持正立，
+ * 外加一圈呼吸光晕 —— 待唱时舞台是「活的」，又不抢歌词的注意力。
+ */
+.stage-disc-wrap {
+  position: relative;
+  width: 148px;
+  height: 148px;
+  margin: 0 auto 16px;
+}
+
+.stage-disc-wrap::before {
+  content: '';
+  position: absolute;
+  inset: -18px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(56, 217, 255, 0.16), transparent 65%);
+  animation: disc-glow 3.6s ease-in-out infinite;
+}
+
+@keyframes disc-glow {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.stage-disc {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background:
+    repeating-radial-gradient(circle at 50% 50%, #0b0e17 0 2px, #161c2e 2px 4px),
+    radial-gradient(circle at 50% 50%, #2b3554 0 24%, #0b0e17 25%);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 16px 44px rgba(0, 0, 0, 0.6);
+  animation: disc-spin 16s linear infinite;
+}
+
+.stage-disc-note {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+  animation: disc-spin 16s linear infinite reverse;
+}
+
+@keyframes disc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 控制面板卡片的小标题：分组标题，不用读完整 label 才知道在调什么 */
+.panel-card-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text);
+}
+
+/* 录音说明列表：自定义圆点标记，行距放宽，和正文拉开 */
+.record-notes {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  line-height: 1.9;
+}
+
+/* 耳机警告展开的「为什么」：和常驻首行之间一道虚线隔开 */
+.sing-why {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(255, 181, 46, 0.35);
+  line-height: 1.75;
+}
+
+/* --------------------------------- 点歌台 --------------------------------- */
+
+/* 搜索框里的放大镜：绝对定位压在输入框左侧，输入框留出左内边距 */
+.search-with-icon {
+  position: relative;
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.search-with-icon .text-input {
+  width: 100%;
+  padding-left: 34px;
+}
+
+.search-icon {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-faint);
+  font-size: 14px;
+  pointer-events: none;
+}
+
+.search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  font-size: 13px;
+  padding: 4px 6px;
+  border-radius: 50%;
+  line-height: 1;
+}
+
+.search-clear:hover {
+  color: var(--text);
+  background: var(--bg-soft);
+}
+
+/* 「全部 / 音频 / 视频」分段控件观感：连成一组，选中项实底 */
+.option-row .reverb-option {
+  border-radius: var(--radius-sm);
+}
+
+.option-row .reverb-option.active {
+  background: var(--accent-grad);
+  border-color: transparent;
+  color: #fff;
+}
+
+.option-row .reverb-option.active:hover {
+  background: var(--accent-grad);
+  color: #fff;
+}
+
+/* 下载进度旁的百分比：只有进度条时，用户不知道卡在 90% 还是 10% */
+.download-percent {
+  min-width: 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

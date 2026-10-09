@@ -3,6 +3,8 @@ import { describe, it } from 'node:test';
 import {
   LYRIC_FULLSCREEN_LINE_HEIGHT,
   LYRIC_FULLSCREEN_VIEW_LINES,
+  coverGradient,
+  coverHue,
   formatBytes,
   formatDateTime,
   formatDuration,
@@ -148,6 +150,33 @@ describe('全屏歌词的行高与字号档', () => {
 
   it('空串不缩号', () => {
     assert.equal(lyricLineSizeClass(''), '');
+  });
+});
+
+describe('作品卡封条配色（coverHue / coverGradient）', () => {
+  it('确定性：同一个标题每次算出来的色相一样', () => {
+    // 封条要「用户认得出我那首」，同一首歌不能每次刷新都换色
+    assert.equal(coverHue('寂寞的季节'), coverHue('寂寞的季节'));
+    assert.equal(coverGradient('离歌'), coverGradient('离歌'));
+  });
+
+  it('色相落在 0～359', () => {
+    for (const title of ['晴天', 'A', '', '🎤'.repeat(20), '很长的歌名'.repeat(10)]) {
+      const hue = coverHue(title);
+      assert.ok(Number.isInteger(hue), `${title} 的色相应是整数`);
+      assert.ok(hue >= 0 && hue <= 359, `${title} 的色相越界：${hue}`);
+    }
+  });
+
+  it('不同标题尽量错开（一整组真实歌名的碰撞率要低）', () => {
+    const titles = ['寂寞的季节', '不凡', '慢慢', '爱错', '转眼', '离歌', '如烟', '晴天', '夜曲'];
+    const hues = new Set(titles.map(coverHue));
+    // 不追求零碰撞（360 个色相装不下整个曲库），但九首里至少七首不同色
+    assert.ok(hues.size >= 7, `九首歌只分出了 ${hues.size} 种色相`);
+  });
+
+  it('渐变是合法的 CSS linear-gradient，两个色标落在色相环上', () => {
+    assert.match(coverGradient('寂寞的季节'), /^linear-gradient\(135deg, hsl\(\d+ 68% 46%\), hsl\(\d+ 72% 36%\)\)$/);
   });
 });
 

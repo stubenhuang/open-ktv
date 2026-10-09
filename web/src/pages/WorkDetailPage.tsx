@@ -3,6 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { MixParams } from '../../../shared/types';
 import { api, trackMediaUrl, workVocalUrl, type WorkListItem } from '../api';
 import { PreviewEngine } from '../audio/preview';
+import { confirmAction } from '../components/ConfirmDialog';
+import { toast } from '../components/ToastStack';
 import { LivePreview, type PreviewStatus } from '../components/LivePreview';
 import { MixPanel } from '../components/MixPanel';
 import { usePolling } from '../hooks/usePolling';
@@ -135,6 +137,7 @@ export default function WorkDetailPage() {
     try {
       await api.updateWork(work.id, { title: titleDraft });
       setEditing(false);
+      toast.ok('已改名');
       await load();
     } catch (err) {
       setActionError(errorMessage(err, '重命名失败'));
@@ -145,7 +148,13 @@ export default function WorkDetailPage() {
 
   const handleDelete = async () => {
     if (!work) return;
-    if (!window.confirm(`确定删除作品「${work.title}」吗？`)) return;
+    const confirmed = await confirmAction({
+      title: '删除作品',
+      message: `确定删除作品「${work.title}」吗？录音干声和成品 MP3 都会一起删掉。`,
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!confirmed) return;
     try {
       await api.deleteWork(work.id);
       navigate('/works');
