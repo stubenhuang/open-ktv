@@ -223,6 +223,16 @@ export interface Work {
 export interface WorkListItem extends Work {
   trackTitle: string | null;
   trackKind: TrackKind | null;
+  /**
+   * 伴奏歌手；null = 伴奏已删除或本来就没有歌手信息。
+   * 作品库列表要用它做「伴奏：歌名 · 歌手」的一行展示，搜索也按它匹配。
+   */
+  trackArtist: string | null;
+  /**
+   * 成品 MP3 的文件大小（字节）；null = 还没合成成功或文件已丢失。
+   * 列表接口顺带 fs.stat 出来（本地文件，失败只影响这一个字段）。
+   */
+  sizeBytes: number | null;
 }
 
 export const MIX_LIMITS = {

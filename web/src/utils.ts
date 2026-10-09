@@ -1,3 +1,5 @@
+import type { WorkListItem } from '../../shared/types.js';
+
 /**
  * 从 catch 到的任意值里取出可展示的文案。
  * 后端返回的 ApiError（继承 Error）会带上服务端的中文提示，直接透出即可。
@@ -204,4 +206,106 @@ export function coverHue(text: string): number {
 export function coverGradient(text: string): string {
   const hue = coverHue(text);
   return `linear-gradient(135deg, hsl(${hue} 68% 46%), hsl(${(hue + 48) % 360} 72% 36%))`;
+}
+
+/* ------------------------------ 相对时间 ------------------------------ */
+
+/** 一天之内的「短间隔」阈值：超过它就按日历口径说「今天 / 昨天」 */
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+/** 60 秒：混音完成到用户回到列表页，常常就差这几秒 */
+const JUST_NOW_MS = 60_000;
+
+/**
+ * 时间戳 → 友好的相对时间（本地时区，纯函数，`now` 可注入便于测试）。
+ *
+ * 为什么不用「N 天前」一路到底：作品列表里「今天 21:12」比「3 小时前」
+ * 更好用 —— 用户记得自己是今晚唱的还是昨天下午唱的，绝对时刻直接告诉
+ * 他，不用自己换算。规则：
+ *
+ *  - 未来或 1 分钟内（时钟偏斜 / 刚发生）→「刚刚」
+ *  - 1 小时内                            →「N 分钟前」
+ *  - 同一天（自然日）                    →「今天 HH:mm」
+ *  - 前一天                              →「昨天 HH:mm」
+ *  - 同一年                              →「MM-DD」
+ *  - 更早                                →「YYYY-MM-DD」
+ */
+export function formatRelativeTime(timestamp: number, now: number = Date.now()): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '--';
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '--';
+
+  const reference = new Date(Number.isFinite(now) ? now : Date.now());
+  const diff = reference.getTime() - date.getTime();
+  if (diff < JUST_NOW_MS) return '刚刚';
+  if (diff < HOUR_MS) return `${Math.floor(diff / MINUTE_MS)} 分钟前`;
+
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+  const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+
+  if (sameDay(date, reference)) return `今天 ${clock}`;
+  const yesterday = new Date(reference);
+  yesterday.setDate(reference.getDate() - 1);
+  if (sameDay(date, yesterday)) return `昨天 ${clock}`;
+  if (date.getFullYear() === reference.getFullYear()) {
+    return `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  }
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/* ------------------------------ 作品列表筛选 ------------------------------ */
+
+/** 状态过滤档位；'all' = 不过滤 */
+export type WorkStatusFilter = 'all' | 'mixing' | 'ready' | 'failed';
+
+/** 列表排序方式 */
+export type WorksSortBy = 'recent' | 'oldest' | 'title' | 'duration';
+
+export interface WorksQuery {
+  /** 关键字：匹配作品名 / 伴奏名 / 歌手（大小写不敏感） */
+  query: string;
+  status: WorkStatusFilter;
+  sortBy: WorksSortBy;
+}
+
+/**
+ * 关键字 + 状态 + 排序后的可见作品（纯函数，单测见 tests/web-utils.test.ts）。
+ *
+ * 与伴奏库的筛选同构：作品就自己家几十首，全量已经在内存里，客户端过滤
+ * 不值得为它打接口。歌名按拼音排（localeCompare 的 zh 排序），和
+ * LibraryPage 一个口径。
+ */
+export function selectVisibleWorks(works: WorkListItem[], filter: WorksQuery): WorkListItem[] {
+  const keyword = filter.query.trim().toLowerCase();
+  const filtered = keyword
+    ? works.filter((work) => {
+        const title = work.title?.toLowerCase() ?? '';
+        const trackTitle = work.trackTitle?.toLowerCase() ?? '';
+        const trackArtist = work.trackArtist?.toLowerCase() ?? '';
+        return (
+          title.includes(keyword) || trackTitle.includes(keyword) || trackArtist.includes(keyword)
+        );
+      })
+    : works;
+
+  const byStatus =
+    filter.status === 'all'
+      ? filtered
+      : filtered.filter((work) => work.status === filter.status);
+
+  if (filter.sortBy === 'title') {
+    return [...byStatus].sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'));
+  }
+  if (filter.sortBy === 'duration') {
+    return [...byStatus].sort((a, b) => (b.vocalDuration ?? 0) - (a.vocalDuration ?? 0));
+  }
+  if (filter.sortBy === 'oldest') {
+    return [...byStatus].sort((a, b) => a.createdAt - b.createdAt);
+  }
+  // recent：后端已按 created_at DESC 返回，稳定排序保持原样即可
+  return byStatus;
 }

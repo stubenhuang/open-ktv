@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { DEFAULT_MIX_PARAMS, type WorkListItem } from '../shared/types.ts';
 import {
   LYRIC_FULLSCREEN_LINE_HEIGHT,
   LYRIC_FULLSCREEN_VIEW_LINES,
@@ -8,12 +9,14 @@ import {
   formatBytes,
   formatDateTime,
   formatDuration,
+  formatRelativeTime,
   formatTimer,
   isAudioFile,
   isBuiltinMic,
   isLyricsFileName,
   lyricLineSizeClass,
   lyricTrackOffsetY,
+  selectVisibleWorks,
 } from '../web/src/utils.ts';
 
 describe('formatDuration（秒 → mm:ss）', () => {
@@ -260,5 +263,199 @@ describe('isBuiltinMic（演唱只用外置输入）', () => {
   it('label 为空（还没授权）不算内置，宁可多列也不清空列表', () => {
     assert.equal(isBuiltinMic('some-id', ''), false);
     assert.equal(isBuiltinMic('some-id', undefined as unknown as string), false);
+  });
+});
+
+describe('formatRelativeTime（时间戳 → 友好相对时间）', () => {
+  // 全部用本地时间构造：函数按本地时区的自然日比较，测试也必须同口径
+  const noon = new Date(2025, 0, 2, 12, 0, 0).getTime();
+  const at = (y: number, m: number, d: number, h: number, min: number) =>
+    new Date(y, m, d, h, min).getTime();
+
+  it('一分钟内都是「刚刚」', () => {
+    assert.equal(formatRelativeTime(noon - 30_000, noon), '刚刚');
+    assert.equal(formatRelativeTime(noon - 59_999, noon), '刚刚');
+    assert.equal(formatRelativeTime(noon, noon), '刚刚');
+  });
+
+  it('一小时内说「N 分钟前」', () => {
+    assert.equal(formatRelativeTime(noon - 60_000, noon), '1 分钟前');
+    assert.equal(formatRelativeTime(noon - 5 * 60_000, noon), '5 分钟前');
+    assert.equal(formatRelativeTime(noon - 59 * 60_000, noon), '59 分钟前');
+  });
+
+  it('当天说「今天 HH:mm」', () => {
+    assert.equal(formatRelativeTime(at(2025, 0, 2, 8, 5), noon), '今天 08:05');
+    // 恰好一小时整也落进日历口径，而不是「60 分钟前」
+    assert.equal(formatRelativeTime(noon - 3_600_000, noon), '今天 11:00');
+  });
+
+  it('前一天说「昨天 HH:mm」', () => {
+    assert.equal(formatRelativeTime(at(2025, 0, 1, 21, 12), noon), '昨天 21:12');
+  });
+
+  it('同一年（且不是今/昨天）说「MM-DD」', () => {
+    // 换一个居中的 now：1 月 2 日的「同一年过去日期」只可能是昨天，测不到 MM-DD
+    const summer = new Date(2025, 5, 15, 12, 0, 0).getTime();
+    assert.equal(formatRelativeTime(at(2025, 2, 9, 7, 5), summer), '03-09');
+    assert.equal(formatRelativeTime(at(2025, 4, 31, 23, 59), summer), '05-31');
+    assert.equal(formatRelativeTime(at(2025, 0, 1, 0, 0), summer), '01-01');
+  });
+
+  it('跨年给完整日期', () => {
+    assert.equal(formatRelativeTime(at(2024, 11, 31, 23, 59), noon), '2024-12-31');
+    assert.equal(formatRelativeTime(at(2023, 5, 1, 0, 0), noon), '2023-06-01');
+  });
+
+  it('未来的时间戳（时钟偏斜）按「刚刚」，不渲染负数', () => {
+    assert.equal(formatRelativeTime(noon + 5_000, noon), '刚刚');
+    assert.equal(formatRelativeTime(new Date(2025, 5, 1).getTime(), noon), '刚刚');
+  });
+
+  it('脏数据给占位符', () => {
+    assert.equal(formatRelativeTime(0, noon), '--');
+    assert.equal(formatRelativeTime(Number.NaN, noon), '--');
+    assert.equal(formatRelativeTime(new Date('nope').getTime(), noon), '--');
+  });
+});
+
+/* ------------------------------ 作品列表筛选 ------------------------------ */
+
+function makeWork(overrides: Partial<WorkListItem> = {}): WorkListItem {
+  return {
+    id: 'w1',
+    trackId: 't1',
+    title: '晴天（我的演唱 06-01 12:00）',
+    vocalDuration: 180,
+    autoOffsetMs: 150,
+    mixParams: { ...DEFAULT_MIX_PARAMS },
+    levels: null,
+    status: 'ready',
+    error: null,
+    createdAt: 2000,
+    updatedAt: 3000,
+    trackTitle: '晴天',
+    trackKind: 'audio',
+    trackArtist: '周杰伦',
+    sizeBytes: 4_000_000,
+    ...overrides,
+  };
+}
+
+const NO_FILTER = { query: '', status: 'all', sortBy: 'recent' } as const;
+
+describe('selectVisibleWorks（作品库筛选 / 排序）', () => {
+  const works: WorkListItem[] = [
+    makeWork({ id: 'a', title: '阿木（我的演唱 06-01 12:00）', createdAt: 1000, vocalDuration: 200 }),
+    makeWork({
+      id: 'b',
+      title: '波光（我的演唱 06-02 12:00）',
+      trackTitle: '波光',
+      trackArtist: 'Jay Chou',
+      createdAt: 3000,
+      vocalDuration: 100,
+      status: 'mixing',
+    }),
+    makeWork({
+      id: 'c',
+      title: '失败品（我的演唱 06-03 12:00）',
+      trackTitle: null,
+      trackArtist: null,
+      createdAt: 2000,
+      status: 'failed',
+      error: '磁盘写满',
+    }),
+  ];
+
+  it('无过滤时原样返回（recent = 后端返回顺序）', () => {
+    assert.deepEqual(
+      selectVisibleWorks(works, NO_FILTER).map((w) => w.id),
+      ['a', 'b', 'c'],
+    );
+  });
+
+  it('关键字匹配作品名 / 伴奏名 / 歌手，大小写不敏感', () => {
+    assert.deepEqual(
+      selectVisibleWorks(works, { ...NO_FILTER, query: '阿木' }).map((w) => w.id),
+      ['a'],
+    );
+    assert.deepEqual(
+      selectVisibleWorks(works, { ...NO_FILTER, query: '波光' }).map((w) => w.id),
+      ['b'],
+    );
+    // 歌手是英文：小写输入也要能命中
+    assert.deepEqual(
+      selectVisibleWorks(works, { ...NO_FILTER, query: 'jay' }).map((w) => w.id),
+      ['b'],
+    );
+    assert.deepEqual(
+      selectVisibleWorks(works, { ...NO_FILTER, query: '周杰' }).map((w) => w.id),
+      ['a'],
+    );
+  });
+
+  it('伴奏已删的作品（trackTitle/artist 为 null）不被搜索搞炸', () => {
+    assert.deepEqual(
+      selectVisibleWorks(works, { ...NO_FILTER, query: '失败' }).map((w) => w.id),
+      ['c'],
+    );
+    // 谁都匹配不上的词：空结果而不是抛异常
+    assert.deepEqual(selectVisibleWorks(works, { ...NO_FILTER, query: '梁静茹' }).map((w) => w.id), []);
+  });
+
+  it('首尾空白不算数（搜" "应返回全部）', () => {
+    assert.equal(selectVisibleWorks(works, { ...NO_FILTER, query: '   ' }).length, 3);
+  });
+
+  it('状态过滤只看 status', () => {
+    assert.deepEqual(
+      selectVisibleWorks(works, { ...NO_FILTER, status: 'ready' }).map((w) => w.id),
+      ['a'],
+    );
+    assert.deepEqual(
+      selectVisibleWorks(works, { ...NO_FILTER, status: 'mixing' }).map((w) => w.id),
+      ['b'],
+    );
+    assert.deepEqual(
+      selectVisibleWorks(works, { ...NO_FILTER, status: 'failed' }).map((w) => w.id),
+      ['c'],
+    );
+  });
+
+  it('关键字 + 状态组合（与的关系）', () => {
+    // 「波光」存在但正在合成：按 ready 过滤后就搜不到
+    assert.deepEqual(
+      selectVisibleWorks(works, { ...NO_FILTER, query: '波光', status: 'ready' }).map((w) => w.id),
+      [],
+    );
+    assert.deepEqual(
+      selectVisibleWorks(works, { ...NO_FILTER, query: '波光', status: 'mixing' }).map((w) => w.id),
+      ['b'],
+    );
+  });
+
+  it('排序：oldest 按 createdAt 升序，duration 按时长降序', () => {
+    assert.deepEqual(
+      selectVisibleWorks(works, { ...NO_FILTER, sortBy: 'oldest' }).map((w) => w.id),
+      ['a', 'c', 'b'],
+    );
+    // 时长：a=200s > c=180s > b=100s
+    assert.deepEqual(
+      selectVisibleWorks(works, { ...NO_FILTER, sortBy: 'duration' }).map((w) => w.id),
+      ['a', 'c', 'b'],
+    );
+  });
+
+  it('排序按歌名（localeCompare zh 口径）且不改原数组', () => {
+    const snapshot = works.map((w) => w.id);
+    const sorted = selectVisibleWorks(works, { ...NO_FILTER, sortBy: 'title' }).map((w) => w.id);
+    // 拼音序：阿(ā) < 波(bō) < 失(shī)。依赖 full-icu（Node 官方发行版默认带上；
+    // 伴奏库的「按歌名」排序同样跑在 localeCompare zh 上，两边口径一致）
+    assert.deepEqual(sorted, ['a', 'b', 'c']);
+    // 纯函数：输入数组不被排序原地打乱
+    assert.deepEqual(
+      works.map((w) => w.id),
+      snapshot,
+    );
   });
 });

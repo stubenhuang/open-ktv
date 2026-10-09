@@ -346,7 +346,7 @@ export default function LibraryPage() {
 
       {/* 工具栏：关键字过滤 + 排序。曲库攒到几十首之后，翻列表找歌是高频动作 */}
       {!loading && tracks.length > 0 && (
-        <div className="library-toolbar">
+        <div className="list-toolbar">
           <input
             className="text-input"
             type="search"
@@ -365,7 +365,7 @@ export default function LibraryPage() {
             <option value="title">按歌名</option>
             <option value="duration">按时长</option>
           </select>
-          <span className="library-count">
+          <span className="list-count">
             {visibleTracks.length === tracks.length
               ? `共 ${tracks.length} 首`
               : `${visibleTracks.length} / ${tracks.length} 首`}

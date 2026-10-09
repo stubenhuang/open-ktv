@@ -79,10 +79,16 @@ export function workToDto(record: WorkRecord): Work {
   };
 }
 
-export function workToListItem(record: WorkRecord, track?: TrackRecord): WorkListItem {
+export function workToListItem(
+  record: WorkRecord,
+  track?: TrackRecord,
+  mp3SizeBytes?: number | null,
+): WorkListItem {
   return {
     ...workToDto(record),
     trackTitle: track?.title ?? null,
     trackKind: track?.kind ?? null,
+    trackArtist: track?.artist ?? null,
+    sizeBytes: mp3SizeBytes ?? null,
   };
 }

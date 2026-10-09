@@ -157,13 +157,22 @@ describe('workToDto / workToListItem', () => {
   });
 
   it('listItem 带上伴奏信息，伴奏没了给 null', () => {
-    const withTrack = workToListItem(makeWork(), makeTrack());
+    const withTrack = workToListItem(makeWork(), makeTrack(), 4_718_592);
     assert.equal(withTrack.trackTitle, '晴天');
     assert.equal(withTrack.trackKind, 'audio');
+    assert.equal(withTrack.trackArtist, '周杰伦');
+    assert.equal(withTrack.sizeBytes, 4_718_592);
 
     const orphan = workToListItem(makeWork());
     assert.equal(orphan.trackTitle, null);
     assert.equal(orphan.trackKind, null);
+    assert.equal(orphan.trackArtist, null);
+    assert.equal(orphan.sizeBytes, null);
+  });
+
+  it('sizeBytes 缺省（没传 / 传 null）都按没有大小处理', () => {
+    assert.equal(workToListItem(makeWork(), makeTrack()).sizeBytes, null);
+    assert.equal(workToListItem(makeWork(), makeTrack(), null).sizeBytes, null);
   });
 });
 

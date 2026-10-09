@@ -95,6 +95,23 @@ function formatStamp(date: Date): string {
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+/**
+ * 成品 MP3 的文件大小；文件丢失 / 还没合成出来时给 null。
+ *
+ * 列表接口要展示「4.2 MB」这类信息，又不想为它单独存一列 —— 文件就在
+ * 本地磁盘上，stat 一下就行。只对 ready 的作品查：mixing / failed 时
+ * mp3Path 要么是 null 要么是上一次的旧文件，查了也是错信息。
+ */
+function mp3Size(work: WorkRecord): number | null {
+  if (work.status !== 'ready' || !work.mp3Path) return null;
+  try {
+    return fs.statSync(work.mp3Path).size;
+  } catch {
+    // 文件被外部删掉：大小这个字段不要就是了，别让整个列表 500
+    return null;
+  }
+}
+
 /** 入队一次混音；任务内部重新读库，保证用的是最新的 mixParams */
 function startMix(workId: string): void {
   enqueue(
@@ -203,7 +220,9 @@ router.post(
 
 router.get('/', (_req, res) => {
   // 伴奏被删掉的作品（track_id 为 null）照样列出来：成品 MP3 还能播放/下载
-  const items = listWorks().map((work) => workToListItem(work, work.trackId ? getTrack(work.trackId) : undefined));
+  const items = listWorks().map((work) =>
+    workToListItem(work, work.trackId ? getTrack(work.trackId) : undefined, mp3Size(work)),
+  );
   res.json(items);
 });
 
@@ -211,7 +230,13 @@ router.get(
   '/:id',
   withWork((_req, res, work) => {
     const track = work.trackId ? getTrack(work.trackId) : undefined;
-    res.json({ ...workToDto(work), trackTitle: track?.title ?? null, trackKind: track?.kind ?? null });
+    res.json({
+      ...workToDto(work),
+      trackTitle: track?.title ?? null,
+      trackKind: track?.kind ?? null,
+      trackArtist: track?.artist ?? null,
+      sizeBytes: mp3Size(work),
+    });
   }),
 );
 

@@ -1191,21 +1191,36 @@ input[type='range']:disabled::-webkit-slider-thumb {
 
 /* -------------------------------- 作品页 --------------------------------- */
 
+/*
+ * 作品网格：卡片按「左封面 + 右信息」横排（见 WorksPage）。
+ * minmax 330px：1180px 的容器下三列，窄屏自动降两列/一列。
+ */
 .work-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
   gap: 14px;
   margin-top: 20px;
 }
 
+/*
+ * 单张作品卡：四区网格，封面跨「标题 / 信息」两行。
+ * 封面固定 76px，右侧信息列 min-width:0 —— 长歌名靠标题自身截断，
+ * 不会把封面挤变形。
+ */
 .work-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 11px;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  grid-template-areas:
+    'cover head'
+    'cover meta'
+    'player player'
+    'actions actions';
+  gap: 10px 14px;
+  align-content: start;
   transition: border-color 0.15s, transform 0.15s var(--ease-out), box-shadow 0.15s;
 }
 
@@ -1215,17 +1230,128 @@ input[type='range']:disabled::-webkit-slider-thumb {
   box-shadow: var(--shadow-sm);
 }
 
-.work-card-title {
-  font-weight: 600;
-  font-size: var(--fs-lg);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* 正在合成的卡：青色边框 + 一点环境光，轮询刷新时一眼能看到是哪首在等 */
+.work-card.is-mixing {
+  border-color: rgba(56, 217, 255, 0.45);
+  box-shadow: 0 0 0 1px var(--accent-2-soft);
 }
 
-.work-card audio {
+/* 标题行：标题（两行截断）+ 改名 / 状态徽章，右侧徽章不参与换行压缩 */
+.work-card-head {
+  grid-area: head;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.work-card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  font-size: var(--fs-lg);
+  line-height: 1.35;
+  /* 两行截断：作品名动辄「晴天（我的演唱 10-09 21:23）」，单行省略号会砍掉关键信息 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.work-card-head-side {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 改名按钮：存在感压到最低，只在悬停/聚焦时显形 */
+.work-card-rename-btn {
+  opacity: 0.55;
+  padding: 4px 7px;
+  font-size: var(--fs-sm);
+}
+
+.work-card-rename-btn:hover,
+.work-card-rename-btn:focus-visible {
+  opacity: 1;
+  color: var(--accent);
+}
+
+/* 内联改名的输入框：占满标题列，和保存/取消一组 */
+.work-card-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+}
+
+/* 信息列：伴奏一行、数字一行、效果 chips 一行 */
+.work-card-meta {
+  grid-area: meta;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+.work-card-meta-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* 伴奏名可能很长：单行截断，全文进 title */
+.work-card-track {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-card-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 1px;
+}
+
+/* 播放器 / 合成中提示 / 失败原因：通栏第四区前的独立一行 */
+.work-card .audio-player {
+  grid-area: player;
   width: 100%;
-  height: 34px;
+}
+
+.work-card-pending {
+  grid-area: player;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.work-card-error {
+  grid-area: player;
+  min-height: 34px;
+  font-size: var(--fs-sm);
+  color: #ffb3b4;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.work-card-actions {
+  grid-area: actions;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 /* ------------------------ 作品编辑页：一屏放完 ------------------------ */
@@ -2106,9 +2232,9 @@ input[type='range']:disabled::-webkit-slider-thumb {
   background: var(--bg-card);
 }
 
-/* 作品卡骨架：封面 + 两行字 + 播放器 + 操作行的高度（≈250px，换真卡时页面不跳） */
+/* 作品卡骨架：封面 + 两行字 + 播放器 + 操作行的高度（≈230px，换真卡时页面不跳） */
 .skeleton-card {
-  height: 250px;
+  height: 230px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-card);
@@ -2313,9 +2439,13 @@ input[type='range']:disabled::-webkit-slider-thumb {
   gap: 8px;
 }
 
-/* --------------------------------- 伴奏库工具栏 --------------------------------- */
+/* --------------------------------- 列表工具栏 --------------------------------- */
 
-.library-toolbar {
+/*
+ * 伴奏库 / 作品库共用的工具栏：关键字 + 排序 + （作品库另有）状态过滤 chip。
+ * 两个列表页一套样式，类名不带页面前缀。
+ */
+.list-toolbar {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -2323,29 +2453,73 @@ input[type='range']:disabled::-webkit-slider-thumb {
   margin-bottom: 14px;
 }
 
-.library-toolbar .text-input {
+.list-toolbar .text-input {
   flex: 1 1 220px;
 }
 
-.library-toolbar .select-input {
+.list-toolbar .select-input {
   flex: 0 0 auto;
 }
 
-.library-count {
+.list-count {
   font-size: var(--fs-sm);
   color: var(--text-faint);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
+/* 状态过滤分段控件：紧凑 chip，选中项实底（和点歌台的分类 chip 一个语言） */
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-soft);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.filter-chip:hover {
+  color: var(--text);
+  border-color: #4a5677;
+}
+
+.filter-chip.active {
+  background: var(--accent-grad);
+  border-color: transparent;
+  color: #fff;
+}
+
+/* chip 上的计数：选中态用半透明白，未选中压暗一档 */
+.filter-chip-count {
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.filter-chip.active .filter-chip-count {
+  background: rgba(255, 255, 255, 0.22);
+}
+
 /* --------------------------------- 作品卡封条 --------------------------------- */
 
 /*
- * 作品卡顶部的渐变封条：色相由标题哈希决定（utils.ts 的 coverHue），
+ * 作品卡左侧的渐变封面：色相由标题哈希决定（utils.ts 的 coverHue），
  * 同一首歌每次进来颜色都一样，不同歌错开 —— 一屏八张卡不再是一片同样的灰，
  * 也不用真去存封面图（自用项目，伴奏没有封面资源）。
+ * 76×76 方块：和右侧信息列横排，比原来 76px 高的横条省一整行的高度。
  */
 .work-cover {
+  grid-area: cover;
+  width: 76px;
   height: 76px;
   border-radius: var(--radius-sm);
   display: flex;
@@ -2353,6 +2527,7 @@ input[type='range']:disabled::-webkit-slider-thumb {
   justify-content: center;
   position: relative;
   overflow: hidden;
+  align-self: start;
 }
 
 /* 封条上再压一层高光，纯色渐变不那么「平」 */
@@ -2370,9 +2545,9 @@ input[type='range']:disabled::-webkit-slider-thumb {
 
 .work-cover-duration {
   position: absolute;
-  right: 8px;
-  bottom: 6px;
-  padding: 2px 8px;
+  right: 5px;
+  bottom: 5px;
+  padding: 1px 7px;
   border-radius: 999px;
   background: rgba(5, 7, 13, 0.55);
   color: #fff;
