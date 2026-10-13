@@ -5,6 +5,7 @@ import type {
   LibrarySourceStatus,
   LibraryTaskDto,
   MixParams,
+  NetworkInfo,
   Track,
   TrackDetail,
   TrackListItem,
@@ -195,7 +196,22 @@ export const api = {
 
   getLibraryTask: (taskId: string) =>
     request<LibraryTaskDto>(`/api/library/tasks/${encodeURIComponent(taskId)}`),
+
+  /* --------------------------------- 手机演唱 --------------------------------- */
+
+  /** 局域网地址与手机入口（桌面页渲染二维码用） */
+  getNetwork: () => request<NetworkInfo>('/api/network'),
 };
+
+/** 手机端二维码图片地址（服务端现生成 SVG） */
+export function networkQrUrl(): string {
+  return '/api/network/qr.svg';
+}
+
+/** 自签名证书下载地址（iPhone 想彻底信任时装它） */
+export function networkCertUrl(): string {
+  return '/api/network/cert.crt';
+}
 
 export function trackMediaUrl(trackId: string): string {
   return `/api/media/track/${encodeURIComponent(trackId)}`;
@@ -217,6 +233,7 @@ export type {
   LibrarySearchResult,
   LibrarySourceStatus,
   LibraryTaskDto,
+  NetworkInfo,
   Track,
   TrackDetail,
   TrackListItem,

@@ -23,8 +23,15 @@ let shuttingDown = false;
 function run(name, color, args) {
   const child = spawn(process.execPath, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
-    // 开发模式默认开详细日志；用户显式设了 LOG_LEVEL 就听他的
-    env: { ...process.env, FORCE_COLOR: '1', LOG_LEVEL: process.env.LOG_LEVEL ?? 'debug' },
+    // 开发模式默认开详细日志；用户显式设了 LOG_LEVEL 就听他的。
+    // KTV_DEV=1 告诉服务端「这是开发模式」：它据此不起手机 HTTPS 镜像
+    // （开发模式的手机入口是 Vite 自己，见 vite.config.ts 的 VITE_HTTPS）。
+    env: {
+      ...process.env,
+      FORCE_COLOR: '1',
+      LOG_LEVEL: process.env.LOG_LEVEL ?? 'debug',
+      KTV_DEV: '1',
+    },
   });
   children.push(child);
 

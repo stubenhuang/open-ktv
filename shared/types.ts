@@ -343,3 +343,35 @@ export interface LibraryTaskDto {
   createdAt: number;
   updatedAt: number;
 }
+
+/* --------------------------------- 手机演唱 --------------------------------- */
+
+/**
+ * 手机端入口信息（`GET /api/network`）。
+ *
+ * 桌面页用它渲染二维码：手机连同一个 WiFi，扫码即开移动端演唱页。
+ * 所有字段都是「如实描述现状」—— 镜像没起来、入口降级成 http，
+ * 都要让页面能说清楚为什么，而不是给一个点不开的二维码。
+ */
+export interface NetworkInfo {
+  /** 这台机器的局域网 IPv4；空数组 = 没连网 */
+  lanAddresses: string[];
+  /** 手机端页面路径（'/m'） */
+  mobilePath: string;
+  /** 手机入口的协议与端口；null = 一个入口都拼不出来 */
+  mobileOrigin: { scheme: 'http' | 'https'; port: number } | null;
+  /** 二维码用的完整地址（取第一个网卡）；null = 同上 */
+  mobileUrl: string | null;
+  /** 全部网卡对应的完整地址（二维码用第一个，其余列出来供手输） */
+  mobileUrls: string[];
+  /** 入口是自签名 HTTPS：手机首次要手动信任证书 */
+  selfSigned: boolean;
+  /**
+   * http 入口的坑：手机浏览器只在安全上下文里开放麦克风，
+   * `http://<局域网IP>` 会被直接禁用（W3C Secure Contexts §3.1）。
+   * true 时页面能浏览/播放，但录不了音。
+   */
+  micBlocked: boolean;
+  /** 说明 / 告警；一切正常时为 null */
+  reason: string | null;
+}

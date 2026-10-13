@@ -65,15 +65,24 @@ export function formatDateTime(timestamp: number): string {
  *
  * deviceId 为 `default` 时一律算内置：那是 Chrome 的「系统默认设备」别名，
  * 指向哪个物理设备无从判断，而它默认就是内置那个。
+ *
+ * **手机端同理**（手机演唱页也要求外置输入）：iPhone / Android 机身麦的 label
+ * 一般带机型或「手机/iPhone/默认」字样，裸叫「麦克风」的也是机身那个；
+ * 耳机麦（有线/蓝牙/USB-C）走上面的外置清单优先命中。判断同样是猜的，
+ * 所以 UI 一律保留「显示全部设备」的逃生开关。
  */
 export function isBuiltinMic(deviceId: string, label: string): boolean {
   if (deviceId === 'default') return true;
   const name = label ?? '';
-  // 名字里明说是外接/外置的一律当外置
-  if (/外置|外接|external|usb|bluetooth|蓝牙|无线|wireless|airpods|thunderbolt/i.test(name)) {
+  // 名字里明说是外接/外置的一律当外置（耳机麦也在这一档：先于内置规则判定）
+  if (/外置|外接|external|usb|bluetooth|蓝牙|无线|wireless|airpods|thunderbolt|耳机|headset|headphone|有线|wired|type-?c|lightning/i.test(name)) {
     return false;
   }
   if (/built[\s_-]?in|内置|内建|internal/i.test(name)) return true;
+  // 手机机身麦克风的几种叫法（iPhone / Android / 听筒 / 系统默认）
+  if (/iphone|ipad|android|手机|电话|听筒|免提|hands-?free|默认|default/i.test(name)) return true;
+  // 有些系统上机身麦就叫光秃秃一个「麦克风」—— 不带任何外接标记的 generic 名
+  if (/^(麦克风|话筒|microphone|phone microphone)$/i.test(name.trim())) return true;
   return /macbook|imac/i.test(name);
 }
 
@@ -170,6 +179,46 @@ export const LYRIC_FULLSCREEN_LINE_HEIGHT = 72;
 
 /** 全屏歌词可视区域显示的行数（奇数，当前行才能正好居中） */
 export const LYRIC_FULLSCREEN_VIEW_LINES = 5;
+
+/**
+ * 手机端歌词的行高 / 可视行数。
+ *
+ * 桌面全屏是 72px 行高 × 5 行 = 360px，那是给 54px 大字留的；手机舞台还要同时
+ * 放传输条、麦克风行和大录音键，可用高度通常只有 300px 上下，360px 会被舞台的
+ * overflow:hidden 切掉上下两行。56px × 5 = 280px 在 375×667 的小屏上也放得下。
+ */
+export const LYRIC_MOBILE_LINE_HEIGHT = 56;
+
+/** 矮屏（视口高 < 700px，iPhone SE 一类）下的手机歌词行高：5 行 240px 也放得下 */
+export const LYRIC_MOBILE_LINE_HEIGHT_SHORT = 48;
+
+/** 手机端歌词可视行数（同样取奇数，当前行才能居中） */
+export const LYRIC_MOBILE_VIEW_LINES = 5;
+
+/**
+ * 手机端逐行缩字号的下限。
+ *
+ * 手机歌词保持 nowrap（换行会破坏「一行一行滚」的偏移数学），长句只能缩字号。
+ * 0.34 是拿真实歌词长度反推的：当前行基础字号 30px，缩到下限约 10px，
+ * 390px 宽的屏能塞下约 30 个汉字 —— 覆盖几乎所有歌词句长；再长的句子属于
+ * 极端情况，靠上下 mask 淡出兜底，不为了它把正常句子一起拖小。
+ */
+export const LYRIC_FIT_FLOOR = 0.34;
+
+/**
+ * 由实测宽度算一行的缩字号系数（纯函数，单测见 tests/web-utils.test.ts）。
+ *
+ * @param naturalWidth 该行在 100% 字号下的实测宽度（scrollWidth）
+ * @param availableWidth 容器可用宽度（clientWidth）
+ * @returns 0.45～1 的系数；放得下就是 1
+ */
+export function lyricFitFactor(naturalWidth: number, availableWidth: number): number {
+  if (!Number.isFinite(naturalWidth) || !Number.isFinite(availableWidth) || availableWidth <= 0) {
+    return 1;
+  }
+  if (naturalWidth <= availableWidth) return 1;
+  return Math.max(LYRIC_FIT_FLOOR, availableWidth / naturalWidth);
+}
 
 /**
  * 全屏歌词的长句字号档。行是 nowrap 的，长句不缩号会被裁掉；
@@ -308,4 +357,23 @@ export function selectVisibleWorks(works: WorkListItem[], filter: WorksQuery): W
   }
   // recent：后端已按 created_at DESC 返回，稳定排序保持原样即可
   return byStatus;
+}
+
+/* -------------------------------- 手机演唱入口 -------------------------------- */
+
+/**
+ * 把 /api/network 的返回展开成「每张网卡一个完整地址」。
+ *
+ * 纯函数：服务端已经判断好该用 http 还是 https、哪个端口，
+ * 这里只负责把「地址 × 协议端口 × 路径」乘起来。二维码用第一个，
+ * 其余列在卡片里供手输（一台机器可能同时接着 WiFi 和网线）。
+ */
+export function buildMobileUrls(info: {
+  lanAddresses: string[];
+  mobilePath: string;
+  mobileOrigin: { scheme: 'http' | 'https'; port: number } | null;
+}): string[] {
+  if (!info.mobileOrigin) return [];
+  const { scheme, port } = info.mobileOrigin;
+  return info.lanAddresses.map((address) => `${scheme}://${address}:${port}${info.mobilePath}`);
 }

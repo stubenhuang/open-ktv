@@ -9,6 +9,7 @@ import type { LyricsLookup } from './library/lyrics/types.ts';
 import { queueState } from './jobs.ts';
 import { createLogger, type LogLevel } from './logger.ts';
 import { createLibraryRouter } from './routes/library.ts';
+import { createNetworkRouter } from './routes/network.ts';
 import { createTracksRouter } from './routes/tracks.ts';
 import mediaRouter from './routes/media.ts';
 import worksRouter from './routes/works.ts';
@@ -70,6 +71,8 @@ export function createApp(options: CreateAppOptions = {}): express.Express {
   app.use('/api/works', worksRouter);
   app.use('/api/library', createLibraryRouter(library, { lyrics }));
   app.use('/api/media', mediaRouter);
+  // 手机端入口：局域网地址探测 + 二维码 + 自签名证书下载
+  app.use('/api/network', createNetworkRouter());
 
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: '接口不存在' });

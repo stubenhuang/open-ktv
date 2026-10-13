@@ -63,7 +63,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function ensureWorklet(context: AudioContext): Promise<void> {
+/**
+ * 装载录音用的 AudioWorklet 模块（全 App 只做一次，失败可重试）。
+ *
+ * 导出给手机端引擎复用：移动端也要 pcm-capture，而 onset 探测器
+ * 在手机上用不上（媒体元素不接进 Web Audio，见 mobileEngine.ts 的说明），
+ * 但两个模块一起装载没有副作用，省得再维护第二份加载逻辑。
+ */
+export function ensureWorklet(context: AudioContext): Promise<void> {
   if (!workletModulePromise) {
     workletModulePromise = Promise.all(
       [WORKLET_URL, ONSET_WORKLET_URL].map((url) => context.audioWorklet.addModule(url)),
@@ -119,6 +126,9 @@ interface CaptureStats {
   missingQuanta: number;
   renderQuantum: number;
 }
+
+/** 采集统计（worklet 在 flush 后单独报一次）；手机端引擎复用同一形状 */
+export type { CaptureStats };
 
 export interface MicDeviceInfo {
   deviceId: string;

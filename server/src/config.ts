@@ -16,8 +16,44 @@ export const DATA_DIR = process.env.DATA_DIR
 export const WEB_DIST_DIR = path.join(ROOT_DIR, 'web', 'dist');
 
 export const PORT = Number(process.env.PORT ?? 8787);
-/** 单机自用：默认只绑本机回环，不暴露到局域网 */
-export const HOST = process.env.HOST ?? '127.0.0.1';
+/**
+ * 监听地址。默认绑所有网卡 —— 手机要能通过局域网 WiFi 连进来（见 README「手机演唱」）。
+ * 只想本机用就 `HOST=127.0.0.1`，绑回环时手机端入口会一并关掉。
+ */
+export const HOST = process.env.HOST ?? '0.0.0.0';
+
+/**
+ * 手机端 HTTPS 镜像端口（默认 PORT+1）。
+ *
+ * 为什么需要它：手机浏览器只在「安全上下文」里开放麦克风，而规范只把
+ * https / 127.0.0.0/8 / localhost 算作潜在可信 origin —— `http://192.168.x.x`
+ * 不是（见 W3C Secure Contexts §3.1）。所以局域网入口必须走 HTTPS。
+ * 桌面仍用 http://127.0.0.1:8787，看不到证书警告；镜像与主服务是同一个
+ * Express 实例、同一份数据，只是多一条 TLS 通道给手机用。
+ */
+export const HTTPS_PORT = Number(process.env.HTTPS_PORT ?? PORT + 1);
+/** 手机 HTTPS 镜像开关；0 = 不签证书、不起镜像（手机只能浏览播放，不能录音） */
+export const LAN_HTTPS = (process.env.LAN_HTTPS ?? '1') !== '0';
+
+/** 开发模式下 Vite 的端口（与 vite.config.ts 读同一个环境变量） */
+export const WEB_PORT = Number(process.env.WEB_PORT ?? 5173);
+/** dev.mjs 给子进程打标记：开发模式不起 HTTPS 镜像（手机入口走 Vite 自己的 TLS） */
+export const DEV_MODE = process.env.KTV_DEV === '1';
+/**
+ * 开发模式让 Vite 也开 TLS（自签名证书与镜像共用 data/certs）。
+ *
+ * 默认开：手机浏览器只在安全上下文里开放麦克风，开发时扫码即用，
+ * 不用记着多敲一个环境变量。代价是桌面开发地址变成
+ * https://127.0.0.1:5173，首次会有一次自签名证书警告（点一次「继续访问」就好）。
+ * 想完全回到 http：VITE_HTTPS=0。
+ */
+export const VITE_HTTPS = (process.env.VITE_HTTPS ?? '1') !== '0';
+
+/** 手机端页面路径（二维码指向它；Express 的 SPA 兜底已经覆盖） */
+export const MOBILE_PATH = '/m';
+
+/** 自签名证书存放位置（跟着 DATA_DIR 走，备份 data/ 时一起带走） */
+export const CERT_DIR = path.join(DATA_DIR, 'certs');
 
 /** 输出音频统一规格 */
 export const AUDIO = {

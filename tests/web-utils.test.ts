@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { DEFAULT_MIX_PARAMS, type WorkListItem } from '../shared/types.ts';
 import {
+  buildMobileUrls,
+  LYRIC_FIT_FLOOR,
   LYRIC_FULLSCREEN_LINE_HEIGHT,
   LYRIC_FULLSCREEN_VIEW_LINES,
   coverGradient,
@@ -14,6 +16,7 @@ import {
   isAudioFile,
   isBuiltinMic,
   isLyricsFileName,
+  lyricFitFactor,
   lyricLineSizeClass,
   lyricTrackOffsetY,
   selectVisibleWorks,
@@ -264,6 +267,59 @@ describe('isBuiltinMic（演唱只用外置输入）', () => {
     assert.equal(isBuiltinMic('some-id', ''), false);
     assert.equal(isBuiltinMic('some-id', undefined as unknown as string), false);
   });
+
+  it('手机机身麦克风的几种叫法都认得出来', () => {
+    // iOS Safari / Android Chrome 上实测出现的 label 形态
+    assert.equal(isBuiltinMic('mic-1', 'iPhone 麦克风'), true);
+    assert.equal(isBuiltinMic('mic-2', 'iPhone Microphone'), true);
+    assert.equal(isBuiltinMic('mic-3', '手机麦克风'), true);
+    assert.equal(isBuiltinMic('mic-4', 'Android 麦克风'), true);
+    assert.equal(isBuiltinMic('mic-5', 'Phone microphone'), true);
+    assert.equal(isBuiltinMic('mic-6', '麦克风 - 默认'), true);
+    // 有些系统上机身麦就叫光秃秃一个「麦克风」
+    assert.equal(isBuiltinMic('mic-7', '麦克风'), true);
+    assert.equal(isBuiltinMic('mic-8', '话筒'), true);
+    assert.equal(isBuiltinMic('mic-9', '听筒'), true);
+  });
+
+  it('手机上的外置麦（耳机麦 / USB-C / 蓝牙）不会被误杀', () => {
+    assert.equal(isBuiltinMic('hp-1', 'iPhone 耳机麦克风'), false);
+    assert.equal(isBuiltinMic('hp-2', '耳机麦克风'), false);
+    assert.equal(isBuiltinMic('hp-3', 'AirPods Pro'), false);
+    assert.equal(isBuiltinMic('hp-4', 'USB-C 耳机'), false);
+    assert.equal(isBuiltinMic('hp-5', '有线耳机麦克风'), false);
+    assert.equal(isBuiltinMic('hp-6', 'USB Audio Device'), false);
+  });
+});
+
+describe('lyricFitFactor（手机歌词逐行缩字号）', () => {
+  it('放得下就不缩', () => {
+    assert.equal(lyricFitFactor(200, 300), 1);
+    assert.equal(lyricFitFactor(300, 300), 1);
+  });
+
+  it('放不下按比例缩', () => {
+    assert.equal(lyricFitFactor(400, 300), 0.75);
+    assert.equal(lyricFitFactor(600, 300), 0.5);
+  });
+
+  it('缩不动的超长句卡在下限，不无限缩小', () => {
+    assert.equal(lyricFitFactor(4000, 300), LYRIC_FIT_FLOOR);
+    assert.equal(LYRIC_FIT_FLOOR, 0.34);
+  });
+
+  it('真实句长：390px 屏上 25 字的长句也能完整显示', () => {
+    // 当前行基础字号 30px：25 字自然宽约 750px，容器 332px → 需要 0.44，高于下限
+    assert.ok(lyricFitFactor(750, 332) > LYRIC_FIT_FLOOR);
+    // 30 字的极端长句：需要 0.37，仍高于下限
+    assert.ok(lyricFitFactor(900, 332) > LYRIC_FIT_FLOOR);
+  });
+
+  it('脏数据按「不缩」处理', () => {
+    assert.equal(lyricFitFactor(Number.NaN, 300), 1);
+    assert.equal(lyricFitFactor(300, 0), 1);
+    assert.equal(lyricFitFactor(300, -5), 1);
+  });
 });
 
 describe('formatRelativeTime（时间戳 → 友好相对时间）', () => {
@@ -456,6 +512,41 @@ describe('selectVisibleWorks（作品库筛选 / 排序）', () => {
     assert.deepEqual(
       works.map((w) => w.id),
       snapshot,
+    );
+  });
+});
+
+describe('buildMobileUrls（手机端入口地址）', () => {
+  it('每张网卡拼一个完整地址，协议端口来自服务端判断', () => {
+    assert.deepEqual(
+      buildMobileUrls({
+        lanAddresses: ['192.168.1.5', '10.0.0.7'],
+        mobilePath: '/m',
+        mobileOrigin: { scheme: 'https', port: 8788 },
+      }),
+      ['https://192.168.1.5:8788/m', 'https://10.0.0.7:8788/m'],
+    );
+  });
+
+  it('降级成 http 时照样拼得出来（页面会另外提示麦克风被禁用）', () => {
+    assert.deepEqual(
+      buildMobileUrls({
+        lanAddresses: ['192.168.1.5'],
+        mobilePath: '/m',
+        mobileOrigin: { scheme: 'http', port: 8787 },
+      }),
+      ['http://192.168.1.5:8787/m'],
+    );
+  });
+
+  it('没有可用入口（镜像没起来 / 没网卡）→ 空数组，页面不渲染二维码', () => {
+    assert.deepEqual(
+      buildMobileUrls({ lanAddresses: ['192.168.1.5'], mobilePath: '/m', mobileOrigin: null }),
+      [],
+    );
+    assert.deepEqual(
+      buildMobileUrls({ lanAddresses: [], mobilePath: '/m', mobileOrigin: { scheme: 'https', port: 8788 } }),
+      [],
     );
   });
 });

@@ -2710,3 +2710,163 @@ input[type='range']:disabled::-webkit-slider-thumb {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+
+/* ------------------------- 手机演唱（导航栏 hover 菜单） ------------------------- */
+
+/*
+ * 二维码入口住在导航栏右上角：悬停 / 聚焦 / 点击都能展开。
+ * 放导航栏而不是某个页面里，是因为它是个全局能力 —— 选歌时、准备开唱时
+ * 都可能要递手机，而所有桌面页面共用这一根导航栏。
+ */
+.app-nav-phone {
+  position: relative;
+  margin-left: auto;
+  flex: none;
+}
+
+.app-nav-phone-btn {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-soft);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.1s var(--ease-out);
+}
+
+.app-nav-phone-btn:hover,
+.app-nav-phone.open .app-nav-phone-btn {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.app-nav-phone-btn:active {
+  transform: scale(0.94);
+}
+
+.phone-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 30;
+  width: 304px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-lg);
+  text-align: left;
+  /* 默认藏起来：hover / focus-within / .open 才现形（见下面三段） */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: opacity 0.14s var(--ease-out), transform 0.14s var(--ease-out),
+    visibility 0.14s;
+}
+
+/* 小箭头：从按钮位置长出来的感觉 */
+.phone-menu::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  right: 15px;
+  width: 9px;
+  height: 9px;
+  background: var(--bg-card);
+  border-left: 1px solid var(--border-strong);
+  border-top: 1px solid var(--border-strong);
+  transform: rotate(45deg);
+}
+
+.app-nav-phone:hover .phone-menu,
+.app-nav-phone:focus-within .phone-menu,
+.app-nav-phone.open .phone-menu {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.phone-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.phone-menu-title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.phone-menu-head .link-btn {
+  margin-left: 0;
+  font-size: var(--fs-2xs);
+  color: var(--text-dim);
+}
+
+.phone-menu-qr {
+  align-self: center;
+}
+
+/* 二维码白底：深色页面上一条白块最显眼，也最容易被摄像头对上焦 */
+.phone-menu-qr img {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: #fff;
+  padding: 5px;
+}
+
+.phone-menu-hint {
+  margin: 0;
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+  line-height: 1.65;
+}
+
+.phone-menu-hint strong {
+  color: var(--text-dim);
+}
+
+.phone-menu-hint .link-btn {
+  margin-left: 4px;
+  font-size: var(--fs-2xs);
+}
+
+.phone-menu-error {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 181, 46, 0.4);
+  background: rgba(255, 181, 46, 0.1);
+  color: #ffd98a;
+  font-size: var(--fs-2xs);
+  line-height: 1.6;
+}
+
+.phone-menu-urls {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.phone-menu-url {
+  display: block;
+  padding: 6px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--accent-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  word-break: break-all;
+  user-select: all;
+}

@@ -1,9 +1,18 @@
 import { useEffect, useRef } from 'react';
-import type { KtvEngine } from '../audio/engine';
+
+/**
+ * 音量条的数据源：只要会报电平就行。
+ *
+ * 刻意不写死 KtvEngine —— 手机端用的是另一套引擎（MobileEngine），
+ * 但它俩给音量条提供的接口是同一个。按结构取类型，两边都能复用这一个组件。
+ */
+export interface LevelSource {
+  getLevel(): number;
+}
 
 interface Props {
   /** 传 null 表示引擎还没建好 */
-  engine: KtvEngine | null;
+  engine: LevelSource | null;
   active: boolean;
 }
 

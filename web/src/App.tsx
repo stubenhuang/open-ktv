@@ -1,15 +1,20 @@
 import type { ReactNode } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { ConfirmHost } from './components/ConfirmDialog';
+import { PhoneConnectMenu } from './components/PhoneConnectMenu';
 import { ToastStack } from './components/ToastStack';
 import DiscoverPage from './pages/DiscoverPage';
 import LibraryPage from './pages/LibraryPage';
+import MobileLayout from './pages/mobile/MobileLayout';
 import SingPage from './pages/SingPage';
 import WorkDetailPage from './pages/WorkDetailPage';
 import WorksPage from './pages/WorksPage';
 
 /** 作品编辑页：/works/:workId（编辑页要求「一屏放完」，见 .app-main-fit） */
 const WORK_DETAIL_RE = /^\/works\/[^/]+$/;
+
+/** 手机端路由前缀：/m、/m/sing/:trackId、/m/work/:workId */
+const MOBILE_RE = /^\/m(?:\/|$)/;
 
 function Layout({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
@@ -39,6 +44,11 @@ function Layout({ children }: { children: ReactNode }) {
             我的作品
           </NavLink>
         </div>
+        {/*
+          手机演唱入口：导航栏右上角的 hover 菜单。放在这是因为它是个全局能力 ——
+          选歌时、准备开唱时都可能要递手机，而所有桌面页面共用这一根导航栏。
+        */}
+        <PhoneConnectMenu />
       </nav>
       <main className={`app-main${fitOneScreen ? ' app-main-fit' : ''}`}>
         {/*
@@ -56,17 +66,28 @@ function Layout({ children }: { children: ReactNode }) {
   );
 }
 
+/** 桌面端路由（手机端走 MobileLayout，见 App） */
+function DesktopRoutes() {
+  return (
+    <Routes>
+      <Route path="/" element={<LibraryPage />} />
+      <Route path="/discover" element={<DiscoverPage />} />
+      <Route path="/sing/:trackId" element={<SingPage />} />
+      <Route path="/works" element={<WorksPage />} />
+      <Route path="/works/:workId" element={<WorkDetailPage />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
 export default function App() {
+  const { pathname } = useLocation();
+  // 手机端是另一套外壳：没有桌面导航、自己的移动样式（mobile.css）。
+  // 用路径前缀切而不是嵌套路由 —— 两棵树的布局毫无共性，硬套 Layout 只会互相掣肘。
+  if (MOBILE_RE.test(pathname)) return <MobileLayout />;
   return (
     <Layout>
-      <Routes>
-        <Route path="/" element={<LibraryPage />} />
-        <Route path="/discover" element={<DiscoverPage />} />
-        <Route path="/sing/:trackId" element={<SingPage />} />
-        <Route path="/works" element={<WorksPage />} />
-        <Route path="/works/:workId" element={<WorkDetailPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <DesktopRoutes />
     </Layout>
   );
 }

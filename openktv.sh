@@ -18,6 +18,12 @@
 # 环境变量：
 #   PORT      后端端口，默认 8787
 #   WEB_PORT  开发模式下 Vite 端口，默认 5173
+#   HOST      监听地址，默认 0.0.0.0（手机要能通过局域网连进来；只本机用就 127.0.0.1）
+#
+# 手机演唱相关（详见 README「手机演唱」）：
+#   HTTPS_PORT   手机 HTTPS 镜像端口，默认 PORT+1
+#   LAN_HTTPS    手机 HTTPS 镜像开关，默认 1（0 = 手机只能浏览播放，不能录音）
+#   VITE_HTTPS   开发模式让 Vite 也开 TLS，默认 1（手机要能录音；设 0 关掉）
 #
 # 曲库/歌词相关（详见 README「曲库与歌词」，都不配也能跑）：
 #   FIVESING_ENABLED        内置 5sing 伴奏源开关，默认 1
@@ -36,6 +42,15 @@ LOG_FILE="$RUN_DIR/openktv.log"
 
 PORT="${PORT:-8787}"
 WEB_PORT="${WEB_PORT:-5173}"
+# 开发模式默认给 Vite 上 TLS（手机扫码即用，见 vite.config.ts）；设 0 关掉
+VITE_HTTPS="${VITE_HTTPS:-1}"
+
+# 开发模式前端的协议：开了 VITE_HTTPS 就是 https（自签名证书，首次有一次性警告）
+if [[ "$VITE_HTTPS" != "0" ]]; then
+  WEB_SCHEME="https"
+else
+  WEB_SCHEME="http"
+fi
 
 # ---------------------------------- 输出风格 ---------------------------------
 
@@ -300,18 +315,40 @@ foreground_start() {
   fi
 }
 
+# 手机演唱入口：问后端要局域网地址并打印。
+# 拿不到（curl 没有 / 服务还没就绪 / 没网卡）就打一句通用提示，绝不影响启动流程。
+print_phone_hint() {
+  command -v curl >/dev/null 2>&1 || return 0
+  local json url reason
+  json="$(curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/network" 2>/dev/null || true)"
+  [[ -z "$json" ]] && return 0
+  url="$(node -e 'try{process.stdout.write(JSON.parse(process.argv[1]||"{}").mobileUrl||"")}catch{}' "$json" 2>/dev/null || true)"
+  reason="$(node -e 'try{process.stdout.write(JSON.parse(process.argv[1]||"{}").reason||"")}catch{}' "$json" 2>/dev/null || true)"
+  if [[ -n "$url" ]]; then
+    echo "   手机演唱：${C_CYAN}${url}${C_OFF}"
+    dim "   手机连同一个 WiFi 后扫码/手输即可（首次提示证书不受信任：高级 → 继续访问）"
+  elif [[ -n "$reason" ]]; then
+    dim "   手机演唱入口未就绪：${reason}"
+  fi
+}
+
 # 启动成功后打印访问地址
 print_ready() {
   local pid="$1" mode="$2"
   echo
   ok "Open KTV 已启动（pid ${pid}，模式 ${mode}）"
   if [[ "$mode" == "dev" ]]; then
-    echo "   打开：${C_CYAN}http://127.0.0.1:$WEB_PORT${C_OFF}"
-    dim "   开发模式：改代码自动生效（前端热更新、后端 --watch 重启）"
+    echo "   打开：${C_CYAN}${WEB_SCHEME}://127.0.0.1:$WEB_PORT${C_OFF}"
+    if [[ "$WEB_SCHEME" == "https" ]]; then
+      dim "   开发模式：改代码自动生效（前端热更新、后端 --watch 重启）；自签名证书，首次打开点「高级 → 继续访问」"
+    else
+      dim "   开发模式：改代码自动生效（前端热更新、后端 --watch 重启）"
+    fi
   else
     echo "   打开：${C_CYAN}http://127.0.0.1:$PORT${C_OFF}"
     dim "   生产模式：单进程同时托管前端和 API"
   fi
+  print_phone_hint
 }
 
 # ----------------------------------- start -----------------------------------
@@ -495,7 +532,7 @@ cmd_status() {
 
     if [[ "${MODE:-}" == "dev" ]]; then
       if [[ -n "$(port_pids "$WEB_PORT")" ]]; then
-        echo "   前端 http://127.0.0.1:$WEB_PORT"
+        echo "   前端 ${WEB_SCHEME}://127.0.0.1:$WEB_PORT"
       else
         warn "前端端口 $WEB_PORT 没有在监听"
       fi
@@ -503,6 +540,7 @@ cmd_status() {
       echo "   打开 http://127.0.0.1:$PORT"
     fi
 
+    print_phone_hint
     dim "   日志：$LOG_FILE"
     return 0
   fi

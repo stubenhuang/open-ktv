@@ -17,6 +17,43 @@ import type {
 export const MAX_OFFSET_MS = 30_000;
 
 /**
+ * 实测起播间隔的钳制上限（ms）。
+ *
+ * 录音时「起录 → 伴奏真正起播」的间隔是量出来的，而测量手段（渲染时钟上的
+ * onset 探测器、墙钟上的 playing 事件 / currentTime 轮询）都可能给出异常值：
+ * 伴奏开头长静音、seek 期间喂脏数据、设备抽风。超过 10 秒的间隔一律不采信
+ * —— 那种成品已经没法听了，按上限截断至少不会更糟。
+ */
+export const MAX_MEASURED_GAP_MS = 10_000;
+
+/**
+ * 把「起录 / 伴奏起播」两个时刻折算成自动对齐间隔 G（ms，恒为正）。
+ *
+ * 两端录音引擎共用这一道收敛：
+ *  · 桌面引擎（web/src/audio/engine.ts）在**渲染时钟**上量，本函数只做钳制；
+ *  · 手机引擎（web/src/audio/mobileEngine.ts）在**墙钟**上量（媒体元素不进
+ *    Web Audio，见那里的说明），收敛逻辑一模一样，所以也走这里。
+ *
+ * 为什么要钳到 [0, 上限]：负值意味着「伴奏比人声先开始」，那是测量假象
+ * （事件早 firing / 读到上一段残留），按 0 处理 = 人声不提前，宁可轻微拖拍
+ * 也不要把人声推到伴奏前面；一个时刻都没测到就退回预备静音常量。
+ *
+ * @param captureStartPerf 起录时刻（t=0）
+ * @param accompStartPerf 伴奏起播时刻；null = 没测到
+ * @param prerollMs 兜底常量（先起录再放伴奏的那段静音，见两端引擎的 PREROLL_MS）
+ */
+export function resolveRecordGapMs(input: {
+  captureStartPerf: number;
+  accompStartPerf: number | null;
+  prerollMs: number;
+}): number {
+  const { captureStartPerf, accompStartPerf, prerollMs } = input;
+  if (accompStartPerf === null) return prerollMs;
+  const gap = accompStartPerf - captureStartPerf;
+  return Math.max(0, Math.min(MAX_MEASURED_GAP_MS, Math.round(gap)));
+}
+
+/**
  * 对齐偏移的合成（服务端 ffmpeg 与前端预览共用同一套公式）。
  *
  * 语义：offsetMs 是**人声相对混音时间轴的延迟**，正数 = 人声更晚，

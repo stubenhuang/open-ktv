@@ -12,7 +12,8 @@
  *   2. npm run test:e2e
  *
  * 环境变量：
- *   BASE_URL  默认 http://127.0.0.1:5173
+ *   BASE_URL  默认 https://127.0.0.1:5173（开发模式默认给 Vite 上 TLS；
+ *             自签名证书，浏览器与本脚本的 fetch 都要显式放过它，见下）
  *   HEADLESS  默认 1；设 0 可以看着它自己点（调试很好用）
  */
 import { spawn } from 'node:child_process';
@@ -21,7 +22,16 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 
-const BASE_URL = process.env.BASE_URL ?? 'http://127.0.0.1:5173';
+/*
+ * 开发服务器用的是 data/certs 下的自签名证书（手机端麦克风必须 HTTPS，见
+ * vite.config.ts）。这里放过它，否则脚本里的 fetch 和 Chrome 都会因为
+ * 「证书不受信任」直接失败。
+ *
+ * 只影响本测试脚本自己这个进程 + 它拉起的 Chrome，且目标只有 127.0.0.1。
+ */
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
+const BASE_URL = process.env.BASE_URL ?? 'https://127.0.0.1:5173';
 const HEADLESS = process.env.HEADLESS !== '0';
 const DEBUG_PORT = Number(process.env.CDP_PORT ?? 9333);
 const CHROME_BIN =
@@ -134,6 +144,8 @@ async function launchChrome() {
     '--disable-crash-reporter',
     '--disable-breakpad',
     '--no-crash-upload',
+    // 开发服务器是自签名证书（Vite 默认开 TLS）：不放过它，页面根本加载不出来
+    '--ignore-certificate-errors',
     // 假麦克风：不弹权限框，且有一个稳定的音频输入
     '--use-fake-ui-for-media-stream',
     '--use-fake-device-for-media-stream',

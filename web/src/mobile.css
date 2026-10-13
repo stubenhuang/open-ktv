@@ -1,0 +1,898 @@
+/*
+ * 手机端样式（/m、/m/sing/:trackId、/m/work/:workId）。
+ *
+ * 三条原则：
+ *  1. **移动优先、单列流式**：不追求桌面那套多栏栅格，一屏一件事，
+ *     正文元素不窄于 44px 的点击区（苹果人机界面规范的下限）；
+ *  2. **安全区**：iPhone 的刘海/圆角/home 指示条用 env(safe-area-inset-*)
+ *     让出来，页面不会被它们压住；
+ *  3. **复用桌面设计变量**：颜色、字号、圆角全部走 styles.css 的 :root 变量，
+ *     两个端口看起来是同一个产品，而不是套了两层皮。
+ *
+ * 类名统一 m- 前缀：和桌面的 .stage / .card 那套完全隔离，互不干扰。
+ */
+
+.m-app {
+  min-height: 100dvh;
+  /* 顶部留出刘海，底部留出 home 指示条 */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+  background: var(--bg);
+}
+
+.m-page {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 14px 16px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/*
+ * 演唱页吃满视口高度：顶栏 + 舞台（flex:1）+ 控制区，不出页面滚动。
+ * 其他页面照旧自然增高、整页滚动。
+ */
+.m-sing {
+  height: 100dvh;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  overflow: hidden;
+}
+
+/* --------------------------------- 顶栏 --------------------------------- */
+
+.m-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+}
+
+.m-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 12px 0 6px;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: var(--fs-lg);
+  text-decoration: none;
+}
+
+.m-back:active {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+.m-topbar-title {
+  min-width: 0;
+}
+
+.m-topbar-name {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.m-topbar-sub {
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+/* --------------------------------- 首页 --------------------------------- */
+
+.m-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.m-title {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  line-height: 1.3;
+}
+
+.m-sub {
+  margin: 2px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+  word-break: break-all;
+}
+
+.m-search {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: 4px 0 8px;
+  background: linear-gradient(var(--bg) 82%, transparent);
+}
+
+.m-input {
+  width: 100%;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: var(--fs-lg);
+  /* iOS 默认会给搜索框加圆角和内阴影，压平 */
+  appearance: none;
+}
+
+.m-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.m-track-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.m-track {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--text);
+  text-decoration: none;
+  transition: transform 0.1s var(--ease-out), border-color 0.15s;
+}
+
+.m-track:active {
+  transform: scale(0.985);
+  border-color: var(--accent);
+}
+
+.m-track-icon {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  font-size: 20px;
+}
+
+.m-track-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.m-track-title {
+  font-size: var(--fs-lg);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.m-track-meta {
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+.m-track-go {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 22px;
+}
+
+.m-empty {
+  padding: 40px 12px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: var(--fs-md);
+}
+
+.m-foot-note {
+  margin: 0;
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+  text-align: center;
+}
+
+/* --------------------------------- 演唱页 --------------------------------- */
+
+.m-sing {
+  /* 演唱页不吃页面滚动：一屏 = 顶栏 + 舞台（吃掉剩余高度）+ 控制区 */
+  gap: 12px;
+}
+
+/*
+ * 舞台 flex:1 吃掉剩余高度，歌词（绝对居中）才有地方铺开。
+ * min-height:0 是 flex 子项不溢出视口的关键 —— 少了它，min-content 会把舞台顶高。
+ */
+.m-stage {
+  position: relative;
+  flex: 1;
+  min-height: 220px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: radial-gradient(120% 90% at 50% 0%, rgba(255, 45, 120, 0.14), transparent 60%),
+    var(--bg-soft);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+/* 视频伴奏：16:9 的盒子，画面不拉伸 */
+.m-stage video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  object-fit: contain;
+}
+
+/* 音频伴奏：媒体元素藏起来（只用它放声音），舞台上放转盘 */
+.m-stage audio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.m-stage-plain {
+  padding: 28px 16px 20px;
+  text-align: center;
+}
+
+.m-disc {
+  width: 116px;
+  height: 116px;
+  margin: 0 auto 14px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 34px;
+  background: conic-gradient(from 0deg, #232b40, #101622, #232b40, #101622, #232b40);
+  box-shadow: inset 0 0 0 6px rgba(255, 255, 255, 0.04), var(--shadow);
+  animation: m-spin 9s linear infinite;
+}
+
+.m-sing-recording .m-disc {
+  animation-duration: 3.2s;
+}
+
+@keyframes m-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.m-stage-title {
+  font-size: var(--fs-xl);
+  font-weight: 600;
+}
+
+.m-stage-sub {
+  margin-top: 4px;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+/*
+ * 歌词：复用桌面 LyricsView 的 fullscreen 模式，但按手机屏幕重排版。
+ *  —— 容器左右 padding 从桌面的 7vw 收回 12px（7vw 在 390px 屏上就是 27px×2，白扔一半宽度）；
+ *  —— 三档字号乘上 LyricsView 写的 --lyric-fit（逐行实测缩字号），长句不再被 nowrap 裁掉；
+ *  —— 选择器写到 .lyric-line.lyric-active 这一级，才压得过桌面全屏那两条同特异性规则。
+ */
+.m-sing .m-stage .lyrics-view {
+  padding: 8px 0 12px;
+}
+
+.m-sing .m-stage .lyrics-view-fullscreen {
+  padding: 0 12px;
+}
+
+.m-sing .m-stage .lyrics-view-fullscreen .lyric-line {
+  height: var(--m-lyric-line-h, 56px);
+  font-size: calc(20px * var(--lyric-fit, 1));
+  padding: 0 4px;
+}
+
+.m-sing .m-stage .lyrics-view-fullscreen .lyric-line.lyric-next {
+  font-size: calc(26px * var(--lyric-fit, 1));
+}
+
+.m-sing .m-stage .lyrics-view-fullscreen .lyric-line.lyric-active {
+  font-size: calc(30px * var(--lyric-fit, 1));
+}
+
+/*
+ * 行高的真值在 LyricsView 的内联 style 里（滚动数学要用），这里只是没挂上 React 时
+ * 的兜底；矮屏（<700px）压到 48px 由 JS 侧 matchMedia 决定，CSS  media query 压不住内联值。
+ */
+
+.m-rec-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: rgba(11, 13, 20, 0.72);
+  backdrop-filter: blur(6px);
+  font-size: var(--fs-sm);
+}
+
+.m-rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: m-blink 1.1s ease-in-out infinite;
+}
+
+@keyframes m-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* --------------------------------- 控制区 --------------------------------- */
+
+.m-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.m-transport {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.m-play-btn {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent-grad);
+  color: #fff;
+  font-size: 17px;
+  cursor: pointer;
+}
+
+.m-play-btn:disabled {
+  opacity: 0.5;
+}
+
+.m-seek {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-time {
+  flex: none;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 表单行（设备下拉等）：标签在上、控件在下，和移动端键盘弹出后的视觉一致 */
+.m-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.m-field-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.m-faint {
+  color: var(--text-faint);
+  font-size: var(--fs-2xs);
+}
+
+.m-select {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-family: inherit;
+}
+
+.m-select:disabled {
+  opacity: 0.6;
+}
+
+.m-mic-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.m-mic-label {
+  flex: none;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.m-mic-row .meter {
+  flex: 1;
+}
+
+.m-mic-hint {
+  flex: none;
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+}
+
+/* 大按钮：录音的入口，44px 起步，主操作更醒目 */
+.m-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+  color: var(--text);
+  font-size: var(--fs-lg);
+  font-weight: 500;
+  font-family: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.m-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.m-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.m-btn-primary {
+  border-color: transparent;
+  background: var(--accent-grad);
+  color: #fff;
+}
+
+.m-btn-ghost {
+  background: transparent;
+}
+
+.m-btn-sm {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: var(--fs-sm);
+}
+
+.m-btn-record {
+  width: 100%;
+  min-height: 54px;
+  font-size: var(--fs-xl);
+}
+
+.m-rec-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.m-rec-actions .m-btn {
+  flex: 1;
+}
+
+.m-saving {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 54px;
+  color: var(--text-dim);
+}
+
+.m-notes {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+  line-height: 1.7;
+}
+
+/* --------------------------------- 提示条 --------------------------------- */
+
+.m-alert {
+  padding: 11px 13px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  font-size: var(--fs-md);
+  line-height: 1.65;
+}
+
+.m-alert-error {
+  border-color: rgba(255, 77, 79, 0.45);
+  background: rgba(255, 77, 79, 0.12);
+  color: #ffb3b5;
+}
+
+.m-alert-warn {
+  border-color: rgba(255, 181, 46, 0.4);
+  background: rgba(255, 181, 46, 0.1);
+  color: #ffd98a;
+}
+
+/* --------------------------------- 结果页 --------------------------------- */
+
+.m-result-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+}
+
+/* 播放器在窄屏里把按钮和时间压紧一点 */
+.m-result-card .audio-player {
+  gap: 10px;
+}
+
+.m-meta {
+  display: flex;
+  gap: 24px;
+  margin: 0;
+}
+
+.m-meta dt {
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+}
+
+.m-meta dd {
+  margin: 2px 0 0;
+  font-size: var(--fs-md);
+}
+
+/* ------------------------------- 底部 tab 栏 ------------------------------- */
+
+/*
+ * 三个列表页（伴奏 / 点歌 / 作品）共用。贴底 + 安全区，图标在上标签在下。
+ * 只在列表页挂：演唱页和编辑页是要专心做的事，tab 栏只会挡事（见 MobileLayout）。
+ */
+.m-app-tabbed .m-page {
+  /* 给 tab 栏留位置：56px 栏高 + 安全区 */
+  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+}
+
+.m-tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  border-top: 1px solid var(--border);
+  background: rgba(11, 13, 20, 0.94);
+  backdrop-filter: blur(14px);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.m-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 0 9px;
+  min-height: 52px;
+  color: var(--text-faint);
+  text-decoration: none;
+  font-size: var(--fs-2xs);
+}
+
+.m-tab.active {
+  color: var(--accent);
+}
+
+.m-tab-icon {
+  font-size: 19px;
+  line-height: 1;
+}
+
+.m-tab-label {
+  font-weight: 500;
+}
+
+/* ------------------------------ 点歌台 / 作品列表 ------------------------------ */
+
+.m-search-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.m-search-bar .m-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-btn-search {
+  flex: none;
+  min-width: 76px;
+}
+
+/* chip 行：默认不换行，需要时横向滚（预设/混响有 8~10 个，竖着放太占地方） */
+.m-chip-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.m-chip-row-scroll {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  /* 贴边横滑：chip 行左右顶到屏幕边缘，滚动内容不被 padding 切掉 */
+  margin: 0 -16px;
+  padding: 2px 16px;
+}
+
+.m-chip-row-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.m-chip-row-spacer {
+  flex: 1;
+}
+
+.m-chip {
+  flex: none;
+  min-height: 34px;
+  padding: 5px 13px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.m-chip.active {
+  border-color: transparent;
+  background: var(--accent-grad);
+  color: #fff;
+}
+
+.m-badge {
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  white-space: nowrap;
+}
+
+.m-badge-ok {
+  border-color: rgba(47, 208, 122, 0.4);
+  background: rgba(47, 208, 122, 0.12);
+  color: #7ce2ac;
+}
+
+.m-badge-warn {
+  border-color: rgba(255, 181, 46, 0.4);
+  background: rgba(255, 181, 46, 0.1);
+  color: #ffd98a;
+}
+
+/* 点歌结果行右侧的进度（百分比 + 状态两行小字） */
+.m-track-progress {
+  font-size: var(--fs-2xs);
+  text-align: right;
+  line-height: 1.35;
+  color: var(--accent-2);
+}
+
+.m-track-error {
+  font-size: var(--fs-2xs);
+  color: #ffb3b5;
+}
+
+/* 作品列表封面块：封面色调复用桌面的 coverGradient，小一号 */
+.m-work-cover {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.m-select-inline {
+  min-height: 34px;
+  width: auto;
+  padding: 4px 8px;
+  font-size: var(--fs-2xs);
+}
+
+/* --------------------------------- 编辑页 --------------------------------- */
+
+.m-mix {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.m-mix-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+}
+
+.m-mix-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+/* 一行滑块：标签定宽，读数右对齐，滑块吃掉剩余宽度 */
+.m-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.m-slider-label {
+  flex: none;
+  width: 40px;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.m-slider-row input[type='range'] {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-slider-value {
+  flex: none;
+  min-width: 62px;
+  text-align: right;
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.m-offset-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.m-offset-row input[type='range'] {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-ms-input {
+  flex: none;
+  width: 84px;
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-family: inherit;
+  text-align: right;
+}
+
+.m-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  font-size: var(--fs-md);
+  color: var(--text);
+  cursor: pointer;
+}
+
+/* 试听传输条 */
+.m-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+}
+
+/* 编辑页给粘底合成栏留位置 */
+.m-edit {
+  padding-bottom: calc(88px + env(safe-area-inset-bottom));
+}
+
+.m-sticky-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  gap: 10px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+  background: rgba(11, 13, 20, 0.94);
+  backdrop-filter: blur(14px);
+}
+
+.m-sticky-bar .m-btn {
+  flex: 1;
+}
+
+/* 改名行：输入框 + 保存按钮 */
+.m-rename-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.m-rename-row .m-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-family: inherit;
+}

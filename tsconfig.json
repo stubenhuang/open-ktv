@@ -11,6 +11,12 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
+    /*
+     * vite.config.ts 要 import 服务端的证书模块（手机 HTTPS 与 Vite 开发服务共用
+     * 同一份自签名证书，见 vite.config.ts 的 VITE_HTTPS）；服务端代码按 Node 原生
+     * 类型擦除的规矩用 .ts 后缀显式引用，所以这里也得打开。noEmit 下没有副作用。
+     */
+    "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "noUnusedLocals": true,
