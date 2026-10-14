@@ -168,7 +168,9 @@ export function MobileMixPanel({ value, onParamsChange }: Props) {
             </button>
           ))}
         </div>
-        <p className="m-notes">点一下把那组参数写进下面的滑块，之后还能继续手调。</p>
+        <p className="m-notes">
+          点一下把均衡和混响的起点写进下面的滑块，之后还能继续手调；修音（压缩/去齿音/降噪）不受预设影响，默认关闭。
+        </p>
       </section>
 
       <section className="m-mix-group">
@@ -268,7 +270,7 @@ export function MobileMixPanel({ value, onParamsChange }: Props) {
       <section className="m-mix-group">
         <div className="m-mix-group-head">
           <span>修音</span>
-          <span className="m-faint">压缩 · 去齿音 · 降噪</span>
+          <span className="m-faint">压缩 · 去齿音 · 降噪 · 不受预设影响</span>
         </div>
         <Slider
           label="压缩"

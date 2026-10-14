@@ -267,8 +267,6 @@ export interface VocalPresetSpec {
   eqLowDb: number;
   eqMidDb: number;
   eqHighDb: number;
-  compression: number;
-  deEss: number;
   /** 混响空间起点（0–1，锚点位置）；用户之后还能用「空间」滑块连续微调 */
   reverbSpace: number;
   /** 混响湿度起点（0–1）；用「湿度」滑块连续微调 */
@@ -279,25 +277,28 @@ export interface VocalPresetSpec {
  * 预设 = 一组具名默认值，不是不透明滤镜串。
  *
  * 点了预设就等于把这里的数字写进 MixParams 的对应字段，之后用户还能继续手调
- *（混响现在是「空间 + 湿度」两个连续滑块，精度远高于原来的 8 档）。
- * 好处是预览与服务端天然同构（它们只看数值），也省掉「预设和滑块谁说了算」
- * 这类必然扯不清的推导。
+ *（混响是「空间 + 湿度」两个连续滑块，精度远高于原来的 8 档）。
  *
- * 10 个预设的参数包两两不同：matchPreset 是按数值反推的，包与包一旦重了
+ * **预设只管「音效」**：均衡三段 + 混响空间/湿度。修音三项（压缩 / 去齿音 / 降噪）
+ * 刻意不在预设里 —— 它们默认关闭，与预设完全解耦：点预设不会把它们打开，
+ * 用户手调的修音值在切换预设时原样保留，拖修音也不会让预设高亮消失。
+ * 少一层耦合就少一个「点了预设我的压缩怎么自己动了」的困惑。
+ *
+ * 10 个预设的整包两两不同：matchPreset 是按数值反推的，包与包一旦重了
  * 就会有两个按钮同时高亮，用户点不出区别。混响起点也因此全部错开 ——
  * 10 种预设覆盖从「小房间干声」到「体育场满湿度」的整条空间轴。
  */
 export const VOCAL_PRESET_SPECS: Record<VocalPreset, VocalPresetSpec> = {
-  natural: { eqLowDb: 0, eqMidDb: 0, eqHighDb: 0, compression: 0, deEss: 0, reverbSpace: anchorSpace('room'), reverbWet: 1 },
-  warm: { eqLowDb: 3, eqMidDb: 0.5, eqHighDb: -1.5, compression: 0.25, deEss: 0, reverbSpace: anchorSpace('hall'), reverbWet: 0.8 },
-  bright: { eqLowDb: -1.5, eqMidDb: 1, eqHighDb: 4, compression: 0.15, deEss: 0.2, reverbSpace: anchorSpace('plate'), reverbWet: 0.7 },
-  sweet: { eqLowDb: 1.5, eqMidDb: 2, eqHighDb: 2.5, compression: 0.35, deEss: 0.35, reverbSpace: anchorSpace('hall'), reverbWet: 0.95 },
-  magnetic: { eqLowDb: 2, eqMidDb: 3, eqHighDb: -2, compression: 0.45, deEss: 0.15, reverbSpace: anchorSpace('stage'), reverbWet: 0.9 },
-  ethereal: { eqLowDb: -2, eqMidDb: -1, eqHighDb: 3, compression: 0.2, deEss: 0.3, reverbSpace: anchorSpace('cathedral'), reverbWet: 0.85 },
-  soft: { eqLowDb: 0.5, eqMidDb: -1, eqHighDb: 1, compression: 0.2, deEss: 0.25, reverbSpace: anchorSpace('plate'), reverbWet: 0.6 },
-  powerful: { eqLowDb: 1, eqMidDb: 1.5, eqHighDb: 3.5, compression: 0.6, deEss: 0.1, reverbSpace: anchorSpace('arena'), reverbWet: 0.75 },
-  retro: { eqLowDb: 4, eqMidDb: -1.5, eqHighDb: -3, compression: 0.3, deEss: 0, reverbSpace: anchorSpace('plate'), reverbWet: 0.75 },
-  live: { eqLowDb: 1, eqMidDb: 0.5, eqHighDb: 1.5, compression: 0.5, deEss: 0.2, reverbSpace: anchorSpace('stage'), reverbWet: 1 },
+  natural: { eqLowDb: 0, eqMidDb: 0, eqHighDb: 0, reverbSpace: anchorSpace('room'), reverbWet: 1 },
+  warm: { eqLowDb: 3, eqMidDb: 0.5, eqHighDb: -1.5, reverbSpace: anchorSpace('hall'), reverbWet: 0.8 },
+  bright: { eqLowDb: -1.5, eqMidDb: 1, eqHighDb: 4, reverbSpace: anchorSpace('plate'), reverbWet: 0.7 },
+  sweet: { eqLowDb: 1.5, eqMidDb: 2, eqHighDb: 2.5, reverbSpace: anchorSpace('hall'), reverbWet: 0.95 },
+  magnetic: { eqLowDb: 2, eqMidDb: 3, eqHighDb: -2, reverbSpace: anchorSpace('stage'), reverbWet: 0.9 },
+  ethereal: { eqLowDb: -2, eqMidDb: -1, eqHighDb: 3, reverbSpace: anchorSpace('cathedral'), reverbWet: 0.85 },
+  soft: { eqLowDb: 0.5, eqMidDb: -1, eqHighDb: 1, reverbSpace: anchorSpace('plate'), reverbWet: 0.6 },
+  powerful: { eqLowDb: 1, eqMidDb: 1.5, eqHighDb: 3.5, reverbSpace: anchorSpace('arena'), reverbWet: 0.75 },
+  retro: { eqLowDb: 4, eqMidDb: -1.5, eqHighDb: -3, reverbSpace: anchorSpace('plate'), reverbWet: 0.75 },
+  live: { eqLowDb: 1, eqMidDb: 0.5, eqHighDb: 1.5, reverbSpace: anchorSpace('stage'), reverbWet: 1 },
 };
 
 /** 预设对应的那部分参数（UI 点预设时写进 MixParams） */
@@ -311,7 +312,10 @@ export function presetParams(preset: VocalPreset): VocalPresetSpec {
  * UI 用它决定哪个预设按钮高亮 —— 与其记住「最后点了哪个」，不如
  * 按实际数值反推，这样手调过之后高亮会自动消失，不会骗人。
  *
- * 连续量的容差比离散量严，而且必须**小于滑块一步能造成的最近距离**：
+ * **修音三项（压缩/去齿音/降噪）不参与匹配**：它们是独立的效果链、默认关闭，
+ * 与预设解耦 —— 用户手调的修音值不该让预设高亮说谎，反之亦然。
+ *
+ * 连续量（空间/湿度）的容差比离散量严，而且必须**小于滑块一步能造成的最近距离**：
  * 空间锚点是 i/7（不在 0.01 栅格上），浏览器把 DOM 值吸附到栅格后，
  * 离锚点最近的栅格点也有 0.0014 的偏差 —— 容差取 0.001，拖动必掉高亮，
  * 而预设写入的原值（精确 i/7）必然命中。湿度同理（0.005 < 一步 0.01）。
@@ -319,13 +323,7 @@ export function presetParams(preset: VocalPreset): VocalPresetSpec {
 export function matchPreset(
   params: Pick<
     MixParams,
-    | 'eqLowDb'
-    | 'eqMidDb'
-    | 'eqHighDb'
-    | 'compression'
-    | 'deEss'
-    | 'reverbSpace'
-    | 'reverbWet'
+    'eqLowDb' | 'eqMidDb' | 'eqHighDb' | 'reverbSpace' | 'reverbWet'
   >,
 ): VocalPreset | null {
   const close = (a: number, b: number) => Math.abs((Number(a) || 0) - b) < 0.01;
@@ -339,8 +337,6 @@ export function matchPreset(
       close(params.eqLowDb, spec.eqLowDb) &&
       close(params.eqMidDb, spec.eqMidDb) &&
       close(params.eqHighDb, spec.eqHighDb) &&
-      close(params.compression, spec.compression) &&
-      close(params.deEss, spec.deEss) &&
       closeSpace(params.reverbSpace, spec.reverbSpace) &&
       closeWet(params.reverbWet, spec.reverbWet)
     ) {

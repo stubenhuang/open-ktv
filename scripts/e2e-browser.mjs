@@ -1109,6 +1109,11 @@ async function main() {
       // 预设只是「一组具名参数」，点一下应该把数值写进滑块
       const eqBefore = [...document.querySelectorAll('.mix-panel input[type=range]')]
         .map((s) => s.value).join(',');
+      // 修音（压缩/去齿音）与预设解耦：点预设前后必须纹丝不动
+      const fixKeys = ['compression', 'deEss'];
+      const fixBefore = fixKeys
+        .map((p) => document.querySelector('input[data-mix-param="' + p + '"]')?.value)
+        .join(',');
       const magnetic = [...document.querySelectorAll('.reverb-option')]
         .find((b) => b.textContent.includes('磁性'));
       if (!magnetic) return JSON.stringify({ error: '找不到「磁性」预设' });
@@ -1116,11 +1121,18 @@ async function main() {
       await new Promise((r) => setTimeout(r, 250));
       const eqAfter = [...document.querySelectorAll('.mix-panel input[type=range]')]
         .map((s) => s.value).join(',');
+      const fixAfter = fixKeys
+        .map((p) => document.querySelector('input[data-mix-param="' + p + '"]')?.value)
+        .join(',');
 
       const stillActive = [...document.querySelectorAll('.reverb-option.active')]
         .some((b) => b.textContent.includes('磁性'));
 
-      return JSON.stringify({ changed: eqBefore !== eqAfter, stillActive });
+      return JSON.stringify({
+        changed: eqBefore !== eqAfter,
+        stillActive,
+        fixUnchanged: fixBefore === fixAfter && fixBefore.split(',').every((v) => v !== undefined),
+      });
     })()`,
     '检查混音面板',
   );
@@ -1128,7 +1140,10 @@ async function main() {
   if (panelState.error) throw new Error(`混音面板不对：${panel}`);
   if (!panelState.changed) throw new Error('点预设没有改变任何参数');
   if (!panelState.stillActive) throw new Error('点了预设但按钮没有高亮');
-  pass('混音分组齐全，预设能写进参数并正确高亮');
+  if (!panelState.fixUnchanged) {
+    throw new Error(`点预设动了修音滑块（压缩/去齿音应与预设解耦）：${panel}`);
+  }
+  pass('混音分组齐全，预设能写进参数并正确高亮，修音滑块不受预设影响');
 
   step('实时试听：点播放 + 拖滑块，不点「合成」也立即生效');
 

@@ -263,21 +263,26 @@ describe('修音与音效链：共享公式（服务端 ffmpeg 与前端预览�
     }
   });
 
-  it('预设参数包齐全，natural 是全中性', () => {
+  it('预设只管音效：整包含均衡 + 混响，修音三项不在包里（解耦契约）', () => {
     for (const preset of VOCAL_PRESETS) {
       const spec = VOCAL_PRESET_SPECS[preset];
       assert.ok(spec, `${preset} 缺少参数包`);
       assert.ok(Number.isFinite(spec.eqLowDb) && Number.isFinite(spec.eqMidDb));
-      assert.ok(spec.compression >= 0 && spec.compression <= 1);
-      assert.ok(spec.deEss >= 0 && spec.deEss <= 1);
+      assert.ok(spec.reverbSpace >= 0 && spec.reverbSpace <= 1);
+      assert.ok(spec.reverbWet >= 0 && spec.reverbWet <= 1);
+      // 修音与预设解耦：包里根本没有这三个键，点预设也就不会碰它们
+      assert.equal('compression' in spec, false, `${preset} 不该带 compression`);
+      assert.equal('deEss' in spec, false, `${preset} 不该带 deEss`);
+      assert.equal('noiseReduction' in spec, false, `${preset} 不该带 noiseReduction`);
     }
 
+    // natural 是全中性音效：均衡 0/0/0 + room 锚点满湿度（= 默认参数的音效部分）
     const natural = VOCAL_PRESET_SPECS.natural;
     assert.equal(natural.eqLowDb, 0);
     assert.equal(natural.eqMidDb, 0);
     assert.equal(natural.eqHighDb, 0);
-    assert.equal(natural.compression, 0);
-    assert.equal(natural.deEss, 0);
+    assert.equal(natural.reverbSpace, DEFAULT_MIX_PARAMS.reverbSpace);
+    assert.equal(natural.reverbWet, DEFAULT_MIX_PARAMS.reverbWet);
   });
 
   it('matchPreset 按数值反推：手调过之后不再谎报命中', () => {
@@ -312,14 +317,21 @@ describe('修音与音效链：共享公式（服务端 ffmpeg 与前端预览�
       reverbSpace: Math.round(VOCAL_PRESET_SPECS.magnetic.reverbSpace * 100) / 100,
     };
     assert.equal(matchPreset(snapped), null, '吸附到栅格的值不该还命中预设');
+
+    // 修音与预设解耦：在预设包上随便开压缩/去齿音，预设照常命中；
+    // 关掉（0）也照常命中 —— 修音不参与匹配，两个方向都算数
+    const withFix = { ...VOCAL_PRESET_SPECS.magnetic, compression: 0.9, deEss: 0.8, noiseReduction: true };
+    assert.equal(matchPreset(withFix), 'magnetic', '开了修音不该让预设高亮消失');
+    const withoutFix = { ...VOCAL_PRESET_SPECS.magnetic, compression: 0, deEss: 0, noiseReduction: false };
+    assert.equal(matchPreset(withoutFix), 'magnetic', '修音默认关闭也不影响预设命中');
   });
 
-  it('10 个预设的混响起点两两不同（否则两个按钮会同时高亮）', () => {
-    const points = VOCAL_PRESETS.map((preset) => {
+  it('10 个预设的整包两两不同（否则两个按钮会同时高亮）', () => {
+    const bundles = VOCAL_PRESETS.map((preset) => {
       const spec = VOCAL_PRESET_SPECS[preset];
-      return `${spec.reverbSpace}:${spec.reverbWet}`;
+      return `${spec.eqLowDb}:${spec.eqMidDb}:${spec.eqHighDb}:${spec.reverbSpace}:${spec.reverbWet}`;
     });
-    assert.equal(new Set(points).size, VOCAL_PRESETS.length, '混响起点必须两两不同');
+    assert.equal(new Set(bundles).size, VOCAL_PRESETS.length, '整包必须两两不同');
     // 空间要真的铺开：至少覆盖 5 个不同的档位，不是全挤在小房间
     const spaces = new Set(VOCAL_PRESETS.map((p) => VOCAL_PRESET_SPECS[p].reverbSpace));
     assert.ok(spaces.size >= 5, `10 种预设应覆盖至少 5 个空间档，实际 ${spaces.size}`);

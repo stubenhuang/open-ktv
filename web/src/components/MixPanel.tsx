@@ -251,7 +251,7 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
               <div className="field-label">
                 <span className="label-with-hint">
                   人声预设
-                  <Hint text="点一下把那组参数写进下面的滑块，之后还能继续手调。" />
+                  <Hint text="点一下把均衡和混响的起点写进下面的滑块，之后还能继续手调；修音（压缩/去齿音/降噪）不受预设影响，默认关闭。" />
                 </span>
                 <span className="faint small">
                   {activePreset ? `当前：${VOCAL_PRESET_LABELS[activePreset]}` : '已手动调整'}
@@ -369,7 +369,7 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
           </Group>
 
           {/* 修音：常驻展开，不提供折叠（用户要能一眼看到压缩/去齿音/降噪） */}
-          <Group title="修音" hint="压缩 · 去齿音 · 降噪">
+          <Group title="修音" hint="压缩 · 去齿音 · 降噪 · 不受预设影响">
             <div className="slider-stack">
               <Slider
                 param="compression"

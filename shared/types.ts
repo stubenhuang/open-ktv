@@ -128,8 +128,12 @@ export interface PreviewParams {
  *
  * 它**不是**一个不透明 DSP 参数：预设只是「一组具名参数默认值」
  * （见 shared/mix.ts 的 VOCAL_PRESET_SPECS），点一下就把数值写进
- * eqLowDb / compression / reverb 等字段。这样实时试听与服务端天然同构，
+ * eqLowDb / reverbSpace 等**音效**字段。这样实时试听与服务端天然同构，
  * 用户也能在预设基础上继续手调。
+ *
+ * **预设只管音效（均衡 + 混响）**：修音三项（compression / deEss /
+ * noiseReduction）与预设完全解耦，默认关闭 —— 点预设不会打开它们，
+ * 手调的修音值跨预设切换原样保留，拖修音也不影响预设高亮。
  */
 export const VOCAL_PRESETS = [
   'natural',
@@ -181,6 +185,7 @@ export interface MixParams {
    * 最后点过的预设（UI 高亮用）。
    * **不参与 DSP** —— 真正生效的是下面那些数值字段。这样就不存在
    * 「预设与滑块谁说了算」的歧义，也不会前后端推导出不同的结果。
+   * 预设只写「音效」字段（均衡 + 混响）；修音三项与预设解耦，默认关闭。
    */
   vocalPreset: VocalPreset;
   /** 均衡：低/中/高，−12..+12 dB */
