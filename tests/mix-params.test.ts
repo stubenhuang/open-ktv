@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { sanitizeMixParams } from '../server/src/routes/works.ts';
-import { DEFAULT_MIX_PARAMS, MIX_LIMITS, REVERB_KINDS, VOCAL_PRESETS, type MixParams } from '../shared/types.ts';
+import { anchorSpace } from '../shared/mix.ts';
+import {
+  DEFAULT_MIX_PARAMS,
+  MIX_LIMITS,
+  REVERB_KINDS,
+  VOCAL_PRESETS,
+  type MixParams,
+} from '../shared/types.ts';
 
 /** 造一份完整的 MixParams：只写要测的字段，其余用默认值 */
 function mixParams(overrides: Partial<MixParams> = {}): MixParams {
@@ -16,7 +23,13 @@ describe('sanitizeMixParams', () => {
   });
 
   it('合法参数原样通过', () => {
-    const input = mixParams({ vocalGain: 1.25, accompGain: 0.75, reverb: 'hall', userOffsetMs: -300 });
+    const input = mixParams({
+      vocalGain: 1.25,
+      accompGain: 0.75,
+      reverbSpace: anchorSpace('hall'),
+      reverbWet: 0.8,
+      userOffsetMs: -300,
+    });
     assert.deepEqual(sanitizeMixParams(input, DEFAULT_MIX_PARAMS), input);
   });
 
@@ -38,7 +51,13 @@ describe('sanitizeMixParams', () => {
   });
 
   it('脏数字回落 base，不是 0', () => {
-    const base = mixParams({ vocalGain: 1.4, accompGain: 0.6, reverb: 'stage', userOffsetMs: 200 });
+    const base = mixParams({
+      vocalGain: 1.4,
+      accompGain: 0.6,
+      reverbSpace: anchorSpace('stage'),
+      reverbWet: 0.8,
+      userOffsetMs: 200,
+    });
     const result = sanitizeMixParams(
       { vocalGain: 'abc', accompGain: Number.NaN, userOffsetMs: undefined },
       base,
@@ -48,18 +67,48 @@ describe('sanitizeMixParams', () => {
     assert.equal(result.userOffsetMs, 200);
   });
 
-  it('混响档位白名单外的值回落 base', () => {
-    assert.equal(sanitizeMixParams({ reverb: '教堂' }, DEFAULT_MIX_PARAMS).reverb, DEFAULT_MIX_PARAMS.reverb);
-    assert.equal(sanitizeMixParams({ reverb: 'stage' }, DEFAULT_MIX_PARAMS).reverb, 'stage');
-    // 白名单就是 REVERB_KINDS 本身：档位表扩到 8 种，这里要全量覆盖
-    for (const reverb of REVERB_KINDS) {
-      assert.equal(sanitizeMixParams({ reverb }, DEFAULT_MIX_PARAMS).reverb, reverb);
+  it('混响空间/湿度夹在 0–1', () => {
+    const result = sanitizeMixParams(
+      { reverbSpace: 5, reverbWet: -2 },
+      DEFAULT_MIX_PARAMS,
+    );
+    assert.equal(result.reverbSpace, MIX_LIMITS.reverb.space.max);
+    assert.equal(result.reverbWet, MIX_LIMITS.reverb.wet.min);
+
+    const middle = sanitizeMixParams({ reverbSpace: 0.43, reverbWet: 0.65 }, DEFAULT_MIX_PARAMS);
+    assert.equal(middle.reverbSpace, 0.43);
+    assert.equal(middle.reverbWet, 0.65);
+  });
+
+  it('旧档位名迁移：合法 8 档映射到锚点 + 满湿度，非法回落 base', () => {
+    // 白名单就是 REVERB_KINDS 本身：8 个档位全量覆盖
+    for (const kind of REVERB_KINDS) {
+      const result = sanitizeMixParams({ reverb: kind }, DEFAULT_MIX_PARAMS);
+      assert.equal(result.reverbSpace, anchorSpace(kind), `${kind} 应映射到自己的锚点`);
+      assert.equal(result.reverbWet, 1, `${kind} 迁移后湿度为满值`);
     }
     assert.equal(REVERB_KINDS.length, 8, '混响档位数应为 8');
+
+    // 非法档位名 → 沿用 base（不是默认值）
+    const base = mixParams({ reverbSpace: 0.5, reverbWet: 0.6 });
+    const dirty = sanitizeMixParams({ reverb: '教堂' }, base);
+    assert.equal(dirty.reverbSpace, 0.5);
+    assert.equal(dirty.reverbWet, 0.6);
+
+    // 新旧字段同时给：新字段优先（客户端已经是新形状）
+    const both = sanitizeMixParams({ reverb: 'canyon', reverbSpace: 0.2, reverbWet: 0.4 }, DEFAULT_MIX_PARAMS);
+    assert.equal(both.reverbSpace, 0.2);
+    assert.equal(both.reverbWet, 0.4);
   });
 
   it('未提供的字段沿用 base，不是默认值', () => {
-    const base = mixParams({ vocalGain: 1.4, accompGain: 0.6, reverb: 'hall', userOffsetMs: -300 });
+    const base = mixParams({
+      vocalGain: 1.4,
+      accompGain: 0.6,
+      reverbSpace: anchorSpace('hall'),
+      reverbWet: 0.8,
+      userOffsetMs: -300,
+    });
     const result = sanitizeMixParams({ vocalGain: 2 }, base);
     assert.deepEqual(result, { ...base, vocalGain: 2 });
   });

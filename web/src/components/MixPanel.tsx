@@ -8,7 +8,7 @@ import {
   VOCAL_PRESET_LABELS,
   type MixParams,
 } from '../../../shared/types';
-import { matchPreset, presetParams } from '../../../shared/mix';
+import { matchPreset, nearestReverbKind, presetParams } from '../../../shared/mix';
 import { Hint } from './Hint';
 
 interface Props {
@@ -31,6 +31,9 @@ function dbLabel(value: number): string {
   if (Math.abs(value) < 0.05) return '0 dB';
   return `${value > 0 ? '+' : ''}${value.toFixed(1)} dB`;
 }
+
+/** 空间滑块的刻度：8 个档位名（顺序 = 空间由小到大，与 REVERB_ANCHORS 同源） */
+const REVERB_TICKS: readonly string[] = REVERB_KINDS.map((kind) => REVERB_LABELS[kind]);
 
 /**
  * 全字段比较（不看键顺序）。
@@ -99,6 +102,11 @@ function OffsetMsInput({
  *
  * `data-mix-param` 是给自动化（e2e）用的定位钩子 —— 面板里滑块越来越多，
  * 靠「第几个 input[type=range]」定位太脆，改一个排布就会点错参数。
+ *
+ * `ticks`：滑块下方的档位刻度（目前只有混响「空间」用）。8 个档名等距贴在
+ * 滑块下方，位置与空间轴上的 8 个锚点对齐 —— 档位名从「按钮」变成「刻度」，
+ * 词汇表不丢，但取值已经是连续的。带刻度时整个控件（行 + 刻度）包一层
+ * `.slider-with-ticks`，让它在 slider-stack 里仍然只算一项。
  */
 function Slider({
   param,
@@ -112,6 +120,7 @@ function Slider({
   tone = 'info',
   placement = 'right',
   flipNarrow = false,
+  ticks,
   onChange,
 }: {
   param: string;
@@ -128,9 +137,11 @@ function Slider({
   placement?: 'right' | 'left' | 'top';
   /** 窄屏单列时把朝左翻回朝右 */
   flipNarrow?: boolean;
+  /** 滑块下方的档位刻度（等距，与取值范围的两端对齐） */
+  ticks?: readonly string[];
   onChange: (next: number) => void;
 }) {
-  return (
+  const row = (
     <div className="field slider-row">
       <span className="label-with-hint slider-row-label">
         {label}
@@ -146,6 +157,19 @@ function Slider({
         onChange={(event) => onChange(Number(event.target.value))}
       />
       <span className="field-value slider-row-value">{display}</span>
+    </div>
+  );
+  if (!ticks?.length) return row;
+  return (
+    <div className="slider-with-ticks">
+      {row}
+      <div className="slider-ticks" aria-hidden="true">
+        {ticks.map((tick, index) => (
+          <span key={tick} style={{ left: `${(index / (ticks.length - 1)) * 100}%` }}>
+            {tick}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -217,12 +241,12 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
       </div>
 
       {/*
-        * 两列排布：左列是「音效」（预设 10 + 混响 8 + 均衡 3，最高的一列），
+        * 两列排布：左列是「音效」（预设 10 + 混响滑块 + 均衡 3），
         * 右列是音量 / 修音 / 对齐 + 合成。两列高度接近，整块面板一屏放得下。
         */}
       <div className="mix-columns">
         <div className="mix-col">
-          <Group title="音效" hint={`${VOCAL_PRESETS.length} 种预设 · ${REVERB_KINDS.length} 种混响`}>
+          <Group title="音效" hint={`${VOCAL_PRESETS.length} 种预设 · 空间/湿度连续可调`}>
             <div className="field">
               <div className="field-label">
                 <span className="label-with-hint">
@@ -247,22 +271,44 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
               </div>
             </div>
 
+            {/*
+               * 混响 = 空间 + 湿度两个连续滑块。空间轴上是原来的 8 个档位名
+               *（等距刻度 + 读数提示），但取值已经连续：拖一下走 1%，
+               * 锚点之间是插值，听感平滑过渡。湿度独立控制发送量，0% 即干声。
+               * 预设写入的只是这两个轴的起点，之后随便微调。
+               */}
             <div className="field">
               <div className="field-label">
-                <span>人声混响</span>
-                <span className="faint small">空间由小到大</span>
+                <span className="label-with-hint">
+                  人声混响
+                  <Hint text="「空间」在原声 → 峡谷之间连续过渡，滑块下方的 8 个刻度就是原来的档位名；「湿度」独立控制混响量，0% 就是干声。两个轴都可以微调，预设只是起点。" />
+                </span>
+                <span className="faint small">空间由小到大 · 湿度独立</span>
               </div>
-              <div className="option-grid option-grid-4">
-                {REVERB_KINDS.map((reverb) => (
-                  <button
-                    key={reverb}
-                    type="button"
-                    className={`reverb-option${params.reverb === reverb ? ' active' : ''}`}
-                    onClick={() => update({ reverb })}
-                  >
-                    {REVERB_LABELS[reverb]}
-                  </button>
-                ))}
+              <div className="slider-stack">
+                <Slider
+                  param="reverbSpace"
+                  label="空间"
+                  value={params.reverbSpace}
+                  display={REVERB_LABELS[nearestReverbKind(params.reverbSpace)]}
+                  min={MIX_LIMITS.reverb.space.min}
+                  max={MIX_LIMITS.reverb.space.max}
+                  step={MIX_LIMITS.reverb.space.step}
+                  ticks={REVERB_TICKS}
+                  onChange={(reverbSpace) => update({ reverbSpace })}
+                />
+                <Slider
+                  param="reverbWet"
+                  label="湿度"
+                  value={params.reverbWet}
+                  display={
+                    params.reverbWet <= 0 ? '干声' : `${Math.round(params.reverbWet * 100)}%`
+                  }
+                  min={MIX_LIMITS.reverb.wet.min}
+                  max={MIX_LIMITS.reverb.wet.max}
+                  step={MIX_LIMITS.reverb.wet.step}
+                  onChange={(reverbWet) => update({ reverbWet })}
+                />
               </div>
             </div>
 

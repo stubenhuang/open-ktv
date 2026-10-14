@@ -4,8 +4,14 @@ import { after, before, describe, it } from 'node:test';
 import { runFfmpeg } from '../server/src/ffmpeg.ts';
 import { measureLoudness, normalizeGainDb } from '../server/src/loudness.ts';
 import { buildMixArgs, buildMixFilter, computeLevels } from '../server/src/mix.ts';
-import { EQ_BANDS, effectiveOffsetMs, mixTimeline } from '../shared/mix.ts';
-import { MIX_LIMITS, REVERB_KINDS, type ReverbKind } from '../shared/types.ts';
+import {
+  EQ_BANDS,
+  anchorSpace,
+  effectiveOffsetMs,
+  mixTimeline,
+  reverbAechoFilter,
+} from '../shared/mix.ts';
+import { MIX_LIMITS, REVERB_KINDS } from '../shared/types.ts';
 import { cleanupDir, ffmpegOk, makeTempDir, sineArgs, summarize } from './helpers.ts';
 
 let workDir = '';
@@ -29,7 +35,9 @@ function filterInput(overrides: Partial<Parameters<typeof buildMixFilter>[0]> = 
   return {
     offsetMs: 0,
     levels: { vocalLinear: 1, accompLinear: 1 },
-    reverb: 'dry' as const,
+    // 空间 0 = 原声（旁通，不挂 aecho）
+    reverbSpace: 0,
+    reverbWet: 1,
     eqLowDb: 0,
     eqMidDb: 0,
     eqHighDb: 0,
@@ -41,13 +49,14 @@ async function mixTo(
   outputName: string,
   offsetMs: number,
   vocalGain = 1,
-  reverb: ReverbKind = 'dry',
+  reverbSpace = 0,
+  reverbWet = 1,
 ) {
   const output = path.join(workDir, outputName);
   const levels = computeLevels({ vocalGain, accompGain: 1, compression: 0 }, 0, 0);
   await runFfmpeg({
     args: buildMixArgs({
-      ...filterInput({ offsetMs, levels, reverb }),
+      ...filterInput({ offsetMs, levels, reverbSpace, reverbWet }),
       vocalPath: vocal,
       accompanimentPath: accompaniment,
       outputPath: output,
@@ -125,13 +134,65 @@ describe('混音纯逻辑', () => {
     assert.match(filter, /\[v\]\[a\]amix=inputs=2:duration=first/);
   });
 
-  it('偏移为 0 时不加 adelay；混响按档次切换', () => {
+  it('偏移为 0 时不加 adelay；空间 0 / 湿度 0 都不挂混响', () => {
     const dry = buildMixFilter(filterInput());
     assert.doesNotMatch(dry, /adelay/);
     assert.doesNotMatch(dry, /aecho/);
 
-    const hall = buildMixFilter(filterInput({ reverb: 'hall' }));
+    // 湿度 0 也是干声（旁通），和空间 0 同路
+    const muted = buildMixFilter(filterInput({ reverbSpace: anchorSpace('hall'), reverbWet: 0 }));
+    assert.doesNotMatch(muted, /aecho/);
+
+    const hall = buildMixFilter(filterInput({ reverbSpace: anchorSpace('hall') }));
     assert.match(hall, /aecho=/);
+  });
+
+  /**
+   * 老作品零回归的守卫：8 个档位名迁移成 (锚点位置, 湿度 1) 后，
+   * 产出的滤镜必须与历史上的 REVERB_FILTER 表逐字节一致。
+   * 这张表是从 git 历史里原样抄下来的期望值，一个字都不能改。
+   */
+  it('锚点处复现旧版 8 档滤镜串（老作品逐字节一致）', () => {
+    const legacy: Record<string, string | null> = {
+      dry: null,
+      room: 'aecho=0.8:0.85:18:0.25',
+      plate: 'aecho=0.8:0.88:28:0.3',
+      hall: 'aecho=0.8:0.9:55:0.35',
+      stage: 'aecho=0.9:0.92:110:0.45',
+      cathedral: 'aecho=0.9:0.93:170:0.5',
+      arena: 'aecho=0.9:0.94:240:0.55',
+      canyon: 'aecho=0.9:0.95:330:0.6',
+    };
+    assert.equal(REVERB_KINDS.length, 8, '混响档位数应为 8');
+    for (const kind of REVERB_KINDS) {
+      const filter = reverbAechoFilter(anchorSpace(kind), 1);
+      assert.equal(filter, legacy[kind], `${kind} 的滤镜串应与旧版一致`);
+    }
+  });
+
+  it('空间连续可调：延迟/衰减随空间单调递增，湿度只改增益不改延迟', () => {
+    const delayOf = (space: number) => {
+      const filter = buildMixFilter(filterInput({ reverbSpace: space }));
+      const match = /aecho=([\d.]+):([\d.]+):([\d.]+):([\d.]+)/.exec(filter);
+      assert.ok(match, `空间 ${space} 应挂 aecho，实际 ${filter}`);
+      return { inGain: Number(match[1]), delayMs: Number(match[3]) };
+    };
+    let previous = delayOf(0.01);
+    for (const space of [0.2, 0.35, 0.5, 0.65, 0.8, 0.99]) {
+      const current = delayOf(space);
+      assert.ok(current.delayMs > previous.delayMs, `延迟应随空间递增：${space}`);
+      previous = current;
+    }
+    // 湿度减半：发送量减半，延迟不变（空间形状不动）
+    const full = delayOf(0.5);
+    const half = (() => {
+      const filter = buildMixFilter(filterInput({ reverbSpace: 0.5, reverbWet: 0.5 }));
+      const match = /aecho=([\d.]+):([\d.]+):([\d.]+):([\d.]+)/.exec(filter);
+      assert.ok(match);
+      return { inGain: Number(match[1]), delayMs: Number(match[3]) };
+    })();
+    assert.ok(Math.abs(half.inGain - full.inGain / 2) < 1e-6, '湿度减半 = 发送量减半');
+    assert.equal(half.delayMs, full.delayMs, '湿度不该改动空间形状');
   });
 
   it('均衡三段只在非中性时挂上，且频率与前端 BiquadFilterNode 一致', () => {
@@ -154,7 +215,7 @@ describe('混音纯逻辑', () => {
 
 describe('混音端到端（真实 ffmpeg）', () => {
   it('输出 192kbps 立体声 MP3', async () => {
-    const output = await mixTo('out-basic.mp3', 0, 1, 'dry');
+    const output = await mixTo('out-basic.mp3', 0, 1, 0);
     const summary = await summarize(output);
 
     assert.equal(summary.audioCodec, 'mp3');
@@ -165,14 +226,14 @@ describe('混音端到端（真实 ffmpeg）', () => {
 
   it('duration=first：成品长度跟人声走，不会拖出纯伴奏尾巴', async () => {
     // 伴奏 3s，人声 2s，偏移 0 → 成品约 2s
-    const output = await mixTo('out-short.mp3', 0, 1, 'dry');
+    const output = await mixTo('out-short.mp3', 0, 1, 0);
     const { durationSec } = await summarize(output);
 
     assert.ok(durationSec! > 1.7 && durationSec! < 2.4, `成品应约为 2s，实际 ${durationSec}s`);
   });
 
   it('对齐偏移会把成品整体拉长（人声被推后）', async () => {
-    const output = await mixTo('out-offset.mp3', 500, 1, 'dry');
+    const output = await mixTo('out-offset.mp3', 500, 1, 0);
     const { durationSec } = await summarize(output);
 
     assert.ok(
@@ -183,7 +244,7 @@ describe('混音端到端（真实 ffmpeg）', () => {
 
   it('负偏移：延后伴奏，成品长度仍跟人声走（duration=first）', async () => {
     // 伴奏 3s、人声 2s、偏移 -0.5s → 伴奏晚 0.5s 进场，成品仍约 2s
-    const output = await mixTo('out-neg-offset.mp3', -500, 1, 'dry');
+    const output = await mixTo('out-neg-offset.mp3', -500, 1, 0);
     const { durationSec } = await summarize(output);
 
     assert.ok(
@@ -192,17 +253,30 @@ describe('混音端到端（真实 ffmpeg）', () => {
     );
   });
 
-  it('八档混响都能成功出片（dry 旁通，其余挂 aecho）', async () => {
-    for (const reverb of REVERB_KINDS) {
-      const output = await mixTo(`out-reverb-${reverb}.mp3`, 150, 1, reverb);
+  it('八档混响都能成功出片（空间 0 旁通，其余挂 aecho）', async () => {
+    for (const kind of REVERB_KINDS) {
+      const output = await mixTo(
+        `out-reverb-${kind}.mp3`,
+        150,
+        1,
+        anchorSpace(kind),
+        1,
+      );
       const summary = await summarize(output);
-      assert.equal(summary.audioCodec, 'mp3', `混响 ${reverb} 出片失败`);
-      assert.ok(summary.durationSec! > 1.7, `混响 ${reverb} 时长异常：${summary.durationSec}`);
+      assert.equal(summary.audioCodec, 'mp3', `混响 ${kind} 出片失败`);
+      assert.ok(summary.durationSec! > 1.7, `混响 ${kind} 时长异常：${summary.durationSec}`);
     }
   });
 
+  it('连续空间 / 半湿度也能出片（插值参数不是纸上谈兵）', async () => {
+    const output = await mixTo('out-reverb-interp.mp3', 150, 1, 0.5, 0.5);
+    const summary = await summarize(output);
+    assert.equal(summary.audioCodec, 'mp3');
+    assert.ok(summary.durationSec! > 1.7, `时长异常：${summary.durationSec}`);
+  });
+
   it('人声音量拉到 0 时不出错（等于只要伴奏）', async () => {
-    const output = await mixTo('out-muted-vocal.mp3', 0, 0, 'dry');
+    const output = await mixTo('out-muted-vocal.mp3', 0, 0, 0);
     const summary = await summarize(output);
     assert.equal(summary.audioCodec, 'mp3');
     assert.ok(summary.durationSec! > 1.7);

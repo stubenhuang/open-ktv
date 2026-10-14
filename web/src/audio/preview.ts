@@ -1,12 +1,13 @@
-import type { MixParams, PreviewParams, ReverbKind, WorkLevels } from '../../../shared/types';
+import type { MixParams, PreviewParams, WorkLevels } from '../../../shared/types';
 import {
   EQ_BANDS,
-  REVERB_PREVIEW,
   compressorParams,
   deEssGainDb,
   mixTimeline,
   previewDurationSec,
   previewLinearGains,
+  reverbDsp,
+  reverbIrSpec,
   toPreviewParams,
 } from '../../../shared/mix';
 import { getAudioContext } from './engine';
@@ -31,7 +32,7 @@ import { errorMessage } from '../utils';
  *    压缩的 makeup 已经并进 vocalGain（见 vocalChainLinearGain），这里不再补一次；
  *  - deEss：静态高架下压，对服务端 deesser 的听感近似；
  *  - vocalGain/accompGain：实测归一化增益 × 用户滑块 × 压缩补偿（shared/mix.ts 的公式）；
- *  - convolver：程序生成的指数衰减噪声 IR，对服务端 aecho 八档混响的听感近似；
+ *  - convolver：程序生成的指数衰减噪声 IR，对服务端 aecho 混响（空间 × 湿度连续）的听感近似；
  *  - limiter：DynamicsCompressor，近似服务端末端 alimiter=0.95，防预览削波；
  *  - 对齐偏移不用 DelayNode（改 delayTime 会有爆音），改用「晚到的一轨晚起播」
  *    的调度方式（与服务端 mixTimeline 同一套符号规则：offset ≥ 0 人声晚进，
@@ -51,7 +52,16 @@ const GAIN_SMOOTHING = 0.02;
 /** 起播前的调度余量，给浏览器留足准备时间 */
 const START_LEAD_SEC = 0.05;
 
-type ReverbKindWithReverb = Exclude<ReverbKind, 'dry'>;
+/**
+ * 试听 IR 的量化步进（空间轴 1/14，锚点 i/7 恰好落在键上）。
+ *
+ * IR 只在空间变化时重建，而拖动过程中空间每 1% 都在变：给缓存键量化一下，
+ * 相邻键的空间差 7% 听不出来，重建次数从「每像素一次」降到「最多 15 种」。
+ * 锚点处的键与锚点精确重合，所以预设/老作品在锚点上的试听音色与旧版一致。
+ * 缓存上限 12 条、超出清空：拖完整个轴再拖回来会重建，内存有界。
+ */
+const IR_QUANTIZE = 14;
+const IR_CACHE_MAX = 12;
 
 export interface PreviewEngineOptions {
   vocalUrl: string;
@@ -68,10 +78,16 @@ async function fetchDecode(url: string, label: string): Promise<AudioBuffer> {
   return getAudioContext().decodeAudioData(bytes);
 }
 
+/** 试听 IR 规格：尾巴秒数 / 前延迟 ms / 衰减指数 */
+interface IrSpec {
+  seconds: number;
+  preDelayMs: number;
+  decay: number;
+}
+
 /** 程序生成混响 IR：前延迟静音 + 指数衰减噪声，立体声不相关 */
-function createImpulseResponse(kind: ReverbKindWithReverb): AudioBuffer {
+function createImpulseResponse(spec: IrSpec): AudioBuffer {
   const context = getAudioContext();
-  const spec = REVERB_PREVIEW[kind]!;
   const rate = context.sampleRate;
   const length = Math.max(1, Math.floor(rate * spec.seconds));
   const preDelay = Math.floor((rate * spec.preDelayMs) / 1000);
@@ -106,7 +122,7 @@ export class PreviewEngine {
   private readonly convolver: ConvolverNode;
   private readonly limiter: DynamicsCompressorNode;
 
-  private readonly impulseCache = new Map<ReverbKindWithReverb, AudioBuffer>();
+  private readonly impulseCache = new Map<number, AudioBuffer>();
 
   private vocalSource: AudioBufferSourceNode | null = null;
   private accompSource: AudioBufferSourceNode | null = null;
@@ -114,7 +130,8 @@ export class PreviewEngine {
   private params: PreviewParams = {
     vocalGain: 1,
     accompGain: 1,
-    reverb: 'room',
+    reverbSpace: 1 / 7,
+    reverbWet: 1,
     offsetMs: 0,
     levels: null,
     eqLowDb: 0,
@@ -331,25 +348,35 @@ export class PreviewEngine {
     // 去齿音：静态高架下压（服务端是动态 deesser，属听感近似）
     this.deEss.gain.setTargetAtTime(deEssGainDb(this.params.deEss), now, GAIN_SMOOTHING);
 
-    const reverb = this.params.reverb;
-    if (reverb !== 'dry') {
-      const spec = REVERB_PREVIEW[reverb]!;
-      if (this.convolver.buffer !== this.impulseFor(reverb)) {
-        this.convolver.buffer = this.impulseFor(reverb);
+    // 混响：空间决定 IR（尾巴/前延迟/衰减），湿度决定发送量。
+    // 湿度只动 wetGain/dryGain（平滑过渡），不重建 IR —— 拖湿度不会有爆音。
+    const dsp = reverbDsp(this.params.reverbSpace, this.params.reverbWet);
+    if (!dsp.bypass) {
+      const ir = this.impulseFor(this.params.reverbSpace);
+      if (this.convolver.buffer !== ir) {
+        this.convolver.buffer = ir;
       }
-      this.wetGain.gain.setTargetAtTime(spec.wet, now, GAIN_SMOOTHING);
-      this.dryGain.gain.setTargetAtTime(1 - spec.wet * 0.5, now, GAIN_SMOOTHING);
+      this.wetGain.gain.setTargetAtTime(dsp.wet, now, GAIN_SMOOTHING);
+      this.dryGain.gain.setTargetAtTime(1 - dsp.wet * 0.5, now, GAIN_SMOOTHING);
     } else {
       this.wetGain.gain.setTargetAtTime(0, now, GAIN_SMOOTHING);
       this.dryGain.gain.setTargetAtTime(1, now, GAIN_SMOOTHING);
     }
   }
 
-  private impulseFor(kind: ReverbKindWithReverb): AudioBuffer {
-    const cached = this.impulseCache.get(kind);
+  /** 当前空间对应的试听 IR（量化键缓存，见 IR_QUANTIZE） */
+  private impulseFor(space: number): AudioBuffer {
+    const key = Math.round(Math.min(1, Math.max(0, space)) * IR_QUANTIZE) / IR_QUANTIZE;
+    const cached = this.impulseCache.get(key);
     if (cached) return cached;
-    const created = createImpulseResponse(kind);
-    this.impulseCache.set(kind, created);
+    const spec = reverbIrSpec(key);
+    const created = createImpulseResponse({
+      seconds: spec.seconds,
+      preDelayMs: spec.preDelayMs,
+      decay: spec.decay,
+    });
+    if (this.impulseCache.size >= IR_CACHE_MAX) this.impulseCache.clear();
+    this.impulseCache.set(key, created);
     return created;
   }
 

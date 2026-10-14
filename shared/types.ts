@@ -25,10 +25,11 @@ export type WorkStatus = 'mixing' | 'ready' | 'failed';
 
 /**
  * 混响档位（8 档）；数组本身就是唯一来源，前后端都从这里取顺序
- * （服务端另用它做白名单，前端预览用同一顺序排按钮）。
+ * （服务端另用它做白名单，前端预览用同一顺序排刻度）。
  *
  * 顺序即「空间由小到大」：原声 → 小房间 → 金属板 → 大厅 → 演唱会 → 教堂 → 体育场 → 峡谷。
- * 尾巴长度在 shared/mix.ts 的 REVERB_PREVIEW 里也是这个顺序递进，两边必须一致。
+ * 混响参数不再是「选哪一档」，而是空间轴上的连续位置 + 独立湿度（见 REVERB_ANCHORS），
+ * 这 8 个名字退化为刻度标签 / 读数提示 / 预设词汇，DSP 只认数值。
  */
 export const REVERB_KINDS = [
   'dry',
@@ -42,6 +43,49 @@ export const REVERB_KINDS = [
 ] as const;
 
 export type ReverbKind = (typeof REVERB_KINDS)[number];
+
+/**
+ * 混响空间轴上的一个锚点。
+ *
+ * 8 个锚点把 0–1 的空间轴均分（位置 = i/7），每个锚点同时携带：
+ *  · aecho 四元组（服务端成品，ffmpeg aecho=in:out:delay:decay）；
+ *  · IR 四元组（浏览器实时试听，程序生成的指数衰减噪声 + wetGain）。
+ * 两张旧表（server 的 REVERB_FILTER / shared 的 REVERB_PREVIEW）合并成这一张 ——
+ * 「试听听到的空间感」和「成品 MP3 的空间感」必须同源，否则两边必然对不上。
+ *
+ * 锚点处的数值是**契约**：老作品/老请求里的 `reverb: 'hall'` 映射到 (3/7, 湿度 1)，
+ * 插值在锚点原样返回值，产出的滤波器与旧版逐字节一致（tests/mix.test.ts 守着）。
+ */
+export interface ReverbAnchor {
+  kind: ReverbKind;
+  /** 在 0–1 空间轴上的位置；由下标程序化生成（i/7），不手写 */
+  position: number;
+  /* ---- 服务端成品：aecho=in_gain:out_gain:delay_ms:decay ---- */
+  inGain: number;
+  outGain: number;
+  delayMs: number;
+  decay: number;
+  /* ---- 实时试听：IR 尾巴秒数 / 前延迟 ms / 衰减指数 / 湿度 ---- */
+  tailSec: number;
+  preDelayMs: number;
+  irDecay: number;
+  wet: number;
+}
+
+/** 8 个锚点（顺序 = REVERB_KINDS）。dry 的 aecho 是旁通等价值：只有它被插值使用 */
+export const REVERB_ANCHORS: ReverbAnchor[] = (
+  [
+    // 原声：aecho 入 0 / 出 1 = 旁通；IR 湿度 0。空间 0 或湿度 0 都直接不挂滤镜
+    { kind: 'dry', inGain: 0, outGain: 1, delayMs: 18, decay: 0.25, tailSec: 0.35, preDelayMs: 10, irDecay: 2.6, wet: 0 },
+    { kind: 'room', inGain: 0.8, outGain: 0.85, delayMs: 18, decay: 0.25, tailSec: 0.35, preDelayMs: 10, irDecay: 2.6, wet: 0.35 },
+    { kind: 'plate', inGain: 0.8, outGain: 0.88, delayMs: 28, decay: 0.3, tailSec: 0.5, preDelayMs: 8, irDecay: 2.8, wet: 0.32 },
+    { kind: 'hall', inGain: 0.8, outGain: 0.9, delayMs: 55, decay: 0.35, tailSec: 1.3, preDelayMs: 25, irDecay: 2.0, wet: 0.45 },
+    { kind: 'stage', inGain: 0.9, outGain: 0.92, delayMs: 110, decay: 0.45, tailSec: 2.6, preDelayMs: 45, irDecay: 1.6, wet: 0.55 },
+    { kind: 'cathedral', inGain: 0.9, outGain: 0.93, delayMs: 170, decay: 0.5, tailSec: 3.8, preDelayMs: 60, irDecay: 1.4, wet: 0.6 },
+    { kind: 'arena', inGain: 0.9, outGain: 0.94, delayMs: 240, decay: 0.55, tailSec: 5, preDelayMs: 80, irDecay: 1.2, wet: 0.62 },
+    { kind: 'canyon', inGain: 0.9, outGain: 0.95, delayMs: 330, decay: 0.6, tailSec: 6.5, preDelayMs: 110, irDecay: 1, wet: 0.65 },
+  ] as Omit<ReverbAnchor, 'position'>[]
+).map((anchor, index, all) => ({ ...anchor, position: index / (all.length - 1) }));
 
 /**
  * 最近一次成功混音时实测的两轨归一化增益（dB）。
@@ -61,7 +105,10 @@ export interface WorkLevels {
 export interface PreviewParams {
   vocalGain: number;
   accompGain: number;
-  reverb: ReverbKind;
+  /** 混响空间 0–1：REVERB_ANCHORS 八个档位之间的连续位置（0 = 原声） */
+  reverbSpace: number;
+  /** 混响湿度 0–1：0 = 旁通（干声），1 = 当前空间档的满湿度 */
+  reverbWet: number;
   /** 合成后的总对齐偏移（userOffsetMs − autoOffsetMs，已钳制），ms；可正可负 */
   offsetMs: number;
   /** 服务端实测归一化增益；null = 老作品，按 0dB 基准 */
@@ -117,7 +164,14 @@ export interface MixParams {
   vocalGain: number;
   /** 伴奏音量 0–2 */
   accompGain: number;
-  reverb: ReverbKind;
+  /**
+   * 混响空间 0–1：REVERB_ANCHORS 八个档位之间的连续位置。
+   * 老作品里这一项是 `reverb: 'hall'` 这样的档位名，读取时映射到锚点位置（i/7），
+   * 因此老作品重新合成的出声与改动前逐字节一致（tests/db.test.ts 守着）。
+   */
+  reverbSpace: number;
+  /** 混响湿度 0–1：0 = 旁通（干声），1 = 当前空间档的满湿度；预设写入的起点即 1 或略低 */
+  reverbWet: number;
   /** 人声对齐微调 -1000–1000 ms：正值=人声更晚（抢拍时用），负值=人声更早（拖拍时用） */
   userOffsetMs: number;
 
@@ -242,6 +296,14 @@ export const MIX_LIMITS = {
   eqDb: { min: -12, max: 12, step: 0.5 },
   /** 「量」类参数（压缩量 / 去齿音强度）：0..1 */
   amount: { min: 0, max: 1, step: 0.05 },
+  /**
+   * 混响：空间轴 0–1（8 档锚点均分）+ 湿度 0–1。
+   * 步进 0.01 = 1%：拖动跟手，又不至于每像素都重建一次试听 IR。
+   */
+  reverb: {
+    space: { min: 0, max: 1, step: 0.01 },
+    wet: { min: 0, max: 1, step: 0.01 },
+  },
 } as const;
 
 /** 歌词相关的共用限制：服务端校验与前端控件都从这里取 */
@@ -262,7 +324,9 @@ export const LRC_LIMITS = {
 export const DEFAULT_MIX_PARAMS: MixParams = {
   vocalGain: 1,
   accompGain: 1,
-  reverb: 'room',
+  // room 锚点 + 满湿度：与旧默认 reverb:'room' 同一声（零回归）
+  reverbSpace: REVERB_ANCHORS[1]!.position,
+  reverbWet: 1,
   userOffsetMs: 0,
   vocalPreset: 'natural',
   eqLowDb: 0,

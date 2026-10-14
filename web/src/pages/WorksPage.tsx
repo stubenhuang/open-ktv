@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { REVERB_LABELS, VOCAL_PRESET_LABELS } from '../../../shared/types';
+import { VOCAL_PRESET_LABELS } from '../../../shared/types';
+import { describeReverb } from '../../../shared/mix';
 import { api, workAudioUrl, workVocalUrl, type WorkListItem } from '../api';
 import { AudioPlayer } from '../components/AudioPlayer';
 import { confirmAction } from '../components/ConfirmDialog';
@@ -329,9 +330,10 @@ export default function WorksPage() {
           <div className="work-card-chips">
             <span
               className="badge badge-kind"
-              title={`人声预设：${VOCAL_PRESET_LABELS[work.mixParams.vocalPreset]} · 混响：${REVERB_LABELS[work.mixParams.reverb]}`}
+              title={`人声预设：${VOCAL_PRESET_LABELS[work.mixParams.vocalPreset]} · 混响：${describeReverb(work.mixParams.reverbSpace, work.mixParams.reverbWet)}`}
             >
-              {VOCAL_PRESET_LABELS[work.mixParams.vocalPreset]} · {REVERB_LABELS[work.mixParams.reverb]}
+              {VOCAL_PRESET_LABELS[work.mixParams.vocalPreset]} ·{' '}
+              {describeReverb(work.mixParams.reverbSpace, work.mixParams.reverbWet)}
             </span>
             {remixed && (
               <span className="badge badge-kind" title={`最近混音：${formatDateTime(work.updatedAt)}`}>

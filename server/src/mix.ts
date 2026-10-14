@@ -1,4 +1,4 @@
-import type { MixParams, ReverbKind } from '../../shared/types.ts';
+import type { MixParams } from '../../shared/types.ts';
 import { AUDIO } from './config.ts';
 import {
   EQ_BANDS,
@@ -7,6 +7,7 @@ import {
   eqIsNeutral,
   linearGain,
   mixTimeline,
+  reverbAechoFilter,
   vocalChainLinearGain,
 } from '../../shared/mix.ts';
 import { MP3_OUTPUT_ARGS, PROGRESS_OUTPUT_ARGS } from './ffmpeg.ts';
@@ -17,24 +18,14 @@ export const LOUDNESS_TARGET = {
   accompaniment: -16,
 } as const;
 
-/**
- * 混响档次（8 档）。这里用的是 aecho（延迟回声）而不是卷积混响 ——
- * 不需要外挂脉冲响应文件，零依赖，听感够用。
- *
- * 档位顺序与 shared/types.ts 的 REVERB_KINDS 一致（空间由小到大），
- * 延迟/衰减也按这个方向递增；前端预览的 REVERB_PREVIEW 跟着同一顺序走，
- * 这样「试听听到的空间感」和「成品 MP3 的空间感」才是同一个方向。
+/*
+ * 混响滤镜：不再有「档位 → 固定滤镜串」的表。空间（0–1）+ 湿度（0–1）
+ * 两个连续量经 shared/mix.ts 的插值产出 aecho 字符串（reverbAechoFilter），
+ * 锚点处的输出与历史上的 8 档滤镜逐字节一致（tests/mix.test.ts 钉死）。
+ * 用 aecho（延迟回声）而不是卷积混响：不需要外挂脉冲响应文件，零依赖，听感够用。
+ * 试听侧的近似（程序生成 IR + ConvolverNode）与这里的锚点表同源，
+ * 「试听听到的空间感」和「成品 MP3 的空间感」才是同一个方向。
  */
-export const REVERB_FILTER: Record<ReverbKind, string | null> = {
-  dry: null,
-  room: 'aecho=0.8:0.85:18:0.25',
-  plate: 'aecho=0.8:0.88:28:0.3',
-  hall: 'aecho=0.8:0.9:55:0.35',
-  stage: 'aecho=0.9:0.92:110:0.45',
-  cathedral: 'aecho=0.9:0.93:170:0.5',
-  arena: 'aecho=0.9:0.94:240:0.55',
-  canyon: 'aecho=0.9:0.95:330:0.6',
-};
 
 export interface MixLevels {
   /** 人声轨最终乘的线性增益（归一化增益 × 用户滑块） */
@@ -77,7 +68,10 @@ export interface MixFilterInput {
   /** 合成后的总对齐偏移（userOffsetMs − autoOffsetMs），ms；正值推后人声，负值延后伴奏 */
   offsetMs: number;
   levels: MixLevels;
-  reverb: ReverbKind;
+  /** 混响空间 0–1（REVERB_ANCHORS 八档之间的连续位置）；0 = 原声 */
+  reverbSpace: number;
+  /** 混响湿度 0–1；0 = 旁通（干声） */
+  reverbWet: number;
   /** 均衡三段（dB）；全 0 时不挂滤镜 */
   eqLowDb: number;
   eqMidDb: number;
@@ -99,7 +93,7 @@ export interface MixFilterInput {
  * （用户中途点了结束，不会在成品里拖出一长段纯伴奏尾巴）。
  */
 export function buildMixFilter(input: MixFilterInput): string {
-  const { offsetMs, levels, reverb, eqLowDb, eqMidDb, eqHighDb } = input;
+  const { offsetMs, levels, reverbSpace, reverbWet, eqLowDb, eqMidDb, eqHighDb } = input;
   const sampleRate = AUDIO.sampleRate;
   const { vocalDelayMs, accompDelayMs } = mixTimeline(offsetMs);
 
@@ -110,7 +104,7 @@ export function buildMixFilter(input: MixFilterInput): string {
     ...buildEqChain(eqLowDb, eqMidDb, eqHighDb),
     `volume=${levels.vocalLinear.toFixed(4)}`,
   ];
-  const reverbFilter = REVERB_FILTER[reverb];
+  const reverbFilter = reverbAechoFilter(reverbSpace, reverbWet);
   if (reverbFilter) vocalChain.push(reverbFilter);
   if (vocalDelayMs > 0) vocalChain.push(`adelay=delays=${vocalDelayMs}:all=1`);
 

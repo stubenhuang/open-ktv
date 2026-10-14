@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { after, before, describe, it } from 'node:test';
-import { effectiveOffsetMs } from '../shared/mix.ts';
+import { anchorSpace, effectiveOffsetMs } from '../shared/mix.ts';
 import { DEFAULT_MIX_PARAMS } from '../shared/types.ts';
 import { createIsolatedDataDir, removeIsolatedDataDir, sleep } from './isolated.ts';
 
@@ -288,6 +288,37 @@ describe('works 表', () => {
     const work = db.getWork('w2')!;
     assert.deepEqual(work.mixParams, DEFAULT_MIX_PARAMS);
     assert.equal(work.levels, null, '解析不出 levels 时按没有实测增益处理');
+  });
+
+  it('老格式 mix_params：reverb 档位名迁移到空间锚点 + 满湿度（零回归）', () => {
+    db.insertTrack(newTrack('wt5'));
+    db.insertWork(newWork('w5', 'wt5'));
+
+    // 改动前的老作品 JSON：混响是一个档位名，没有 reverbSpace / reverbWet
+    exec(
+      `UPDATE works SET mix_params = '{"vocalGain":1,"accompGain":1,"reverb":"hall","userOffsetMs":0}' WHERE id = 'w5'`,
+    );
+    const work = db.getWork('w5')!;
+    assert.equal(work.mixParams.reverbSpace, anchorSpace('hall'), 'hall → 3/7 锚点');
+    assert.equal(work.mixParams.reverbWet, 1, '迁移后湿度满值，滤镜与旧版一致');
+
+    // 新格式 JSON 原样往返（含连续值，不被钳、不被抹）
+    exec(
+      `UPDATE works SET mix_params = '{"vocalGain":1.2,"accompGain":0.8,"reverbSpace":0.5,"reverbWet":0.65,"userOffsetMs":-100}' WHERE id = 'w5'`,
+    );
+    const tuned = db.getWork('w5')!;
+    assert.equal(tuned.mixParams.reverbSpace, 0.5);
+    assert.equal(tuned.mixParams.reverbWet, 0.65);
+    assert.equal(tuned.mixParams.vocalGain, 1.2);
+    assert.equal(tuned.mixParams.userOffsetMs, -100);
+
+    // 脏空间值（null / 字符串）回落默认，不静默变成 0（= 干声）
+    exec(
+      `UPDATE works SET mix_params = '{"reverbSpace":null,"reverbWet":"abc"}' WHERE id = 'w5'`,
+    );
+    const dirty = db.getWork('w5')!;
+    assert.equal(dirty.mixParams.reverbSpace, DEFAULT_MIX_PARAMS.reverbSpace);
+    assert.equal(dirty.mixParams.reverbWet, DEFAULT_MIX_PARAMS.reverbWet);
   });
 
   it('updateWork 写 title / status / levels / mp3Path', () => {

@@ -909,8 +909,16 @@ async function main() {
           offscreen,
           groups,
           applyInViewport: applyRect.top >= 0 && applyRect.bottom <= window.innerHeight,
-          presetCount: panel.querySelectorAll('.option-grid:not(.option-grid-4) .reverb-option').length,
-          reverbCount: panel.querySelectorAll('.option-grid-4 .reverb-option').length,
+          presetCount: panel.querySelectorAll('.option-grid .reverb-option').length,
+          // 混响 = 空间 + 湿度两个连续滑块：分别探测本体（0–1，步进 1%）
+          reverbSpaceSlider: (() => {
+            const s = panel.querySelector('input[type=range][data-mix-param="reverbSpace"]');
+            return s ? { min: s.min, max: s.max, step: s.step } : null;
+          })(),
+          reverbWetSlider: (() => {
+            const s = panel.querySelector('input[type=range][data-mix-param="reverbWet"]');
+            return s ? { min: s.min, max: s.max, step: s.step } : null;
+          })(),
         });
       })()`,
       `检查编辑页排版（${viewport.label}）`,
@@ -931,9 +939,19 @@ async function main() {
     }
     if (!layout.applyInViewport) throw new Error(`${viewport.label}「合成」按钮不在视口内`);
     if (layout.presetCount !== 10) throw new Error(`预设应有 10 个，实际 ${layout.presetCount}`);
-    if (layout.reverbCount !== 8) throw new Error(`混响应有 8 种，实际 ${layout.reverbCount}`);
+    for (const [name, slider] of [
+      ['reverbSpace', layout.reverbSpaceSlider],
+      ['reverbWet', layout.reverbWetSlider],
+    ]) {
+      if (!slider) {
+        throw new Error(`混响${name}应是滑块（input[data-mix-param="${name}"]），实际找不到`);
+      }
+      if (slider.min !== '0' || slider.max !== '1' || slider.step !== '0.01') {
+        throw new Error(`混响${name}滑块应是 0..1 步进 0.01，实际 ${JSON.stringify(slider)}`);
+      }
+    }
     pass(
-      `${viewport.label}：一屏放完（无滚动条）、预设 ${layout.presetCount} 种 / 混响 ${layout.reverbCount} 种、` +
+      `${viewport.label}：一屏放完（无滚动条）、预设 ${layout.presetCount} 种 / 混响 空间+湿度双滑块、` +
         `分组 ${layout.groups.join('·')} 全部常驻展开`,
     );
   }
@@ -1260,9 +1278,19 @@ async function main() {
       slider.dispatchEvent(new Event('input', { bubbles: true }));
       await new Promise((r) => setTimeout(r, 120));
 
-      const hall = [...document.querySelectorAll('.reverb-option')].find((b) => b.textContent.includes('大厅'));
-      if (hall) hall.click();
-      await new Promise((r) => setTimeout(r, 120));
+      // 混响 = 空间 + 湿度：直接把空间设到 hall 锚点附近（0.43，读数应显示「大厅」）、
+      // 湿度设 80%。注意 range 的 DOM 值会被浏览器吸附到 0.01 栅格
+      // （设 3/7 会读回 0.43），所以这里直接给栅格值，落库断言也按它来。
+      const space = document.querySelector('.mix-panel input[data-mix-param="reverbSpace"]');
+      const wet = document.querySelector('.mix-panel input[data-mix-param="reverbWet"]');
+      if (!space || !wet) return '找不到混响空间/湿度滑块';
+      setter.call(space, '0.43');
+      space.dispatchEvent(new Event('input', { bubbles: true }));
+      setter.call(wet, '0.8');
+      wet.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 150));
+      const spaceShown = space.closest('.field')?.querySelector('.slider-row-value')?.textContent ?? '';
+      if (!spaceShown.includes('大厅')) return '空间读数没显示「大厅」：' + spaceShown;
 
       const button = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === '合成');
       if (!button || button.disabled) return '合成按钮不可用';
@@ -1297,7 +1325,7 @@ async function main() {
     })()`,
     '核对混音参数',
   );
-  if (params.reverb !== 'hall' || Math.abs(params.vocalGain - 0.5) > 0.001) {
+  if (params.reverbSpace !== 0.43 || params.reverbWet !== 0.8 || Math.abs(params.vocalGain - 0.5) > 0.001) {
     throw new Error(`混音参数没生效：${JSON.stringify(params)}`);
   }
   pass(`重混成功，参数已落库：${JSON.stringify(params)}`);

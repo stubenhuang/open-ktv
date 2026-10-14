@@ -2,13 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import {
   DEFAULT_MIX_PARAMS,
   MIX_LIMITS,
-  REVERB_KINDS,
   REVERB_LABELS,
   VOCAL_PRESETS,
   VOCAL_PRESET_LABELS,
   type MixParams,
 } from '../../../shared/types';
-import { matchPreset, presetParams } from '../../../shared/mix';
+import { matchPreset, nearestReverbKind, presetParams } from '../../../shared/mix';
 
 interface Props {
   /** 作品当前的混音参数 */
@@ -81,6 +80,7 @@ function Slider({
   min,
   max,
   step,
+  param,
   onChange,
 }: {
   label: string;
@@ -89,6 +89,8 @@ function Slider({
   min: number;
   max: number;
   step: number;
+  /** 自动化（e2e）定位钩子；只给需要它的参数（目前是混响） */
+  param?: string;
   onChange: (next: number) => void;
 }) {
   return (
@@ -96,6 +98,7 @@ function Slider({
       <span className="m-slider-label">{label}</span>
       <input
         type="range"
+        data-mix-param={param}
         min={min}
         max={max}
         step={step}
@@ -114,7 +117,7 @@ function Slider({
  * 差别只在排版与说明的呈现方式：
  *  · 桌面靠 hover 气泡藏说明，触屏没有 hover —— 说明改成常驻小字，
  *    但只留真正会踩坑的两条（降噪只在成品生效、去齿音是近似）；
- *  · 预设/混响用可横滑的 chip，不占竖向空间；
+ *  · 预设用可横滑的 chip，不占竖向空间；混响是「空间 + 湿度」两个连续滑块（见下）；
  *  · **「合成」只有一处**：页面（MobileWorkEditPage）的粘底栏。面板里不再放按钮 ——
  *    长面板滚到底时用户要的是"不用滑回去也能合成"，一个悬停/常驻的粘底栏就够，
  *    两个入口只会让人犹豫点哪个。
@@ -171,20 +174,37 @@ export function MobileMixPanel({ value, onParamsChange }: Props) {
       <section className="m-mix-group">
         <div className="m-mix-group-head">
           <span>人声混响</span>
-          <span className="m-faint">空间由小到大</span>
+          <span className="m-faint">空间由小到大 · 湿度独立</span>
         </div>
-        <div className="m-chip-row m-chip-row-scroll">
-          {REVERB_KINDS.map((reverb) => (
-            <button
-              key={reverb}
-              type="button"
-              className={`m-chip${params.reverb === reverb ? ' active' : ''}`}
-              onClick={() => update({ reverb })}
-            >
-              {REVERB_LABELS[reverb]}
-            </button>
-          ))}
-        </div>
+        {/*
+           * 混响 = 空间 + 湿度两个连续滑块。空间轴上是原来的 8 个档位名
+           *（手机放不下刻度行，清单写进下面的常驻小字），取值连续：
+           * 拖一下走 1%，锚点之间插值，听感平滑过渡。
+           */}
+        <Slider
+          label="空间"
+          param="reverbSpace"
+          value={params.reverbSpace}
+          display={REVERB_LABELS[nearestReverbKind(params.reverbSpace)]}
+          min={MIX_LIMITS.reverb.space.min}
+          max={MIX_LIMITS.reverb.space.max}
+          step={MIX_LIMITS.reverb.space.step}
+          onChange={(reverbSpace) => update({ reverbSpace })}
+        />
+        <Slider
+          label="湿度"
+          param="reverbWet"
+          value={params.reverbWet}
+          display={params.reverbWet <= 0 ? '干声' : `${Math.round(params.reverbWet * 100)}%`}
+          min={MIX_LIMITS.reverb.wet.min}
+          max={MIX_LIMITS.reverb.wet.max}
+          step={MIX_LIMITS.reverb.wet.step}
+          onChange={(reverbWet) => update({ reverbWet })}
+        />
+        <p className="m-notes">
+          「空间」在原声 / 小房间 / 金属板 / 大厅 / 演唱会 / 教堂 / 体育场 / 峡谷之间连续过渡，
+          「湿度」独立控制混响量（0% = 干声）；预设只是起点，之后可继续微调，试听立即生效。
+        </p>
       </section>
 
       <section className="m-mix-group">

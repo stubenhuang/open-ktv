@@ -1109,6 +1109,42 @@ input[type='checkbox'] {
   text-align: right;
 }
 
+/*
+ * 混响「空间」滑块的档位刻度：8 个档名等距贴在滑块下方。
+ * 左右缩进刻意复刻滑块行的布局（标签列 84 + gap 12 / 读数列 60 + gap 12），
+ * 刻度行才和滑块左右边缘对齐；改滑块行的定宽时这里要跟着改。
+ * 首/末两个刻度不做居中位移，分别贴住滑块两端，不会探出容器。
+ */
+.slider-with-ticks {
+  display: flex;
+  flex-direction: column;
+}
+
+.slider-ticks {
+  position: relative;
+  height: 14px;
+  margin: 1px 72px 0 96px;
+  font-size: var(--fs-2xs);
+  line-height: 1;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+.slider-ticks span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.slider-ticks span:first-child {
+  transform: none;
+}
+
+.slider-ticks span:last-child {
+  transform: translateX(-100%);
+}
+
 .offset-value {
   display: inline-flex;
   align-items: center;
@@ -1590,7 +1626,7 @@ input[type='range']:disabled::-webkit-slider-thumb {
 }
 
 /*
- * 两列排布：左列「音效」（预设 10 + 混响 8 + 均衡 3，全面板最高的一列），
+ * 两列排布：左列「音效」（预设 10 + 混响滑块 + 均衡 3），
  * 右列「音量 / 修音 / 对齐 + 合成」。两列高度接近，整块面板才塞得进一屏。
  * 装不下两列时（窄屏）回落单列，那时页面恢复成正常文档流。
  */
@@ -1645,7 +1681,7 @@ input[type='range']:disabled::-webkit-slider-thumb {
 }
 
 /*
- * 一列竖排的滑块（均衡 3 行 / 音量 2 行 / 修音 2 行）。
+ * 一列竖排的滑块（混响 2 行 / 均衡 3 行 / 音量 2 行 / 修音 2 行）。
  *
  * 原来这三组是横排的（均衡 3 列、音量和修音各 2 列），改成竖排之后
  * 每条滑块的标签/滑块/读数都在同一行里（见 .slider-row）—— 否则
@@ -1692,7 +1728,7 @@ input[type='range']:disabled::-webkit-slider-thumb {
 
 /*
  * 一排选项按钮：装得下就一行，装不下再折行（点歌台的「全部/音频/视频」用它）。
- * 混音面板的预设/混响不用这个 —— 那边要固定列数的网格（见 .option-grid）。
+ * 混音面板的预设不用这个 —— 那边要固定列数的网格（见 .option-grid）。
  */
 .option-row {
   display: flex;
@@ -1705,8 +1741,9 @@ input[type='range']:disabled::-webkit-slider-thumb {
 }
 
 /*
- * 预设 / 混响按钮：固定列数的网格，不再是「能放几行放几行」的流式换行 ——
- * 10 个预设 5×2、8 种混响 4×2，行数确定，面板高度才可预测。
+ * 预设按钮：固定列数的网格，不再是「能放几行放几行」的流式换行 ——
+ * 10 个预设 5×2，行数确定，面板高度才可预测。
+ * （混响曾经也是这里的 4×2 按钮网格，现在是滑块，见 MixPanel 的 Slider。）
  */
 .option-grid {
   display: grid;
@@ -1714,14 +1751,12 @@ input[type='range']:disabled::-webkit-slider-thumb {
   gap: 10px;
 }
 
-.option-grid-4 {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
 /*
- * 预设 / 混响按钮：未选中态用 500 字重 + 中灰。
+ * 预设按钮：未选中态用 500 字重 + 中灰。
  * 原来是 400 + 弱灰，在深底上轻飘飘的；选中态是 600 + 强调色，
  * 两档字重拉开差距，一眼能看出当前选的是哪个。
+ * （类名 reverb-option 是历史沿用：混响按钮没了之后它只服务预设，
+ *   点歌台的筛选按钮也复用它 —— 见 DiscoverPage 的 .option-row。）
  */
 .reverb-option {
   min-width: 0;
@@ -1891,8 +1926,7 @@ input[type='range']:disabled::-webkit-slider-thumb {
 }
 
 @media (max-width: 420px) {
-  .option-grid,
-  .option-grid-4 {
+  .option-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

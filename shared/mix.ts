@@ -8,10 +8,12 @@
 import type {
   MixParams,
   PreviewParams,
+  ReverbAnchor,
   ReverbKind,
   VocalPreset,
   WorkLevels,
 } from './types.ts';
+import { REVERB_ANCHORS, REVERB_LABELS } from './types.ts';
 
 /** 对齐偏移的绝对上限（ms）：用户微调 − 自动间隔后夹到 ±MAX_OFFSET_MS */
 export const MAX_OFFSET_MS = 30_000;
@@ -136,7 +138,8 @@ export function toPreviewParams(
     MixParams,
     | 'vocalGain'
     | 'accompGain'
-    | 'reverb'
+    | 'reverbSpace'
+    | 'reverbWet'
     | 'userOffsetMs'
     | 'eqLowDb'
     | 'eqMidDb'
@@ -151,7 +154,8 @@ export function toPreviewParams(
   return {
     vocalGain: params.vocalGain,
     accompGain: params.accompGain,
-    reverb: params.reverb,
+    reverbSpace: params.reverbSpace,
+    reverbWet: params.reverbWet,
     offsetMs: effectiveOffsetMs(autoOffsetMs, params.userOffsetMs),
     levels,
     eqLowDb: params.eqLowDb,
@@ -265,30 +269,35 @@ export interface VocalPresetSpec {
   eqHighDb: number;
   compression: number;
   deEss: number;
-  reverb: ReverbKind;
+  /** 混响空间起点（0–1，锚点位置）；用户之后还能用「空间」滑块连续微调 */
+  reverbSpace: number;
+  /** 混响湿度起点（0–1）；用「湿度」滑块连续微调 */
+  reverbWet: number;
 }
 
 /**
  * 预设 = 一组具名默认值，不是不透明滤镜串。
  *
- * 点了预设就等于把这里的数字写进 MixParams 的对应字段，之后用户还能继续手调。
+ * 点了预设就等于把这里的数字写进 MixParams 的对应字段，之后用户还能继续手调
+ *（混响现在是「空间 + 湿度」两个连续滑块，精度远高于原来的 8 档）。
  * 好处是预览与服务端天然同构（它们只看数值），也省掉「预设和滑块谁说了算」
  * 这类必然扯不清的推导。
  *
  * 10 个预设的参数包两两不同：matchPreset 是按数值反推的，包与包一旦重了
- * 就会有两个按钮同时高亮，用户点不出区别。
+ * 就会有两个按钮同时高亮，用户点不出区别。混响起点也因此全部错开 ——
+ * 10 种预设覆盖从「小房间干声」到「体育场满湿度」的整条空间轴。
  */
 export const VOCAL_PRESET_SPECS: Record<VocalPreset, VocalPresetSpec> = {
-  natural: { eqLowDb: 0, eqMidDb: 0, eqHighDb: 0, compression: 0, deEss: 0, reverb: 'room' },
-  warm: { eqLowDb: 3, eqMidDb: 0.5, eqHighDb: -1.5, compression: 0.25, deEss: 0, reverb: 'room' },
-  bright: { eqLowDb: -1.5, eqMidDb: 1, eqHighDb: 4, compression: 0.15, deEss: 0.2, reverb: 'room' },
-  sweet: { eqLowDb: 1.5, eqMidDb: 2, eqHighDb: 2.5, compression: 0.35, deEss: 0.35, reverb: 'room' },
-  magnetic: { eqLowDb: 2, eqMidDb: 3, eqHighDb: -2, compression: 0.45, deEss: 0.15, reverb: 'hall' },
-  ethereal: { eqLowDb: -2, eqMidDb: -1, eqHighDb: 3, compression: 0.2, deEss: 0.3, reverb: 'stage' },
-  soft: { eqLowDb: 0.5, eqMidDb: -1, eqHighDb: 1, compression: 0.2, deEss: 0.25, reverb: 'plate' },
-  powerful: { eqLowDb: 1, eqMidDb: 1.5, eqHighDb: 3.5, compression: 0.6, deEss: 0.1, reverb: 'room' },
-  retro: { eqLowDb: 4, eqMidDb: -1.5, eqHighDb: -3, compression: 0.3, deEss: 0, reverb: 'plate' },
-  live: { eqLowDb: 1, eqMidDb: 0.5, eqHighDb: 1.5, compression: 0.5, deEss: 0.2, reverb: 'stage' },
+  natural: { eqLowDb: 0, eqMidDb: 0, eqHighDb: 0, compression: 0, deEss: 0, reverbSpace: anchorSpace('room'), reverbWet: 1 },
+  warm: { eqLowDb: 3, eqMidDb: 0.5, eqHighDb: -1.5, compression: 0.25, deEss: 0, reverbSpace: anchorSpace('hall'), reverbWet: 0.8 },
+  bright: { eqLowDb: -1.5, eqMidDb: 1, eqHighDb: 4, compression: 0.15, deEss: 0.2, reverbSpace: anchorSpace('plate'), reverbWet: 0.7 },
+  sweet: { eqLowDb: 1.5, eqMidDb: 2, eqHighDb: 2.5, compression: 0.35, deEss: 0.35, reverbSpace: anchorSpace('hall'), reverbWet: 0.95 },
+  magnetic: { eqLowDb: 2, eqMidDb: 3, eqHighDb: -2, compression: 0.45, deEss: 0.15, reverbSpace: anchorSpace('stage'), reverbWet: 0.9 },
+  ethereal: { eqLowDb: -2, eqMidDb: -1, eqHighDb: 3, compression: 0.2, deEss: 0.3, reverbSpace: anchorSpace('cathedral'), reverbWet: 0.85 },
+  soft: { eqLowDb: 0.5, eqMidDb: -1, eqHighDb: 1, compression: 0.2, deEss: 0.25, reverbSpace: anchorSpace('plate'), reverbWet: 0.6 },
+  powerful: { eqLowDb: 1, eqMidDb: 1.5, eqHighDb: 3.5, compression: 0.6, deEss: 0.1, reverbSpace: anchorSpace('arena'), reverbWet: 0.75 },
+  retro: { eqLowDb: 4, eqMidDb: -1.5, eqHighDb: -3, compression: 0.3, deEss: 0, reverbSpace: anchorSpace('plate'), reverbWet: 0.75 },
+  live: { eqLowDb: 1, eqMidDb: 0.5, eqHighDb: 1.5, compression: 0.5, deEss: 0.2, reverbSpace: anchorSpace('stage'), reverbWet: 1 },
 };
 
 /** 预设对应的那部分参数（UI 点预设时写进 MixParams） */
@@ -301,11 +310,27 @@ export function presetParams(preset: VocalPreset): VocalPresetSpec {
  *
  * UI 用它决定哪个预设按钮高亮 —— 与其记住「最后点了哪个」，不如
  * 按实际数值反推，这样手调过之后高亮会自动消失，不会骗人。
+ *
+ * 连续量的容差比离散量严，而且必须**小于滑块一步能造成的最近距离**：
+ * 空间锚点是 i/7（不在 0.01 栅格上），浏览器把 DOM 值吸附到栅格后，
+ * 离锚点最近的栅格点也有 0.0014 的偏差 —— 容差取 0.001，拖动必掉高亮，
+ * 而预设写入的原值（精确 i/7）必然命中。湿度同理（0.005 < 一步 0.01）。
  */
 export function matchPreset(
-  params: Pick<MixParams, 'eqLowDb' | 'eqMidDb' | 'eqHighDb' | 'compression' | 'deEss' | 'reverb'>,
+  params: Pick<
+    MixParams,
+    | 'eqLowDb'
+    | 'eqMidDb'
+    | 'eqHighDb'
+    | 'compression'
+    | 'deEss'
+    | 'reverbSpace'
+    | 'reverbWet'
+  >,
 ): VocalPreset | null {
   const close = (a: number, b: number) => Math.abs((Number(a) || 0) - b) < 0.01;
+  const closeSpace = (a: number, b: number) => Math.abs((Number(a) || 0) - b) < 0.001;
+  const closeWet = (a: number, b: number) => Math.abs((Number(a) || 0) - b) < 0.005;
   for (const [preset, spec] of Object.entries(VOCAL_PRESET_SPECS) as [
     VocalPreset,
     VocalPresetSpec,
@@ -316,7 +341,8 @@ export function matchPreset(
       close(params.eqHighDb, spec.eqHighDb) &&
       close(params.compression, spec.compression) &&
       close(params.deEss, spec.deEss) &&
-      params.reverb === spec.reverb
+      closeSpace(params.reverbSpace, spec.reverbSpace) &&
+      closeWet(params.reverbWet, spec.reverbWet)
     ) {
       return preset;
     }
@@ -343,26 +369,116 @@ export function needsVocalPreProcess(
   );
 }
 
+/* ------------------------------ 混响：空间 × 湿度 ------------------------------ */
+
 /**
- * 实时预览的混响参数（8 档）。
+ * 在锚点表上做分段线性插值。
  *
- * 服务端用 aecho（延迟回声，见 server/src/mix.ts 的 REVERB_FILTER），
- * Web Audio 里没有对应滤镜，这里用「程序生成的指数衰减噪声 IR + ConvolverNode」
- * 做听感近似：八档的尾巴长度/前延迟/湿度按 REVERB_KINDS 的顺序递进，
- * 切换时差异清晰可辨。预览只为试听，最终音色以下载的成品 MP3 为准。
- *
- * dry 为 null = 旁通混响。
+ * 锚点处**原样返回锚点值**（落在整数锚点坐标上时不做任何运算）—— 这是
+ * 「老作品零回归」的数值基础：`reverb: 'hall'` 迁移成 (3/7, 湿度 1) 后，
+ * 插值返回的就是 hall 锚点的原值，服务端滤镜串与试听 IR 和旧版逐字节一致。
  */
-export const REVERB_PREVIEW: Record<
-  ReverbKind,
-  { seconds: number; preDelayMs: number; decay: number; wet: number } | null
-> = {
-  dry: null,
-  room: { seconds: 0.35, preDelayMs: 10, decay: 2.6, wet: 0.35 },
-  plate: { seconds: 0.5, preDelayMs: 8, decay: 2.8, wet: 0.32 },
-  hall: { seconds: 1.3, preDelayMs: 25, decay: 2.0, wet: 0.45 },
-  stage: { seconds: 2.6, preDelayMs: 45, decay: 1.6, wet: 0.55 },
-  cathedral: { seconds: 3.8, preDelayMs: 60, decay: 1.4, wet: 0.6 },
-  arena: { seconds: 5, preDelayMs: 80, decay: 1.2, wet: 0.62 },
-  canyon: { seconds: 6.5, preDelayMs: 110, decay: 1, wet: 0.65 },
-};
+function lerpAnchor(pick: (anchor: ReverbAnchor) => number, space: number): number {
+  const scaled = clamp01(space) * (REVERB_ANCHORS.length - 1);
+  const nearest = Math.round(scaled);
+  // 落在锚点上（含 3/7 这类浮点残差）：直接取锚点值
+  if (Math.abs(scaled - nearest) < 1e-9) return pick(REVERB_ANCHORS[nearest]!);
+  const lower = Math.min(REVERB_ANCHORS.length - 1, Math.floor(scaled));
+  const upper = Math.min(REVERB_ANCHORS.length - 1, lower + 1);
+  const t = scaled - lower;
+  const from = pick(REVERB_ANCHORS[lower]!);
+  const to = pick(REVERB_ANCHORS[upper]!);
+  return from + (to - from) * t;
+}
+
+export interface ReverbDsp {
+  /** 空间 0 或湿度 0：不挂滤镜（与旧 dry 同路，老作品的干声分文不差） */
+  bypass: boolean;
+  /** aecho 入增益（锚点值 × 湿度） */
+  inGain: number;
+  /** aecho 出增益（干声侧）：湿度 1 = 锚点原值，湿度 0 = 1（满干声） */
+  outGain: number;
+  delayMs: number;
+  decay: number;
+  /** 试听湿度（锚点湿度 × 用户湿度，0..1） */
+  wet: number;
+  /* ---- 试听 IR ---- */
+  tailSec: number;
+  preDelayMs: number;
+  irDecay: number;
+}
+
+/**
+ * 空间 + 湿度 → 全套混响参数（服务端 aecho 与前端预览共用这一份）。
+ *
+ * 湿度的语义是「发送量」：只缩放回声支路（inGain / wet），干声侧反向补偿
+ * （outGain 从锚点值回到 1），所以湿度 0 就是干声、湿度 1 就是锚点原值，
+ * 中间是平滑的交叉淡化 —— 拖湿度不会有音量台阶。
+ */
+export function reverbDsp(space: number, wet: number): ReverbDsp {
+  const s = clamp01(Number.isFinite(space) ? space : 0);
+  const w = clamp01(Number.isFinite(wet) ? wet : 0);
+  const anchorOut = lerpAnchor((anchor) => anchor.outGain, s);
+  return {
+    bypass: s <= 0 || w <= 0,
+    inGain: lerpAnchor((anchor) => anchor.inGain, s) * w,
+    outGain: 1 - (1 - anchorOut) * w,
+    delayMs: lerpAnchor((anchor) => anchor.delayMs, s),
+    decay: lerpAnchor((anchor) => anchor.decay, s),
+    wet: lerpAnchor((anchor) => anchor.wet, s) * w,
+    tailSec: lerpAnchor((anchor) => anchor.tailSec, s),
+    preDelayMs: lerpAnchor((anchor) => anchor.preDelayMs, s),
+    irDecay: lerpAnchor((anchor) => anchor.irDecay, s),
+  };
+}
+
+/** 试听 IR 规格（尾巴秒数 / 前延迟 / 衰减指数 / 该空间档的满湿度） */
+export function reverbIrSpec(space: number): {
+  seconds: number;
+  preDelayMs: number;
+  decay: number;
+  wet: number;
+} {
+  const dsp = reverbDsp(space, 1);
+  return { seconds: dsp.tailSec, preDelayMs: dsp.preDelayMs, decay: dsp.irDecay, wet: dsp.wet };
+}
+
+/**
+ * aecho 滤镜字符串；旁通返回 null。
+ *
+ * 数字格式刻意「去掉多余的零」（0.8 而不是 0.80）：锚点处的输出必须与旧表
+ * 逐字节一致，tests/mix.test.ts 对 8 个档位逐一钉死了期望串。
+ */
+export function reverbAechoFilter(space: number, wet: number): string | null {
+  const dsp = reverbDsp(space, wet);
+  if (dsp.bypass) return null;
+  const fmt = (value: number) => String(Number(value.toFixed(4)));
+  return `aecho=${fmt(dsp.inGain)}:${fmt(dsp.outGain)}:${fmt(dsp.delayMs)}:${fmt(dsp.decay)}`;
+}
+
+/** 档位名 → 空间轴位置（老数据迁移、预设表都走它，避免手写 i/7 走样） */
+export function anchorSpace(kind: ReverbKind): number {
+  return (
+    REVERB_ANCHORS.find((anchor) => anchor.kind === kind)?.position ?? REVERB_ANCHORS[1]!.position
+  );
+}
+
+/** 空间位置 → 最近的档位名（UI 读数 / 作品库徽章）；并列取偏小的那一档 */
+export function nearestReverbKind(space: number): ReverbKind {
+  const s = clamp01(Number.isFinite(space) ? space : 0);
+  let best = REVERB_ANCHORS[0]!;
+  for (const anchor of REVERB_ANCHORS) {
+    if (Math.abs(anchor.position - s) < Math.abs(best.position - s)) best = anchor;
+  }
+  return best.kind;
+}
+
+/** 给人看的一行混响摘要（作品库徽章 / 服务端日志），如「大厅 65%」/「原声」 */
+export function describeReverb(space: number, wet: number): string {
+  const s = clamp01(Number.isFinite(space) ? space : 0);
+  const w = clamp01(Number.isFinite(wet) ? wet : 0);
+  if (s <= 0 || w <= 0) return REVERB_LABELS.dry;
+  const pct = Math.round(w * 100);
+  const label = REVERB_LABELS[nearestReverbKind(s)];
+  return pct >= 100 ? label : `${label} ${pct}%`;
+}

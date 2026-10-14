@@ -59,7 +59,7 @@ before(async () => {
     vocalPath: vocal,
     vocalDuration: 2,
     autoOffsetMs: 150,
-    mixParams: { ...DEFAULT_MIX_PARAMS, reverb: 'dry' },
+    mixParams: { ...DEFAULT_MIX_PARAMS, reverbSpace: 0 },
     status: 'mixing',
   });
 });
@@ -135,7 +135,7 @@ describe('mixWorkToMp3', () => {
     const work = db.getWork(workId)!;
 
     const result = await mixJob.mixWorkToMp3({
-      work: { ...work, mixParams: { ...DEFAULT_MIX_PARAMS, reverb: 'dry' } },
+      work: { ...work, mixParams: { ...DEFAULT_MIX_PARAMS, reverbSpace: 0 } },
       track,
       onProgress: () => {},
     });
@@ -159,7 +159,7 @@ describe('mixWorkToMp3', () => {
         ...work,
         mixParams: {
           ...DEFAULT_MIX_PARAMS,
-          reverb: 'dry',
+          reverbSpace: 0,
           compression: 0.5,
           deEss: 0.2,
           eqLowDb: 3,

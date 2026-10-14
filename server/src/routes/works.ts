@@ -25,6 +25,7 @@ import {
 } from '../db.ts';
 import { mixKey, workToDto, workToListItem } from '../dto.ts';
 import { clampNumber } from '../../../shared/numbers.ts';
+import { anchorSpace, describeReverb } from '../../../shared/mix.ts';
 import { isQueued, enqueue } from '../jobs.ts';
 import { createLogger } from '../logger.ts';
 import { sendMedia } from '../media.ts';
@@ -48,9 +49,22 @@ const withWork = (handler: (req: Request, res: Response, work: WorkRecord) => vo
 
 export function sanitizeMixParams(input: unknown, base: MixParams): MixParams {
   const raw = (input ?? {}) as Record<string, unknown>;
-  const reverb = REVERB_KINDS.includes(raw.reverb as ReverbKind)
+  // 新字段（空间/湿度）优先；只带旧档位名时按锚点迁移（老客户端/陈旧标签页）
+  const legacyKind = REVERB_KINDS.includes(raw.reverb as ReverbKind)
     ? (raw.reverb as ReverbKind)
-    : base.reverb;
+    : null;
+  const reverbSpace = clampNumber(
+    raw.reverbSpace,
+    MIX_LIMITS.reverb.space.min,
+    MIX_LIMITS.reverb.space.max,
+    legacyKind ? anchorSpace(legacyKind) : base.reverbSpace,
+  );
+  const reverbWet = clampNumber(
+    raw.reverbWet,
+    MIX_LIMITS.reverb.wet.min,
+    MIX_LIMITS.reverb.wet.max,
+    legacyKind ? 1 : base.reverbWet,
+  );
   const vocalPreset = VOCAL_PRESETS.includes(raw.vocalPreset as VocalPreset)
     ? (raw.vocalPreset as VocalPreset)
     : base.vocalPreset;
@@ -63,7 +77,8 @@ export function sanitizeMixParams(input: unknown, base: MixParams): MixParams {
       MIX_LIMITS.gain.max,
       base.accompGain,
     ),
-    reverb,
+    reverbSpace,
+    reverbWet,
     userOffsetMs: Math.round(
       clampNumber(
         raw.userOffsetMs,
@@ -134,7 +149,7 @@ function startMix(workId: string): void {
       log.info(
         `${work.title}｜对齐偏移 ${result.offsetMs}ms｜人声 ${result.vocalGainDb.toFixed(1)}dB ` +
           `×${work.mixParams.vocalGain}｜伴奏 ${result.accompGainDb.toFixed(1)}dB ×${work.mixParams.accompGain}｜` +
-          `混响 ${work.mixParams.reverb}`,
+          `混响 ${describeReverb(work.mixParams.reverbSpace, work.mixParams.reverbWet)}`,
         { id: workId, trackId: work.trackId },
       );
     },

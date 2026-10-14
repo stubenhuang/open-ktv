@@ -14,6 +14,7 @@ import {
   type WorkLevels,
   type WorkStatus,
 } from '../../shared/types.ts';
+import { anchorSpace } from '../../shared/mix.ts';
 import { createLogger } from './logger.ts';
 import { DB_FILE, ensureDirs } from './paths.ts';
 
@@ -366,23 +367,38 @@ function toTrack(row: TrackRow): TrackRecord {
  * 重新合成的出声与本次改动前逐字节一致（有测试守着）。
  * 解析不出数字（手改库、脏数据）也走同一条回落路径，不静默变成 0。
  *
+ * 混响的迁移：老作品存的是 `reverb: 'hall'` 这样的档位名。它映射到
+ * 空间轴上的锚点位置（i/7）+ 满湿度，插值在锚点原样返回锚点值，
+ * 于是老作品重新合成的滤镜串与改动前逐字节一致（tests/db.test.ts 守着）。
+ * 没有档位名也没有新字段 → 回落默认（room 锚点）。
+ *
  * 库里可能还留着更早版本写下的键（例如已删掉的升降调），一律忽略：
  * 返回的对象只按当前 MixParams 的字段集构造。
  */
 function parseMixParams(raw: string): MixParams {
   const fallback = DEFAULT_MIX_PARAMS;
   try {
-    const parsed = JSON.parse(raw) as Partial<MixParams>;
+    const parsed = JSON.parse(raw) as Partial<MixParams> & { reverb?: unknown };
 
+    // 严格有限数：只认真正的 number。旧 helper 用 Number(value) 会把 null 当成 0
+    //（湿度为 0 = 干声），这里不能犯这个错。
     const num = (value: unknown, base: number): number =>
-      Number.isFinite(Number(value)) ? Number(value) : base;
+      typeof value === 'number' && Number.isFinite(value) ? value : base;
+    const unit = (value: unknown, base: number): number =>
+      Math.min(1, Math.max(0, num(value, base)));
+
+    // 新字段优先；只有旧档位名时按锚点迁移（湿度 1 = 锚点原值）
+    const legacyKind = REVERB_KINDS.includes(parsed.reverb as ReverbKind)
+      ? (parsed.reverb as ReverbKind)
+      : null;
+    const reverbSpace = unit(parsed.reverbSpace, legacyKind ? anchorSpace(legacyKind) : fallback.reverbSpace);
+    const reverbWet = unit(parsed.reverbWet, legacyKind ? 1 : fallback.reverbWet);
 
     return {
       vocalGain: num(parsed.vocalGain, fallback.vocalGain),
       accompGain: num(parsed.accompGain, fallback.accompGain),
-      reverb: REVERB_KINDS.includes(parsed.reverb as ReverbKind)
-        ? (parsed.reverb as ReverbKind)
-        : fallback.reverb,
+      reverbSpace,
+      reverbWet,
       userOffsetMs: num(parsed.userOffsetMs, fallback.userOffsetMs),
       vocalPreset: VOCAL_PRESETS.includes(parsed.vocalPreset as VocalPreset)
         ? (parsed.vocalPreset as VocalPreset)

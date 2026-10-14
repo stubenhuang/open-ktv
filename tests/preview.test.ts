@@ -2,22 +2,32 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   MAX_OFFSET_MS,
-  REVERB_PREVIEW,
   VOCAL_PRESET_SPECS,
+  anchorSpace,
   compressorParams,
   dbToLinear,
   deEssGainDb,
   deEssEnabled,
+  describeReverb,
   effectiveOffsetMs,
   matchPreset,
+  nearestReverbKind,
   needsVocalPreProcess,
   previewDurationSec,
   previewLinearGains,
+  reverbDsp,
+  reverbIrSpec,
   toPreviewParams,
   vocalChainLinearGain,
 } from '../shared/mix.ts';
 import { computeLevels } from '../server/src/mix.ts';
-import { DEFAULT_MIX_PARAMS, REVERB_KINDS, VOCAL_PRESETS, type MixParams } from '../shared/types.ts';
+import {
+  DEFAULT_MIX_PARAMS,
+  REVERB_ANCHORS,
+  REVERB_KINDS,
+  VOCAL_PRESETS,
+  type MixParams,
+} from '../shared/types.ts';
 
 const baseParams: MixParams = { ...DEFAULT_MIX_PARAMS };
 
@@ -102,7 +112,8 @@ describe('toPreviewParams', () => {
     const levels = { vocalGainDb: -3, accompGainDb: 2 };
     const preview = toPreviewParams({ ...baseParams, userOffsetMs: 500 }, 150, levels);
     assert.equal(preview.offsetMs, 350);
-    assert.equal(preview.reverb, 'room');
+    assert.equal(preview.reverbSpace, DEFAULT_MIX_PARAMS.reverbSpace);
+    assert.equal(preview.reverbWet, 1);
     assert.deepEqual(preview.levels, levels);
   });
 
@@ -113,27 +124,73 @@ describe('toPreviewParams', () => {
   });
 });
 
-describe('预览混响参数表', () => {
-  it('八档齐全，dry 旁通', () => {
-    assert.equal(REVERB_PREVIEW.dry, null);
-    for (const kind of REVERB_KINDS) {
-      const spec = REVERB_PREVIEW[kind];
-      if (kind === 'dry') continue;
-      assert.ok(spec, `${kind} 缺少参数`);
-      assert.ok(spec.seconds > 0 && spec.wet > 0 && spec.wet < 1 && spec.decay > 0);
+describe('混响：空间 × 湿度（锚点表 + 插值）', () => {
+  it('8 个锚点均匀分布在空间轴上，顺序 = 空间由小到大', () => {
+    assert.equal(REVERB_ANCHORS.length, 8);
+    REVERB_ANCHORS.forEach((anchor, index) => {
+      assert.equal(anchor.kind, REVERB_KINDS[index], `第 ${index} 个锚点应与档位表同序`);
+      assert.ok(Math.abs(anchor.position - index / 7) < 1e-12, '锚点应落在 i/7 上');
+    });
+    // 非原声档的尾巴必须递增（档位表两端同序，试听与成品才对得上）
+    const tails = REVERB_ANCHORS.filter((anchor) => anchor.kind !== 'dry').map((a) => a.tailSec);
+    for (let i = 1; i < tails.length; i += 1) {
+      assert.ok(tails[i]! > tails[i - 1]!, `第 ${i} 档的尾巴应比上一档长`);
     }
   });
 
-  it('尾巴长度按 REVERB_KINDS 的顺序递进（档位表两端必须同序）', () => {
-    const kinds = REVERB_KINDS.filter((kind) => kind !== 'dry');
-    for (let i = 1; i < kinds.length; i += 1) {
-      const previous = REVERB_PREVIEW[kinds[i - 1]!]!;
-      const current = REVERB_PREVIEW[kinds[i]!]!;
-      assert.ok(
-        current.seconds > previous.seconds,
-        `${kinds[i]} 的尾巴应比 ${kinds[i - 1]} 长（${current.seconds} vs ${previous.seconds}）`,
-      );
+  it('锚点 + 满湿度 = 锚点原值（老作品零回归的数值基础）', () => {
+    for (const anchor of REVERB_ANCHORS) {
+      const dsp = reverbDsp(anchorSpace(anchor.kind), 1);
+      assert.equal(dsp.inGain, anchor.inGain, `${anchor.kind} 入增益`);
+      assert.equal(dsp.outGain, anchor.outGain, `${anchor.kind} 出增益`);
+      assert.equal(dsp.delayMs, anchor.delayMs, `${anchor.kind} 延迟`);
+      assert.equal(dsp.decay, anchor.decay, `${anchor.kind} 衰减`);
+      const ir = reverbIrSpec(anchorSpace(anchor.kind));
+      assert.equal(ir.seconds, anchor.tailSec, `${anchor.kind} 尾巴`);
+      assert.equal(ir.preDelayMs, anchor.preDelayMs, `${anchor.kind} 前延迟`);
+      assert.equal(ir.decay, anchor.irDecay, `${anchor.kind} IR 衰减`);
+      assert.equal(ir.wet, anchor.wet, `${anchor.kind} 湿度`);
     }
+  });
+
+  it('旁通规则：空间 0 或湿度 0 都不出声响', () => {
+    assert.equal(reverbDsp(0, 1).bypass, true, '原声档旁通');
+    assert.equal(reverbDsp(anchorSpace('canyon'), 0).bypass, true, '湿度 0 也是干声');
+    assert.equal(reverbDsp(anchorSpace('room'), 1).bypass, false);
+    // 湿度 0 时干声侧回到满电平（out=1、发送=0）
+    const muted = reverbDsp(anchorSpace('hall'), 0);
+    assert.equal(muted.inGain, 0);
+    assert.equal(muted.outGain, 1);
+    assert.equal(muted.wet, 0);
+  });
+
+  it('插值单调：尾巴与延迟随空间连续递增', () => {
+    let previous = reverbDsp(0.01, 1);
+    for (const space of [0.2, 0.4, 0.6, 0.8, 0.99]) {
+      const current = reverbDsp(space, 1);
+      assert.ok(current.delayMs > previous.delayMs, `延迟应随空间递增：${space}`);
+      assert.ok(current.tailSec >= previous.tailSec, `尾巴应随空间不减：${space}`);
+      previous = current;
+    }
+  });
+
+  it('湿度是发送量：只缩放回声支路，不动空间形状', () => {
+    const full = reverbDsp(0.5, 1);
+    const half = reverbDsp(0.5, 0.5);
+    assert.ok(Math.abs(half.inGain - full.inGain * 0.5) < 1e-9, '发送量减半');
+    assert.ok(Math.abs(half.wet - full.wet * 0.5) < 1e-9, '试听湿度减半');
+    assert.equal(half.delayMs, full.delayMs, '延迟不该随湿度变');
+    assert.ok(half.outGain > full.outGain, '湿度越低干声越接近满电平');
+  });
+
+  it('nearestReverbKind / describeReverb：读数与摘要', () => {
+    assert.equal(nearestReverbKind(0), 'dry');
+    assert.equal(nearestReverbKind(anchorSpace('hall')), 'hall');
+    assert.equal(nearestReverbKind(0.45), 'hall', '0.45 离 hall(3/7) 最近');
+    assert.equal(describeReverb(anchorSpace('hall'), 1), '大厅');
+    assert.equal(describeReverb(anchorSpace('hall'), 0.65), '大厅 65%');
+    assert.equal(describeReverb(anchorSpace('canyon'), 0), '原声', '湿度 0 就是干声');
+    assert.equal(describeReverb(0, 1), '原声');
   });
 });
 
@@ -226,7 +283,7 @@ describe('修音与音效链：共享公式（服务端 ffmpeg 与前端预览�
   it('matchPreset 按数值反推：手调过之后不再谎报命中', () => {
     for (const preset of VOCAL_PRESETS) {
       assert.equal(
-        matchPreset({ ...VOCAL_PRESET_SPECS[preset], reverb: VOCAL_PRESET_SPECS[preset].reverb }),
+        matchPreset(VOCAL_PRESET_SPECS[preset]),
         preset,
         `${preset} 应该能被自己的参数包命中`,
       );
@@ -235,6 +292,37 @@ describe('修音与音效链：共享公式（服务端 ffmpeg 与前端预览�
     // 在某个预设上动了均衡 → 不再匹配任何预设
     const tweaked = { ...VOCAL_PRESET_SPECS.magnetic, eqMidDb: VOCAL_PRESET_SPECS.magnetic.eqMidDb + 1 };
     assert.equal(matchPreset(tweaked), null);
+
+    // 拖了一下混响空间/湿度 → 同样掉出预设（连续量容差比滑块步进还小）
+    const nudgedSpace = {
+      ...VOCAL_PRESET_SPECS.magnetic,
+      reverbSpace: VOCAL_PRESET_SPECS.magnetic.reverbSpace + 0.01,
+    };
+    assert.equal(matchPreset(nudgedSpace), null, '拖一格空间就该掉出预设');
+    const nudgedWet = {
+      ...VOCAL_PRESET_SPECS.magnetic,
+      reverbWet: VOCAL_PRESET_SPECS.magnetic.reverbWet - 0.01,
+    };
+    assert.equal(matchPreset(nudgedWet), null, '拖一格湿度也该掉出预设');
+
+    // 浏览器会把 range 的 DOM 值吸附到 0.01 栅格：锚点最近的栅格点
+    // （偏差 0.0014）也不该冒充预设 —— 容差必须比这个偏差还小
+    const snapped = {
+      ...VOCAL_PRESET_SPECS.magnetic,
+      reverbSpace: Math.round(VOCAL_PRESET_SPECS.magnetic.reverbSpace * 100) / 100,
+    };
+    assert.equal(matchPreset(snapped), null, '吸附到栅格的值不该还命中预设');
+  });
+
+  it('10 个预设的混响起点两两不同（否则两个按钮会同时高亮）', () => {
+    const points = VOCAL_PRESETS.map((preset) => {
+      const spec = VOCAL_PRESET_SPECS[preset];
+      return `${spec.reverbSpace}:${spec.reverbWet}`;
+    });
+    assert.equal(new Set(points).size, VOCAL_PRESETS.length, '混响起点必须两两不同');
+    // 空间要真的铺开：至少覆盖 5 个不同的档位，不是全挤在小房间
+    const spaces = new Set(VOCAL_PRESETS.map((p) => VOCAL_PRESET_SPECS[p].reverbSpace));
+    assert.ok(spaces.size >= 5, `10 种预设应覆盖至少 5 个空间档，实际 ${spaces.size}`);
   });
 
   it('needsVocalPreProcess：全中性时不跑预处理（老作品走原路径）', () => {
