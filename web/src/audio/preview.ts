@@ -3,10 +3,12 @@ import {
   EQ_BANDS,
   compressorParams,
   deEssGainDb,
+  generateReverbIr,
   mixTimeline,
   previewDurationSec,
   previewLinearGains,
   reverbDsp,
+  reverbIrKey,
   reverbIrSpec,
   toPreviewParams,
 } from '../../../shared/mix';
@@ -32,7 +34,9 @@ import { errorMessage } from '../utils';
  *    压缩的 makeup 已经并进 vocalGain（见 vocalChainLinearGain），这里不再补一次；
  *  - deEss：静态高架下压，对服务端 deesser 的听感近似；
  *  - vocalGain/accompGain：实测归一化增益 × 用户滑块 × 压缩补偿（shared/mix.ts 的公式）；
- *  - convolver：程序生成的指数衰减噪声 IR，对服务端 aecho 混响（空间 × 湿度连续）的听感近似；
+ *  - convolver：程序生成的指数衰减噪声 IR（shared/mix.ts 的 generateReverbIr），
+ *    与服务端 afir 卷积用的是**同一份生成公式、同一个量化键、同一个缩放系数**；
+ *    normalize=false —— 缩放已烘进 IR，不再依赖浏览器内部的归一化行为；
  *  - limiter：DynamicsCompressor，近似服务端末端 alimiter=0.95，防预览削波；
  *  - 对齐偏移不用 DelayNode（改 delayTime 会有爆音），改用「晚到的一轨晚起播」
  *    的调度方式（与服务端 mixTimeline 同一套符号规则：offset ≥ 0 人声晚进，
@@ -53,14 +57,11 @@ const GAIN_SMOOTHING = 0.02;
 const START_LEAD_SEC = 0.05;
 
 /**
- * 试听 IR 的量化步进（空间轴 1/14，锚点 i/7 恰好落在键上）。
+ * 试听 IR 的量化步进在 shared/mix.ts（REVERB_IR_QUANTIZE）—— 服务端生成
+ * 混响 IR 时用同一个 reverbIrKey，两端的 IR 才逐位同源。
  *
- * IR 只在空间变化时重建，而拖动过程中空间每 1% 都在变：给缓存键量化一下，
- * 相邻键的空间差 7% 听不出来，重建次数从「每像素一次」降到「最多 15 种」。
- * 锚点处的键与锚点精确重合，所以预设/老作品在锚点上的试听音色与旧版一致。
  * 缓存上限 12 条、超出清空：拖完整个轴再拖回来会重建，内存有界。
  */
-const IR_QUANTIZE = 14;
 const IR_CACHE_MAX = 12;
 
 export interface PreviewEngineOptions {
@@ -85,21 +86,13 @@ interface IrSpec {
   decay: number;
 }
 
-/** 程序生成混响 IR：前延迟静音 + 指数衰减噪声，立体声不相关 */
+/** 程序生成混响 IR（shared/mix.ts）：前延迟静音 + 指数衰减噪声，立体声不相关 */
 function createImpulseResponse(spec: IrSpec): AudioBuffer {
   const context = getAudioContext();
-  const rate = context.sampleRate;
-  const length = Math.max(1, Math.floor(rate * spec.seconds));
-  const preDelay = Math.floor((rate * spec.preDelayMs) / 1000);
-  const buffer = context.createBuffer(2, length, rate);
-
-  for (let channel = 0; channel < 2; channel += 1) {
-    const data = buffer.getChannelData(channel);
-    for (let i = preDelay; i < length; i += 1) {
-      const t = (i - preDelay) / Math.max(1, length - preDelay);
-      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, spec.decay);
-    }
-  }
+  const channels = generateReverbIr(spec, context.sampleRate, 2);
+  const buffer = context.createBuffer(2, channels[0]!.length, context.sampleRate);
+  buffer.copyToChannel(channels[0]!, 0);
+  buffer.copyToChannel(channels[1]!, 1);
   return buffer;
 }
 
@@ -201,7 +194,11 @@ export class PreviewEngine {
     this.dryGain = this.context.createGain();
     this.wetGain = this.context.createGain();
     this.convolver = this.context.createConvolver();
-    this.convolver.normalize = true;
+    // normalize=false：缩放已在 shared/mix.ts 的 generateReverbIr 里按浏览器的
+    // normalize=true 等效增益（RMS→1 后再 −58dB 感知校准）显式烘好。开着
+    // normalize 会让浏览器按自己的内部公式重新归一回，IR 幅度反而说了不算，
+    // 服务端也就没法用同一份 IR 对齐。
+    this.convolver.normalize = false;
 
     this.limiter = this.context.createDynamicsCompressor();
     // 近似服务端 alimiter=limit=0.95：只兜削峰，不改变整体动态
@@ -350,6 +347,7 @@ export class PreviewEngine {
 
     // 混响：空间决定 IR（尾巴/前延迟/衰减），湿度决定发送量。
     // 湿度只动 wetGain/dryGain（平滑过渡），不重建 IR —— 拖湿度不会有爆音。
+    // 干湿增益都来自共享的 reverbDsp，服务端 afir 分支用的是同一对数值。
     const dsp = reverbDsp(this.params.reverbSpace, this.params.reverbWet);
     if (!dsp.bypass) {
       const ir = this.impulseFor(this.params.reverbSpace);
@@ -357,16 +355,16 @@ export class PreviewEngine {
         this.convolver.buffer = ir;
       }
       this.wetGain.gain.setTargetAtTime(dsp.wet, now, GAIN_SMOOTHING);
-      this.dryGain.gain.setTargetAtTime(1 - dsp.wet * 0.5, now, GAIN_SMOOTHING);
+      this.dryGain.gain.setTargetAtTime(dsp.dry, now, GAIN_SMOOTHING);
     } else {
       this.wetGain.gain.setTargetAtTime(0, now, GAIN_SMOOTHING);
       this.dryGain.gain.setTargetAtTime(1, now, GAIN_SMOOTHING);
     }
   }
 
-  /** 当前空间对应的试听 IR（量化键缓存，见 IR_QUANTIZE） */
+  /** 当前空间对应的试听 IR（量化键缓存，键函数与干湿增益的取参口径见 shared/mix.ts） */
   private impulseFor(space: number): AudioBuffer {
-    const key = Math.round(Math.min(1, Math.max(0, space)) * IR_QUANTIZE) / IR_QUANTIZE;
+    const key = reverbIrKey(space);
     const cached = this.impulseCache.get(key);
     if (cached) return cached;
     const spec = reverbIrSpec(key);

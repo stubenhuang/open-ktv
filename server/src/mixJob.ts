@@ -2,10 +2,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   effectiveOffsetMs,
+  generateReverbIr,
   needsVocalPreProcess,
   previewDurationSec,
+  reverbIrKey,
+  reverbIrSpec,
 } from '../../shared/mix.ts';
-import { JOB_TIMEOUT_MS } from './config.ts';
+import { encodeWavBytesFloat } from '../../shared/wav.ts';
+import { AUDIO, JOB_TIMEOUT_MS } from './config.ts';
 import type { TrackRecord, WorkRecord } from './db.ts';
 import { runFfmpeg } from './ffmpeg.ts';
 import { createLogger } from './logger.ts';
@@ -16,6 +20,7 @@ import {
   computeLevels,
   LOUDNESS_TARGET,
   type MixLevels,
+  reverbActive,
 } from './mix.ts';
 import { TMP_DIR, WORKS_DIR } from './paths.ts';
 
@@ -27,6 +32,38 @@ export function workMp3Path(workId: string): string {
 
 /** 预处理阶段占总进度的比例；剩下留给混音（混音通常是大头） */
 const PRE_PROCESS_SHARE = 0.4;
+
+/**
+ * 混响 IR 的临时文件路径（每次合成立即重新生成，不做磁盘缓存）。
+ *
+ * 生成成本可以忽略： canyon 档 6.5s 立体声 48k 也就 60 万个浮点样本，
+ * 比一次 ffmpeg seek 还快。缓存反而要多一套失效/清理逻辑，不值得。
+ */
+export function reverbIrPath(workId: string): string {
+  return path.join(TMP_DIR, `reverb-ir-${workId}.wav`);
+}
+
+/**
+ * 把当前空间对应的混响 IR 写成 WAV（立体声浮点 48k）。
+ *
+ * 规格必须走**量化键**（reverbIrKey）—— 试听侧按量化键缓存 IR、按原始空间
+ * 算干湿增益，服务端用同一个键，两端的 IR 才逐位同源。生成公式与缩放系数
+ * 都在 shared/mix.ts（generateReverbIr），试听那边用的是同一个函数。
+ *
+ * 浮点而不是 16 位：IR 幅度只有千分之几（复刻浏览器卷积器的等效增益），
+ * 16 位量化的噪声会听得出来。
+ */
+export async function writeReverbIr(space: number, destPath: string): Promise<void> {
+  const spec = reverbIrSpec(reverbIrKey(space));
+  const channels = generateReverbIr(spec, AUDIO.sampleRate, AUDIO.channels);
+  await fs.promises.writeFile(destPath, Buffer.from(encodeWavBytesFloat(channels, AUDIO.sampleRate)));
+  log.debug('混响 IR 已生成', {
+    destPath,
+    tailSec: spec.seconds,
+    preDelayMs: spec.preDelayMs,
+    decay: spec.decay,
+  });
+}
 
 export interface MixResult {
   outputPath: string;
@@ -96,6 +133,11 @@ export async function mixWorkToMp3(input: {
   let vocalPath = work.vocalPath;
   const accompanimentPath = track.originalPath;
 
+  // 混响激活时才生成 IR（旁通 = 干声，滤镜串与输入列表都和旧版一致）
+  const irPath = reverbActive(params.reverbSpace, params.reverbWet)
+    ? reverbIrPath(work.id)
+    : null;
+
   try {
     if (wantsVocalPre) {
       const prepared = path.join(TMP_DIR, `vocalpre-${work.id}.wav`);
@@ -152,6 +194,12 @@ export async function mixWorkToMp3(input: {
     const finalOutput = workMp3Path(work.id);
     await fs.promises.rm(tmpOutput, { force: true });
 
+    if (irPath) {
+      intermediates.push(irPath);
+      await fs.promises.rm(irPath, { force: true });
+      await writeReverbIr(params.reverbSpace, irPath);
+    }
+
     log.debug('开始混音', { workId: work.id, tmpOutput, timeoutSec: JOB_TIMEOUT_MS.mix / 1000 });
     try {
       await runFfmpeg({
@@ -167,6 +215,7 @@ export async function mixWorkToMp3(input: {
           eqLowDb: work.mixParams.eqLowDb,
           eqMidDb: work.mixParams.eqMidDb,
           eqHighDb: work.mixParams.eqHighDb,
+          ...(irPath ? { reverbIrPath: irPath } : {}),
         }),
         timeoutMs: JOB_TIMEOUT_MS.mix,
         // 成品时长 = 干声时长 + max(0, 偏移)；负偏移延后的是伴奏，人声没被推后

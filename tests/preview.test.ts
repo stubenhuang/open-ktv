@@ -10,13 +10,18 @@ import {
   deEssEnabled,
   describeReverb,
   effectiveOffsetMs,
+  generateReverbIr,
   matchPreset,
   nearestReverbKind,
   needsVocalPreProcess,
   previewDurationSec,
   previewLinearGains,
   reverbDsp,
+  reverbIrKey,
   reverbIrSpec,
+  REVERB_IR_CALIBRATION_DB,
+  REVERB_IR_CALIBRATION_RATE,
+  REVERB_IR_QUANTIZE,
   toPreviewParams,
   vocalChainLinearGain,
 } from '../shared/mix.ts';
@@ -124,7 +129,7 @@ describe('toPreviewParams', () => {
   });
 });
 
-describe('混响：空间 × 湿度（锚点表 + 插值）', () => {
+describe('混响：空间 × 湿度（锚点表 + 插值 + IR 生成）', () => {
   it('8 个锚点均匀分布在空间轴上，顺序 = 空间由小到大', () => {
     assert.equal(REVERB_ANCHORS.length, 8);
     REVERB_ANCHORS.forEach((anchor, index) => {
@@ -138,49 +143,46 @@ describe('混响：空间 × 湿度（锚点表 + 插值）', () => {
     }
   });
 
-  it('锚点 + 满湿度 = 锚点原值（老作品零回归的数值基础）', () => {
+  it('锚点 + 满湿度 = 锚点原值（试听与服务端同源的数值基础）', () => {
     for (const anchor of REVERB_ANCHORS) {
       const dsp = reverbDsp(anchorSpace(anchor.kind), 1);
-      assert.equal(dsp.inGain, anchor.inGain, `${anchor.kind} 入增益`);
-      assert.equal(dsp.outGain, anchor.outGain, `${anchor.kind} 出增益`);
-      assert.equal(dsp.delayMs, anchor.delayMs, `${anchor.kind} 延迟`);
-      assert.equal(dsp.decay, anchor.decay, `${anchor.kind} 衰减`);
       const ir = reverbIrSpec(anchorSpace(anchor.kind));
       assert.equal(ir.seconds, anchor.tailSec, `${anchor.kind} 尾巴`);
       assert.equal(ir.preDelayMs, anchor.preDelayMs, `${anchor.kind} 前延迟`);
       assert.equal(ir.decay, anchor.irDecay, `${anchor.kind} IR 衰减`);
       assert.equal(ir.wet, anchor.wet, `${anchor.kind} 湿度`);
+      // 满湿度：发送量 = 锚点湿度，干声 = 1 − 锚点湿度/2（服务端 afir 分支同一对）
+      assert.equal(dsp.wet, anchor.wet, `${anchor.kind} 发送量`);
+      assert.equal(dsp.dry, 1 - anchor.wet * 0.5, `${anchor.kind} 干声增益`);
     }
   });
 
-  it('旁通规则：空间 0 或湿度 0 都不出声响', () => {
+  it('旁通规则：空间 0 或湿度 0 都不出声响，干声回满电平', () => {
     assert.equal(reverbDsp(0, 1).bypass, true, '原声档旁通');
     assert.equal(reverbDsp(anchorSpace('canyon'), 0).bypass, true, '湿度 0 也是干声');
     assert.equal(reverbDsp(anchorSpace('room'), 1).bypass, false);
-    // 湿度 0 时干声侧回到满电平（out=1、发送=0）
     const muted = reverbDsp(anchorSpace('hall'), 0);
-    assert.equal(muted.inGain, 0);
-    assert.equal(muted.outGain, 1);
     assert.equal(muted.wet, 0);
+    assert.equal(muted.dry, 1, '湿度 0 时干声侧回到满电平');
   });
 
-  it('插值单调：尾巴与延迟随空间连续递增', () => {
+  it('插值单调：尾巴随空间连续不减（前延迟/湿度按锚点表，不必单调）', () => {
     let previous = reverbDsp(0.01, 1);
     for (const space of [0.2, 0.4, 0.6, 0.8, 0.99]) {
       const current = reverbDsp(space, 1);
-      assert.ok(current.delayMs > previous.delayMs, `延迟应随空间递增：${space}`);
       assert.ok(current.tailSec >= previous.tailSec, `尾巴应随空间不减：${space}`);
       previous = current;
     }
   });
 
-  it('湿度是发送量：只缩放回声支路，不动空间形状', () => {
+  it('湿度是发送量：只缩放湿声支路，不动空间形状', () => {
     const full = reverbDsp(0.5, 1);
     const half = reverbDsp(0.5, 0.5);
-    assert.ok(Math.abs(half.inGain - full.inGain * 0.5) < 1e-9, '发送量减半');
-    assert.ok(Math.abs(half.wet - full.wet * 0.5) < 1e-9, '试听湿度减半');
-    assert.equal(half.delayMs, full.delayMs, '延迟不该随湿度变');
-    assert.ok(half.outGain > full.outGain, '湿度越低干声越接近满电平');
+    assert.ok(Math.abs(half.wet - full.wet * 0.5) < 1e-9, '发送量减半');
+    assert.equal(half.tailSec, full.tailSec, '尾巴不该随湿度变');
+    assert.equal(half.preDelayMs, full.preDelayMs, '前延迟不该随湿度变');
+    assert.equal(half.irDecay, full.irDecay, 'IR 衰减不该随湿度变');
+    assert.ok(half.dry > full.dry, '湿度越低干声越接近满电平');
   });
 
   it('nearestReverbKind / describeReverb：读数与摘要', () => {
@@ -191,6 +193,98 @@ describe('混响：空间 × 湿度（锚点表 + 插值）', () => {
     assert.equal(describeReverb(anchorSpace('hall'), 0.65), '大厅 65%');
     assert.equal(describeReverb(anchorSpace('canyon'), 0), '原声', '湿度 0 就是干声');
     assert.equal(describeReverb(0, 1), '原声');
+  });
+});
+
+describe('混响 IR：generateReverbIr（试听与服务端共用同一份）', () => {
+  const spec = { seconds: 1, preDelayMs: 50, decay: 2 };
+
+  it('确定性：同规格同采样率 → 逐位相同的 IR（服务端才能复现试听）', () => {
+    const a = generateReverbIr(spec, 48000, 2);
+    const b = generateReverbIr(spec, 48000, 2);
+    assert.deepEqual(a[0], b[0]);
+    assert.deepEqual(a[1], b[1]);
+  });
+
+  it('长度 = 前延迟 + 尾巴，前延迟段全零', () => {
+    const [channel] = generateReverbIr(spec, 48000, 2);
+    assert.equal(channel!.length, Math.floor(48000 * 0.05) + Math.floor(48000 * 1));
+    for (let i = 0; i < Math.floor(48000 * 0.05); i += 1) {
+      assert.equal(channel![i], 0, `前延迟第 ${i} 样本应为静音`);
+    }
+    assert.notEqual(channel![Math.floor(48000 * 0.05)], 0, '尾巴起点应有信号');
+  });
+
+  it('包络指数衰减：越往后能量越小', () => {
+    const [channel] = generateReverbIr({ seconds: 2, preDelayMs: 0, decay: 2 }, 48000, 1);
+    const energy = (from: number, to: number) => {
+      let sum = 0;
+      for (let i = from; i < to; i += 1) sum += channel![i]! * channel![i]!;
+      return sum;
+    };
+    const quarter = channel!.length / 4;
+    const quarters = [energy(0, quarter), energy(quarter, 2 * quarter), energy(2 * quarter, 3 * quarter), energy(3 * quarter, 4 * quarter)];
+    for (let i = 1; i < quarters.length; i += 1) {
+      assert.ok(quarters[i]! < quarters[i - 1]!, `第 ${i} 段能量应更小：${quarters.join(', ')}`);
+    }
+  });
+
+  it('缩放复刻浏览器 ConvolverNode normalize=true 的等效增益', () => {
+    // 浏览器算法（Reverb.cpp calculateNormalizationScale）：合并所有声道求一个
+    // RMS，统一缩放。于是「跨声道合并 RMS」= 10^(-58/20) × 44100/采样率，精确成立；
+    // 每声道 L2 ≈ √M × 同一常数（两声道的原始 L2 有 ~0.3% 统计涨落，浏览器同理）。
+    const k = (rate: number) =>
+      Math.pow(10, REVERB_IR_CALIBRATION_DB / 20) * (REVERB_IR_CALIBRATION_RATE / rate);
+    const stats = (channels: Float32Array<ArrayBuffer>[]) => {
+      let sum = 0;
+      let total = 0;
+      for (const c of channels) {
+        let s = 0;
+        for (let i = 0; i < c.length; i += 1) s += c[i]! * c[i]!;
+        sum += s;
+        total += c.length;
+      }
+      const perChannelL2 = channels.map((c) => {
+        let s = 0;
+        for (let i = 0; i < c.length; i += 1) s += c[i]! * c[i]!;
+        return Math.sqrt(s);
+      });
+      return { combinedRms: Math.sqrt(sum / total), perChannelL2, length: total / channels.length };
+    };
+
+    for (const rate of [48000, 44100]) {
+      const { combinedRms, perChannelL2, length } = stats(generateReverbIr(spec, rate, 2));
+      assert.ok(
+        Math.abs(combinedRms - k(rate)) < k(rate) * 1e-6,
+        `${rate}Hz 合并 RMS 应为 ${k(rate)}，实际 ${combinedRms}`,
+      );
+      for (const l2 of perChannelL2) {
+        const expected = Math.sqrt(length) * k(rate);
+        assert.ok(
+          Math.abs(l2 - expected) < expected * 0.01,
+          `${rate}Hz 每声道 L2 应约 ${expected}，实际 ${l2}`,
+        );
+      }
+    }
+  });
+
+  it('双声道不相关（立体声混响，不是单声道复制）', () => {
+    const [left, right] = generateReverbIr(spec, 48000, 2);
+    let dot = 0;
+    for (let i = 0; i < left!.length; i += 1) dot += left![i]! * right![i]!;
+    const l2L = Math.sqrt(left!.reduce((s, v) => s + v * v, 0));
+    const l2R = Math.sqrt(right!.reduce((s, v) => s + v * v, 0));
+    assert.ok(Math.abs(dot / (l2L * l2R)) < 0.05, '两声道相关系数应接近 0');
+  });
+
+  it('reverbIrKey：锚点精确命中，其余量化到 1/14 栅格', () => {
+    assert.equal(REVERB_IR_QUANTIZE, 14);
+    assert.equal(reverbIrKey(3 / 7), 3 / 7, '锚点必须精确命中（浮点残差内）');
+    assert.equal(reverbIrKey(0), 0);
+    assert.equal(reverbIrKey(1), 1);
+    assert.equal(reverbIrKey(0.58), Math.round(0.58 * 14) / 14);
+    assert.equal(reverbIrKey(Number.NaN), 0);
+    assert.equal(reverbIrKey(2), 1, '越界夹到 1');
   });
 });
 

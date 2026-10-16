@@ -234,8 +234,8 @@ export function compressorParams(amount: number): CompressorParams {
  * 去齿音强度 → **预览用**的高频下压量（dB，负值）。
  *
  * 服务端用的是真正的 deesser（动态、按齿音检测动作），预览没有对应节点，
- * 只能用静态高架下压做听感近似 —— 这是已知偏差，和「卷积混响近似 aecho」
- * 属同一类取舍。
+ * 只能用静态高架下压做听感近似 —— 这是已知偏差，属「预览侧独有」的取舍
+ * （混响本身两端已同源：同一份 IR 的卷积，见 generateReverbIr）。
  */
 export function deEssGainDb(amount: number): number {
   const a = clamp01(amount);
@@ -370,9 +370,9 @@ export function needsVocalPreProcess(
 /**
  * 在锚点表上做分段线性插值。
  *
- * 锚点处**原样返回锚点值**（落在整数锚点坐标上时不做任何运算）—— 这是
- * 「老作品零回归」的数值基础：`reverb: 'hall'` 迁移成 (3/7, 湿度 1) 后，
- * 插值返回的就是 hall 锚点的原值，服务端滤镜串与试听 IR 和旧版逐字节一致。
+ * 锚点处**原样返回锚点值**（落在整数锚点坐标上时不做任何运算）——
+ * `reverb: 'hall'` 迁移成 (3/7, 湿度 1) 后，插值返回的就是 hall 锚点的原值，
+ * 试听 IR 的规格因此与档位表精确对应（老作品的参数读数不变）。
  */
 function lerpAnchor(pick: (anchor: ReverbAnchor) => number, space: number): number {
   const scaled = clamp01(space) * (REVERB_ANCHORS.length - 1);
@@ -390,14 +390,10 @@ function lerpAnchor(pick: (anchor: ReverbAnchor) => number, space: number): numb
 export interface ReverbDsp {
   /** 空间 0 或湿度 0：不挂滤镜（与旧 dry 同路，老作品的干声分文不差） */
   bypass: boolean;
-  /** aecho 入增益（锚点值 × 湿度） */
-  inGain: number;
-  /** aecho 出增益（干声侧）：湿度 1 = 锚点原值，湿度 0 = 1（满干声） */
-  outGain: number;
-  delayMs: number;
-  decay: number;
-  /** 试听湿度（锚点湿度 × 用户湿度，0..1） */
+  /** 试听/成品的湿声发送量（锚点湿度 × 用户湿度，0..1） */
   wet: number;
+  /** 干声侧增益（湿度 1 = 1 − 锚点湿度/2，湿度 0 = 1）；两端共用同一公式 */
+  dry: number;
   /* ---- 试听 IR ---- */
   tailSec: number;
   preDelayMs: number;
@@ -405,23 +401,26 @@ export interface ReverbDsp {
 }
 
 /**
- * 空间 + 湿度 → 全套混响参数（服务端 aecho 与前端预览共用这一份）。
+ * 空间 + 湿度 → 全套混响参数（试听 ConvolverNode 与服务端 afir 共用这一份）。
  *
- * 湿度的语义是「发送量」：只缩放回声支路（inGain / wet），干声侧反向补偿
- * （outGain 从锚点值回到 1），所以湿度 0 就是干声、湿度 1 就是锚点原值，
+ * 湿度的语义是「发送量」：只缩放湿声支路（wet），干声侧反向补偿
+ * （dry 从 1 − 锚点湿度/2 回到 1），所以湿度 0 就是干声、湿度 1 就是锚点原值，
  * 中间是平滑的交叉淡化 —— 拖湿度不会有音量台阶。
+ *
+ * 历史上这里还带 aecho 四元组（inGain/outGain/delayMs/decay），服务端据此拼
+ * `aecho=in:out:delay:decay`。那个模型是错的（ffmpeg 的 in_gain 缩放的是干声、
+ * 回声幅度 = out_gain×decay 且只有一个单回声），湿度因此根本控制不了成品的
+ * 混响量。现在两端都改为「同一份 IR 的卷积」，参数只剩 IR 规格与干湿增益。
  */
 export function reverbDsp(space: number, wet: number): ReverbDsp {
   const s = clamp01(Number.isFinite(space) ? space : 0);
   const w = clamp01(Number.isFinite(wet) ? wet : 0);
-  const anchorOut = lerpAnchor((anchor) => anchor.outGain, s);
+  const bypass = s <= 0 || w <= 0;
+  const wetGain = lerpAnchor((anchor) => anchor.wet, s) * w;
   return {
-    bypass: s <= 0 || w <= 0,
-    inGain: lerpAnchor((anchor) => anchor.inGain, s) * w,
-    outGain: 1 - (1 - anchorOut) * w,
-    delayMs: lerpAnchor((anchor) => anchor.delayMs, s),
-    decay: lerpAnchor((anchor) => anchor.decay, s),
-    wet: lerpAnchor((anchor) => anchor.wet, s) * w,
+    bypass,
+    wet: wetGain,
+    dry: bypass ? 1 : 1 - wetGain * 0.5,
     tailSec: lerpAnchor((anchor) => anchor.tailSec, s),
     preDelayMs: lerpAnchor((anchor) => anchor.preDelayMs, s),
     irDecay: lerpAnchor((anchor) => anchor.irDecay, s),
@@ -439,17 +438,111 @@ export function reverbIrSpec(space: number): {
   return { seconds: dsp.tailSec, preDelayMs: dsp.preDelayMs, decay: dsp.irDecay, wet: dsp.wet };
 }
 
+/* ------------------------------ 混响 IR：两端同源 ------------------------------ */
+
 /**
- * aecho 滤镜字符串；旁通返回 null。
+ * 试听 IR 的量化步进（空间轴 1/14，锚点 i/7 恰好落在键上）。
  *
- * 数字格式刻意「去掉多余的零」（0.8 而不是 0.80）：锚点处的输出必须与旧表
- * 逐字节一致，tests/mix.test.ts 对 8 个档位逐一钉死了期望串。
+ * IR 只在空间变化时重建，而拖动过程中空间每 1% 都在变：给缓存键量化一下，
+ * 相邻键的空间差 7% 听不出来，重建次数从「每像素一次」降到「最多 15 种」。
+ * 锚点处的键与锚点精确重合，所以预设/老作品在锚点上的试听音色不走样。
+ *
+ * **服务端必须用同一个键**生成 IR：试听按量化键建 IR、按原始空间算干湿增益，
+ * 服务端若用原始空间生成 IR，两边尾巴长度/前延迟会差出百分之几 ——
+ * 「试听与成品同源」就差在这一步上。
  */
-export function reverbAechoFilter(space: number, wet: number): string | null {
-  const dsp = reverbDsp(space, wet);
-  if (dsp.bypass) return null;
-  const fmt = (value: number) => String(Number(value.toFixed(4)));
-  return `aecho=${fmt(dsp.inGain)}:${fmt(dsp.outGain)}:${fmt(dsp.delayMs)}:${fmt(dsp.decay)}`;
+export const REVERB_IR_QUANTIZE = 14;
+
+/** 空间 → IR 量化键（0..1，落在 1/14 的栅格上；锚点 i/7 精确命中） */
+export function reverbIrKey(space: number): number {
+  const s = clamp01(Number.isFinite(space) ? space : 0);
+  return Math.round(s * REVERB_IR_QUANTIZE) / REVERB_IR_QUANTIZE;
+}
+
+/**
+ * 复刻浏览器 ConvolverNode 在 normalize=true 下的等效 IR 增益。
+ *
+ * WebKit / Chromium 的 Reverb.cpp 在 normalize=true 时并不是「RMS 归一到 unity」：
+ * 它先把 IR 归一成 RMS=1，再乘一个 -58dB 的感知校准（GainCalibration，
+ * 注释原话 "to ensure perceived volume is same as dry"），最后按
+ * 44100/采样率 折算。等效下来每声道 L2 范数 =
+ *
+ *     √长度 × 10^(GAIN_CALIBRATION_DB/20) × (44100 / 采样率)
+ *
+ * —— 与 IR 自身幅度无关，只由长度和采样率决定（已在 Chrome 里用
+ * OfflineAudioContext 实测验证：2.72s IR 理论 0.4176 / 实测 0.4132）。
+ *
+ * 试听一直在这个增益下工作，所以它就是对的目标：服务端用同一份缩放后的 IR
+ * 跑 afir，成品才和试听对齐。缩放系数从此是 shared 代码里的显式常量，
+ * 要调混响电平只改这一处（两端同时生效），不再埋在浏览器内部行为里。
+ */
+export const REVERB_IR_CALIBRATION_DB = -58;
+export const REVERB_IR_CALIBRATION_RATE = 44100;
+
+/** 确定性 PRNG（mulberry32）：试听与服务端用同一份种子，IR 逐位同源 */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** IR 每声道种子：同一规格永远得到同一条 IR（测试可钉死，服务端可复现） */
+const REVERB_IR_SEEDS = [0x5eed_0001, 0x5eed_0002, 0x5eed_0003, 0x5eed_0004];
+
+/**
+ * 生成混响 IR：前延迟静音 + 指数衰减噪声，立体声各声道不相关。
+ *
+ * 包络与浏览器试听侧完全一致：`(random*2-1) * (1-t)^decay`，t 是尾巴内的
+ * 归一化位置。缩放复刻浏览器的 normalize=true 等效增益（见
+ * REVERB_IR_CALIBRATION_DB 的推导）：合并所有声道算一个 scale —— 与
+ * calculateNormalizationScale 的算法一致，保证 afir（irnorm=-1，不归一）
+ * 与 ConvolverNode（normalize=false，不归一）拿到的是同一条 IR。
+ *
+ * @param spec 尾巴秒数 / 前延迟 ms / 衰减指数（reverbIrSpec 的产出）
+ * @param sampleRate 目标采样率（试听侧 = AudioContext 采样率，服务端 = 48k）
+ * @param channels 声道数（试听与服务端都用 2：立体声不相关混响）
+ */
+export function generateReverbIr(
+  spec: { seconds: number; preDelayMs: number; decay: number },
+  sampleRate: number,
+  channels = 2,
+): Float32Array<ArrayBuffer>[] {
+  const rate = Number.isFinite(sampleRate) && sampleRate > 0 ? sampleRate : 48000;
+  const preDelay = Math.max(0, Math.floor((rate * spec.preDelayMs) / 1000));
+  const tail = Math.max(1, Math.floor(rate * spec.seconds));
+  const length = preDelay + tail;
+
+  const data: Float32Array<ArrayBuffer>[] = [];
+  for (let channel = 0; channel < channels; channel += 1) {
+    const random = mulberry32(REVERB_IR_SEEDS[channel % REVERB_IR_SEEDS.length]!);
+    const buffer = new Float32Array(length);
+    for (let i = preDelay; i < length; i += 1) {
+      const t = (i - preDelay) / tail;
+      buffer[i] = (random() * 2 - 1) * Math.pow(1 - t, spec.decay);
+    }
+    data.push(buffer);
+  }
+
+  // 与 calculateNormalizationScale 同构：合并所有声道求 RMS，一个 scale 统一缩放
+  let sumOfSquares = 0;
+  for (const buffer of data) {
+    for (let i = 0; i < buffer.length; i += 1) sumOfSquares += buffer[i]! * buffer[i]!;
+  }
+  const rms = Math.sqrt(sumOfSquares / (channels * length));
+  const scale =
+    rms > 0
+      ? (1 / rms) *
+        Math.pow(10, REVERB_IR_CALIBRATION_DB / 20) *
+        (REVERB_IR_CALIBRATION_RATE / rate)
+      : 0;
+  for (const buffer of data) {
+    for (let i = 0; i < buffer.length; i += 1) buffer[i] = buffer[i]! * scale;
+  }
+  return data;
 }
 
 /** 档位名 → 空间轴位置（老数据迁移、预设表都走它，避免手写 i/7 走样） */

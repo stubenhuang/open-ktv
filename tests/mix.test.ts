@@ -3,16 +3,34 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { runFfmpeg } from '../server/src/ffmpeg.ts';
 import { measureLoudness, normalizeGainDb } from '../server/src/loudness.ts';
-import { buildMixArgs, buildMixFilter, computeLevels } from '../server/src/mix.ts';
+import {
+  buildMixArgs,
+  buildMixFilter,
+  computeLevels,
+  reverbActive,
+} from '../server/src/mix.ts';
+import { writeReverbIr } from '../server/src/mixJob.ts';
 import {
   EQ_BANDS,
   anchorSpace,
   effectiveOffsetMs,
   mixTimeline,
-  reverbAechoFilter,
+  reverbDsp,
+  reverbIrKey,
+  reverbIrSpec,
 } from '../shared/mix.ts';
-import { MIX_LIMITS, REVERB_KINDS } from '../shared/types.ts';
-import { cleanupDir, ffmpegOk, makeTempDir, sineArgs, summarize } from './helpers.ts';
+import { MIX_LIMITS, REVERB_ANCHORS, REVERB_KINDS } from '../shared/types.ts';
+import {
+  burstVocalArgs,
+  cleanupDir,
+  decodeToFloat32,
+  ffmpegOk,
+  makeTempDir,
+  rmsOfWindow,
+  silenceArgs,
+  sineArgs,
+  summarize,
+} from './helpers.ts';
 
 let workDir = '';
 let accompaniment = '';
@@ -35,7 +53,7 @@ function filterInput(overrides: Partial<Parameters<typeof buildMixFilter>[0]> = 
   return {
     offsetMs: 0,
     levels: { vocalLinear: 1, accompLinear: 1 },
-    // 空间 0 = 原声（旁通，不挂 aecho）
+    // 空间 0 = 原声（旁通，不挂混响）
     reverbSpace: 0,
     reverbWet: 1,
     eqLowDb: 0,
@@ -54,6 +72,12 @@ async function mixTo(
 ) {
   const output = path.join(workDir, outputName);
   const levels = computeLevels({ vocalGain, accompGain: 1, compression: 0 }, 0, 0);
+  // 混响激活时先落一份 IR（和生产链路同一个入口），再当第三个输入喂给 ffmpeg
+  let reverbIrPath: string | undefined;
+  if (reverbActive(reverbSpace, reverbWet)) {
+    reverbIrPath = path.join(workDir, `ir-${outputName}.wav`);
+    await writeReverbIr(reverbSpace, reverbIrPath);
+  }
   await runFfmpeg({
     args: buildMixArgs({
       ...filterInput({ offsetMs, levels, reverbSpace, reverbWet }),
@@ -61,6 +85,7 @@ async function mixTo(
       accompanimentPath: accompaniment,
       outputPath: output,
       title: '测试作品',
+      ...(reverbIrPath ? { reverbIrPath } : {}),
     }),
     timeoutMs: 120_000,
     label: '测试混音',
@@ -137,62 +162,113 @@ describe('混音纯逻辑', () => {
   it('偏移为 0 时不加 adelay；空间 0 / 湿度 0 都不挂混响', () => {
     const dry = buildMixFilter(filterInput());
     assert.doesNotMatch(dry, /adelay/);
-    assert.doesNotMatch(dry, /aecho/);
+    assert.doesNotMatch(dry, /afir/);
+    assert.doesNotMatch(dry, /asplit/);
 
     // 湿度 0 也是干声（旁通），和空间 0 同路
     const muted = buildMixFilter(filterInput({ reverbSpace: anchorSpace('hall'), reverbWet: 0 }));
-    assert.doesNotMatch(muted, /aecho/);
+    assert.doesNotMatch(muted, /afir/);
+    assert.doesNotMatch(muted, /asplit/);
 
     const hall = buildMixFilter(filterInput({ reverbSpace: anchorSpace('hall') }));
-    assert.match(hall, /aecho=/);
+    assert.match(hall, /afir=/);
+  });
+
+  it('混响激活 = 干湿分离 + afir 卷积（IR 走第三个输入 [2:a]）', () => {
+    const space = 0.58;
+    const wet = 0.9;
+    const dsp = reverbDsp(space, wet);
+    const filter = buildMixFilter(filterInput({ reverbSpace: space, reverbWet: wet }));
+
+    // 人声链末尾 asplit 成干/湿两支
+    assert.match(filter, /,asplit=2\[vdry\]\[vwet\]/);
+    // 湿支：afir 吃 IR 输入 [2:a]；irnorm=-1 必须显式（默认 1 会把 IR 归到无声）
+    assert.match(filter, /\[vwet\]\[2:a\]afir=dry=1:wet=0\.4977:irnorm=-1\[vw\]/);
+    // 干支：共享公式 1 − wet/2（与试听 dryGain 同一个数）
+    assert.match(filter, /\[vdry\]volume=0\.7511\[vd\]/);
+    // 干湿先合一次，再进和伴奏的 amix；人声仍是第一路（duration=first）
+    assert.match(
+      filter,
+      /\[vd\]\[vw\]amix=inputs=2:duration=first:normalize=0:dropout_transition=0\[v\]/,
+    );
+    assert.match(filter, /\[v\]\[a\]amix=inputs=2:duration=first:normalize=0/);
+    assert.match(filter, /alimiter=limit=0\.95/);
+    assert.equal(dsp.bypass, false);
+
+    // 旁通时滤镜串里不该出现第三个输入的踪迹（输入列表也不加，见 buildMixArgs）
+    const dryFilter = buildMixFilter(filterInput());
+    assert.doesNotMatch(dryFilter, /\[2:a\]/);
+  });
+
+  it('buildMixArgs：混响激活时才追加 IR 输入；旁通时与旧版一致', () => {
+    const base = {
+      ...filterInput({ reverbSpace: anchorSpace('hall') }),
+      vocalPath: 'v.wav',
+      accompanimentPath: 'a.mp3',
+      outputPath: 'o.mp3',
+      title: 't',
+    };
+
+    const withReverb = buildMixArgs({ ...base, reverbIrPath: 'ir.wav' });
+    // 输入顺序：干声 [0]、伴奏 [1]、IR [2]
+    const irIndex = withReverb.lastIndexOf('ir.wav');
+    assert.ok(irIndex > withReverb.lastIndexOf('a.mp3'), 'IR 必须是第三个输入');
+    assert.equal(withReverb[withReverb.indexOf('-i', irIndex - 1) + 1], 'ir.wav');
+
+    const dry = buildMixArgs({ ...base, reverbSpace: 0 });
+    assert.equal(dry.includes('-i'), true);
+    assert.ok(!dry.includes('ir.wav'), '干声不该追加 IR 输入');
+    assert.equal(dry.filter((arg) => arg === '-i').length, 2, '只有干声和伴奏两个输入');
+
+    // 激活却没给 IR 路径：直接报清楚的错，别让 ffmpeg 抛「Invalid file index」
+    assert.throws(() => buildMixArgs(base), /reverbIrPath/);
+  });
+
+  it('正偏移 + 混响：adelay 挂在干湿合流之后（对齐语义不变）', () => {
+    const filter = buildMixFilter(filterInput({ offsetMs: 500, reverbSpace: anchorSpace('stage') }));
+    const statements = filter.split(';');
+    // adelay 必须在 [vd][vw]amix 之后，挂在人声分支上
+    const amixIndex = statements.findIndex((line) => line.startsWith('[vd][vw]amix'));
+    assert.ok(amixIndex >= 0, `应有干湿合流语句，实际 ${filter}`);
+    assert.match(statements[amixIndex]!, /,adelay=delays=500:all=1\[v\]$/);
+    // 伴奏分支（[1:a] 开头那句）不该被延迟
+    const accomp = statements.find((line) => line.startsWith('[1:a]'));
+    assert.ok(accomp && !/adelay/.test(accomp), '正偏移时伴奏不该被延迟');
+    // 人声仍是 amix 第一路：duration=first 的长度口径不变
+    assert.match(filter, /\[v\]\[a\]amix=inputs=2:duration=first/);
   });
 
   /**
-   * 老作品零回归的守卫：8 个档位名迁移成 (锚点位置, 湿度 1) 后，
-   * 产出的滤镜必须与历史上的 REVERB_FILTER 表逐字节一致。
-   * 这张表是从 git 历史里原样抄下来的期望值，一个字都不能改。
+   * 混响档位的守卫：8 个锚点的 IR 规格（尾巴/前延迟/衰减）与试听
+   * （reverbIrSpec → generateReverbIr）用的是同一张表，成品与试听同源。
    */
-  it('锚点处复现旧版 8 档滤镜串（老作品逐字节一致）', () => {
-    const legacy: Record<string, string | null> = {
-      dry: null,
-      room: 'aecho=0.8:0.85:18:0.25',
-      plate: 'aecho=0.8:0.88:28:0.3',
-      hall: 'aecho=0.8:0.9:55:0.35',
-      stage: 'aecho=0.9:0.92:110:0.45',
-      cathedral: 'aecho=0.9:0.93:170:0.5',
-      arena: 'aecho=0.9:0.94:240:0.55',
-      canyon: 'aecho=0.9:0.95:330:0.6',
-    };
-    assert.equal(REVERB_KINDS.length, 8, '混响档位数应为 8');
-    for (const kind of REVERB_KINDS) {
-      const filter = reverbAechoFilter(anchorSpace(kind), 1);
-      assert.equal(filter, legacy[kind], `${kind} 的滤镜串应与旧版一致`);
+  it('8 个锚点的 IR 规格与档位表一一对应（成品与试听同源的数值基础）', () => {
+    assert.equal(REVERB_ANCHORS.length, 8, '混响档位数应为 8');
+    for (const anchor of REVERB_ANCHORS) {
+      const ir = reverbIrSpec(anchorSpace(anchor.kind));
+      assert.equal(ir.seconds, anchor.tailSec, `${anchor.kind} 尾巴`);
+      assert.equal(ir.preDelayMs, anchor.preDelayMs, `${anchor.kind} 前延迟`);
+      assert.equal(ir.decay, anchor.irDecay, `${anchor.kind} IR 衰减`);
+      assert.equal(ir.wet, anchor.wet, `${anchor.kind} 满湿度`);
     }
   });
 
-  it('空间连续可调：延迟/衰减随空间单调递增，湿度只改增益不改延迟', () => {
-    const delayOf = (space: number) => {
-      const filter = buildMixFilter(filterInput({ reverbSpace: space }));
-      const match = /aecho=([\d.]+):([\d.]+):([\d.]+):([\d.]+)/.exec(filter);
-      assert.ok(match, `空间 ${space} 应挂 aecho，实际 ${filter}`);
-      return { inGain: Number(match[1]), delayMs: Number(match[3]) };
-    };
-    let previous = delayOf(0.01);
+  it('空间连续可调：尾巴随空间单调不减，湿度只改干湿增益不动形状', () => {
+    const specOf = (space: number) => reverbIrSpec(reverbIrKey(space));
+    let previous = specOf(0.01);
     for (const space of [0.2, 0.35, 0.5, 0.65, 0.8, 0.99]) {
-      const current = delayOf(space);
-      assert.ok(current.delayMs > previous.delayMs, `延迟应随空间递增：${space}`);
+      const current = specOf(space);
+      assert.ok(current.seconds >= previous.seconds, `尾巴应随空间不减：${space}`);
       previous = current;
     }
-    // 湿度减半：发送量减半，延迟不变（空间形状不动）
-    const full = delayOf(0.5);
-    const half = (() => {
-      const filter = buildMixFilter(filterInput({ reverbSpace: 0.5, reverbWet: 0.5 }));
-      const match = /aecho=([\d.]+):([\d.]+):([\d.]+):([\d.]+)/.exec(filter);
-      assert.ok(match);
-      return { inGain: Number(match[1]), delayMs: Number(match[3]) };
-    })();
-    assert.ok(Math.abs(half.inGain - full.inGain / 2) < 1e-6, '湿度减半 = 发送量减半');
-    assert.equal(half.delayMs, full.delayMs, '湿度不该改动空间形状');
+    // 湿度减半：发送量减半、干声回升，空间形状（IR 规格）不动
+    const full = reverbDsp(0.5, 1);
+    const half = reverbDsp(0.5, 0.5);
+    assert.ok(Math.abs(half.wet - full.wet * 0.5) < 1e-9, '湿度减半 = 发送量减半');
+    assert.equal(half.tailSec, full.tailSec, '尾巴不该随湿度变');
+    assert.equal(half.preDelayMs, full.preDelayMs, '前延迟不该随湿度变');
+    assert.equal(half.irDecay, full.irDecay, 'IR 衰减不该随湿度变');
+    assert.ok(half.dry > full.dry, '湿度越低干声越接近满电平');
   });
 
   it('均衡三段只在非中性时挂上，且频率与前端 BiquadFilterNode 一致', () => {
@@ -253,7 +329,7 @@ describe('混音端到端（真实 ffmpeg）', () => {
     );
   });
 
-  it('八档混响都能成功出片（空间 0 旁通，其余挂 aecho）', async () => {
+  it('八档混响都能成功出片（空间 0 旁通，其余挂 afir 卷积）', async () => {
     for (const kind of REVERB_KINDS) {
       const output = await mixTo(
         `out-reverb-${kind}.mp3`,
@@ -273,6 +349,72 @@ describe('混音端到端（真实 ffmpeg）', () => {
     const summary = await summarize(output);
     assert.equal(summary.audioCodec, 'mp3');
     assert.ok(summary.durationSec! > 1.7, `时长异常：${summary.durationSec}`);
+  });
+
+  /**
+   * 本 bug 的守门测试：成品 MP3 必须真的带有衰减混响尾。
+   *
+   * 曾经的故障形态是服务端用 aecho 拼「单次 slap 回声」—— 干声一停声音就没了，
+   * 湿度还控制不了它；而试听是长长的指数衰减尾，用户听成「成品多一层混响」。
+   * 这里用「骤停干声 + 静音伴奏」把内容隔离成 人声+尾，直接量尾音能量：
+   *  - 尾音窗口必须显著有能量（不能是个 slap 就没了）；
+   *  - 必须随时间衰减（hall 1.3s 尾：前段比后段响）；
+   *  - 干声渲染的同一窗口必须基本安静（尾确实是混响加上去的）。
+   */
+  it('混响尾音回归：骤停干声之后仍有能量且随时间衰减（不再是无尾 slap）', async () => {
+    const accomp = path.join(workDir, 'silence-accomp.wav');
+    const burst = path.join(workDir, 'burst-vocal.wav');
+    await ffmpegOk(silenceArgs(accomp, 2.5));
+    await ffmpegOk(burstVocalArgs(burst, 0.3, 2.5));
+
+    const levels = computeLevels({ vocalGain: 1, accompGain: 1, compression: 0 }, 0, 0);
+    const render = async (name: string, reverbSpace: number, reverbWet: number) => {
+      const output = path.join(workDir, name);
+      const irPath = path.join(workDir, `ir-${name}.wav`);
+      await writeReverbIr(reverbSpace, irPath);
+      await runFfmpeg({
+        args: buildMixArgs({
+          offsetMs: 0,
+          levels,
+          reverbSpace,
+          reverbWet,
+          eqLowDb: 0,
+          eqMidDb: 0,
+          eqHighDb: 0,
+          vocalPath: burst,
+          accompanimentPath: accomp,
+          outputPath: output,
+          title: '尾音测试',
+          reverbIrPath: irPath,
+        }),
+        timeoutMs: 120_000,
+        label: '尾音测试混音',
+      });
+      return output;
+    };
+
+    const wet = await decodeToFloat32(await render('out-tail-wet.mp3', anchorSpace('hall'), 1));
+    const dry = await decodeToFloat32(await render('out-tail-dry.mp3', 0, 1));
+
+    const voiceWet = rmsOfWindow(wet.samples, wet.sampleRate, 0.05, 0.28);
+    const tailNear = rmsOfWindow(wet.samples, wet.sampleRate, 0.4, 0.7);
+    const tailFar = rmsOfWindow(wet.samples, wet.sampleRate, 1.0, 1.3);
+    const tailDryNear = rmsOfWindow(dry.samples, dry.sampleRate, 0.4, 0.7);
+    const tailDryFar = rmsOfWindow(dry.samples, dry.sampleRate, 1.0, 1.3);
+
+    assert.ok(voiceWet > 0.01, `人声窗口应有能量，实际 ${voiceWet}`);
+    // 尾音必须真的存在：干声渲染的同一窗口基本是 MP3 噪声底
+    assert.ok(
+      tailNear > tailDryNear * 10 && tailNear > 1e-4,
+      `0.4–0.7s 应有明显混响尾：湿 ${tailNear} vs 干 ${tailDryNear}`,
+    );
+    // 且不能只是个 slap：hall 的 1.3s 尾在 1.0–1.3s 仍该有可测能量
+    assert.ok(
+      tailFar > tailDryFar * 10 && tailFar > 1e-4,
+      `1.0–1.3s 仍应有尾音，实际 ${tailFar}`,
+    );
+    // 衰减：近段比远段响（指数衰减尾，不是恒定噪声）
+    assert.ok(tailNear > tailFar * 1.5, `尾音应衰减：近 ${tailNear} vs 远 ${tailFar}`);
   });
 
   it('人声音量拉到 0 时不出错（等于只要伴奏）', async () => {

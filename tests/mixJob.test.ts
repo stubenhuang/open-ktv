@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { DEFAULT_MIX_PARAMS } from '../shared/types.ts';
+import { anchorSpace } from '../shared/mix.ts';
 import { createIsolatedDataDir, removeIsolatedDataDir } from './isolated.ts';
 
 /**
@@ -184,5 +185,64 @@ describe('mixWorkToMp3', () => {
       `预处理中间文件应被清理，实际：${entries.join(', ')}`,
     );
     assert.equal(fs.existsSync(work.vocalPath), true, '原始干声必须还在');
+  });
+
+  it('混响激活：生成 IR 临时文件喂给 afir，跑完清干净', async () => {
+    const track = db.getTrack(trackId)!;
+    const work = db.getWork(workId)!;
+
+    // hall 锚点 + 90% 湿度：与真实作品的典型用法一致
+    const result = await mixJob.mixWorkToMp3({
+      work: {
+        ...work,
+        mixParams: {
+          ...DEFAULT_MIX_PARAMS,
+          reverbSpace: anchorSpace('hall'),
+          reverbWet: 0.9,
+        },
+      },
+      track,
+      onProgress: () => {},
+    });
+
+    const summary = await helpers.summarize(result.outputPath);
+    assert.equal(summary.audioCodec, 'mp3');
+    assert.equal(summary.sampleRate, 48_000);
+    assert.equal(summary.channels, 2);
+
+    // IR 是中间产物：出片后不该留在 tmp 里
+    const entries = await fs.promises.readdir(paths.TMP_DIR);
+    assert.deepEqual(
+      entries.filter((name) => name.startsWith('reverb-ir-')),
+      [],
+      `混响 IR 中间文件应被清理，实际：${entries.join(', ')}`,
+    );
+  });
+
+  it('writeReverbIr：产出的是立体声浮点 WAV，L2 复刻浏览器卷积器增益', async () => {
+    const irPath = path.join(paths.TMP_DIR, 'ir-inspect.wav');
+    await mixJob.writeReverbIr(anchorSpace('hall'), irPath);
+    try {
+      const decoded = await helpers.decodeToFloat32(irPath);
+      // 48k 立体声：1.3s 尾 + 25ms 前延迟
+      assert.ok(
+        Math.abs(decoded.sampleRate - 48000) < 1,
+        `IR 采样率应为 48000，实际 ${decoded.sampleRate}`,
+      );
+      const expectedLength = Math.floor(48000 * (1.3 + 0.025));
+      assert.ok(
+        Math.abs(decoded.samples.length - expectedLength) < 48,
+        `IR 长度应约为 ${expectedLength}，实际 ${decoded.samples.length}`,
+      );
+      // 前 25ms 全静音
+      for (let i = 0; i < Math.floor(48000 * 0.025); i += 1) {
+        assert.equal(decoded.samples[i], 0, `前延迟第 ${i} 样本应为静音`);
+      }
+      // 尾音能量非零（下混后仍能量可测）
+      const tailRms = helpers.rmsOfWindow(decoded.samples, decoded.sampleRate, 0.03, 0.5);
+      assert.ok(tailRms > 1e-5, `尾音 RMS 应可测，实际 ${tailRms}`);
+    } finally {
+      await fs.promises.rm(irPath, { force: true });
+    }
   });
 });

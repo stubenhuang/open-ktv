@@ -65,3 +65,46 @@ export function encodeWavBytes(samples: Float32Array, sampleRate: number): Uint8
 export function encodeWavBlob(samples: Float32Array, sampleRate: number): Blob {
   return new Blob([encodeWavBytes(samples, sampleRate)], { type: 'audio/wav' });
 }
+
+/**
+ * 多声道 float32 WAV（RIFF WAVE, format tag 3）。
+ *
+ * 给服务端写混响 IR 用：IR 是双声道、幅度只有千分之几（复刻浏览器卷积器
+ * 归一化后的等效增益），16 位量化的噪声会听得出来，必须浮点。
+ * 浏览器侧不直接用这个函数（那边用 AudioBuffer），但实现放在 shared 里，
+ * 格式定义只有一份。
+ */
+export function encodeWavBytesFloat(channels: Float32Array[], sampleRate: number): Uint8Array<ArrayBuffer> {
+  const channelCount = channels.length;
+  const frames = channelCount > 0 ? channels[0]!.length : 0;
+  const bytesPerSample = 4;
+  const dataSize = frames * channelCount * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  writeAscii(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeAscii(view, 8, 'WAVE');
+
+  writeAscii(view, 12, 'fmt ');
+  view.setUint32(16, 16, true); // fmt chunk 长度
+  view.setUint16(20, 3, true); // IEEE float
+  view.setUint16(22, channelCount, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * channelCount * bytesPerSample, true); // byteRate
+  view.setUint16(32, channelCount * bytesPerSample, true); // blockAlign
+  view.setUint16(34, 8 * bytesPerSample, true); // 位深
+
+  writeAscii(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let frame = 0; frame < frames; frame += 1) {
+    for (let channel = 0; channel < channelCount; channel += 1) {
+      view.setFloat32(offset, channels[channel]![frame]!, true);
+      offset += bytesPerSample;
+    }
+  }
+
+  return new Uint8Array(buffer);
+}
