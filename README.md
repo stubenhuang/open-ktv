@@ -1,5 +1,7 @@
 # Open KTV
 
+[![CI](https://github.com/stubenhuang/open-ktv/actions/workflows/ci.yml/badge.svg)](https://github.com/stubenhuang/open-ktv/actions/workflows/ci.yml)
+
 简易版全民K歌（Web）：**点歌或上传伴奏 → 跟唱歌词 → 戴耳机带耳返演唱 → 服务端合成 192kbps MP3 → 试听 / 调整效果与音效 / 下载**。
 
 单机自用，无需登录。伴奏库上传**只收音频**（弹窗里选音频 + 可选 .lrc 歌词）；点歌台**内置 5sing 伴奏搜索/下载**（默认开箱即用），也可以再配自建曲库源。
@@ -57,9 +59,13 @@ npm install
 ./openktv.sh restart          # 重启（沿用上次的模式，同样是前台跑）
 ./openktv.sh status           # 查看状态（运行中退出码 0，没运行退出码 1）
 ./openktv.sh logs             # 跟踪日志（Ctrl+C 退出，不会关掉服务）
+./openktv.sh backup           # 备份数据目录（默认存到 backups/ 下，见「数据存放」）
 ```
 
 前台模式下 `Ctrl+C` 一次是优雅关闭（先给服务发信号，最多等 10 秒收尾），再按一次就是强制结束。
+优雅关闭会等在跑的那一次混音/转码落盘（默认最多 8 秒，`SHUTDOWN_JOB_GRACE_MS` 可调），
+超时就放弃 —— 任务会标失败，干声和伴奏都还在，重试即可；收尾时还会把可能残留的
+ffmpeg 子进程一并收掉，不会留孤儿写临时文件。
 不管前台后台，pid 都写在同一个 `.run/openktv.pid` 里，所以另开一个终端跑 `status` / `stop` 一样管用 ——
 在别的终端 `stop` 掉之后，前台那个脚本会自己收尾退出。
 
@@ -72,6 +78,9 @@ npm install
 
 相关文件（都在 `.run/`，已 gitignore）：`.run/openktv.pid`（进程号）、`.run/openktv.mode`
 （上次用的模式，`restart` 会沿用它）、`.run/openktv.log`（完整日志）。
+
+**日志轮转**：`.run/openktv.log` 超过 `LOG_MAX_BYTES`（默认 20MB）就在下次启动时滚成
+`.log.1` / `.log.2`…，只保留 `LOG_KEEP`（默认 3）代。两个都是环境变量，可调。
 
 **换端口**：`PORT` 是后端，`WEB_PORT` 是开发模式下的前端，两个会一起生效
 （`vite.config.ts` 的代理目标跟着 `PORT` 走）：
@@ -187,6 +196,27 @@ https / 127.0.0.1 / localhost 算作可信 origin —— `http://192.168.x.x` �
 - 开发模式（`--dev`）默认也给 Vite 上 TLS，手机扫码即用；桌面开发地址是
   <https://127.0.0.1:5173>，首次有一次自签名证书警告。想关掉：`VITE_HTTPS=0 npm run dev`。
 
+## 访问令牌（可选）
+
+默认绑 `0.0.0.0`，同一 WiFi 下谁都能打开页面、调接口 —— 包括删除伴奏/作品这种操作。
+家里随便唱无所谓；宿舍 / 办公室环境下，设一个 `ACCESS_TOKEN` 就把接口保护起来了：
+
+```bash
+ACCESS_TOKEN=只有你知道的一串 ./openktv.sh start
+```
+
+规则（设计目标：**本机使用完全无感**）：
+
+- **回环地址永远不用令牌** —— 电脑上开 <http://127.0.0.1:8787> 照常用，什么都不用输；
+- 手机 / 局域网其他设备必须带令牌：请求头 `x-access-token`，或地址参数 `?token=`
+  （`<audio>` / `<video>` / `<img>` 的 src 带不了请求头，只能走参数）；
+- **二维码地址由服务端自动带上令牌** —— 手机扫码即用，同样无感；令牌是从 URL 上
+  取的，落地后存进行浏览器的 localStorage，之后刷新、分享页面都不受影响；
+- 桌面端从**别的机器**打开页面时，首次请求会收到 401，页面弹出输入框，输一次即可；
+- 不设 `ACCESS_TOKEN`（默认）时这套机制完全空转，行为与以前逐字节一致。
+
+配合 `HOST=127.0.0.1`（只绑本机）是更彻底的方案 —— 那样手机也连不进来，按需选择。
+
 ## 曲库与歌词
 
 「点歌台」有**两个内置源，默认开启、开箱即用**：
@@ -247,7 +277,17 @@ data/
   tmp/            临时文件，启动时会清空
 ```
 
-**备份**直接拷整个 `data/` 就行。**重置**就把 `data/` 删掉再启动。
+**备份**用 `./openktv.sh backup`（默认存到 `backups/openktv-<时间戳>.tar.gz`，也可以
+`./openktv.sh backup /path/to/out.tar.gz` 指定路径）。它会用 SQLite 的 `VACUUM INTO`
+做一份**一致快照**（连 WAL 里还没合并的写入一起），再和 `originals / proxies /
+vocals / works` 一起打包；`tmp/`（半成品）和 `certs/`（换网段自动重签）不进备份。
+
+> **别再直接拷 `data/`**：SQLite 开着 WAL 模式，最近的写入可能还在 `ktv.db-wal` 里
+> 没合并回主库。服务运行时直接 `cp` 三个文件，拷到的可能是一个过期的主库配一份
+> 对不上的 WAL。`backup` 命令在线也安全，但最稳的还是先 `./openktv.sh stop`。
+
+**恢复**：停服务 → 把 `data/` 挪走或删掉 → `tar -xzf backups/xxx.tar.gz -C data/` → 启动。
+**重置**就更简单：把 `data/` 删掉再启动。
 
 ## 配置
 
@@ -264,7 +304,12 @@ data/
 | `FFMPEG_BIN` | `ffmpeg` | ffmpeg 路径（不在 PATH 里时用绝对路径） |
 | `FFPROBE_BIN` | `ffprobe` | ffprobe 路径 |
 | `LOG_LEVEL` | `info` | 日志详细程度：`debug` / `info` / `warn` / `error`（开发模式 `dev.mjs` 默认 `debug`） |
+| `LOG_MAX_BYTES` | `20971520` | 日志轮转阈值（字节）。`.run/openktv.log` 超过它就在下次启动时滚成 `.1`/`.2`… |
+| `LOG_KEEP` | `3` | 保留几代滚动日志 |
 | `DATA_DIR` | `<项目>/data` | 数据目录整体位置，测试靠它指向临时目录 |
+| `SHUTDOWN_JOB_GRACE_MS` | `8000` | 优雅关闭时等待在跑任务（混音/转码）落盘的上限；超时就放弃，任务标失败、可重试 |
+| `ACCESS_TOKEN` | 空（不设防） | 局域网访问令牌。设了之后：**本机回环永远不用令牌**；手机 / 局域网其他设备必须带（header `x-access-token` 或 `?token=`），二维码地址由服务端自动带上，详见下面「访问令牌」 |
+| `LIBRARY_BLOCK_PRIVATE_NET` | `0` | 曲库私网地址拦截开关。清单是外部数据，条目 url 理论上可指向内网服务（SSRF 面）；`1` = 拦截。默认关——README 宣传的 NAS / 局域网源恰恰是私网地址，别把自家功能打死 |
 | `LIBRARY_SOURCES` | 空 | 自建曲库源列表，逗号分隔；每项是 `名字=清单URL` 或裸 URL（协议见上文）。内置 5sing 源默认就有，不用配 |
 | `LIBRARY_CACHE_TTL_MS` | `600000` | 清单缓存时长；搜索是本地过滤，不需要每次敲字都打源站 |
 | `LIBRARY_SEARCH_TIMEOUT_MS` | `5000` | 单个源的超时；超时即视为该源不可用，**不影响其他源** |
