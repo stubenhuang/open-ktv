@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 
 /**
  * 跑一次外部二进制（目前只有 ffmpeg），只负责「调度」这一层：
@@ -33,6 +34,45 @@ export interface RunProcessOptions {
 
 const DEFAULT_STDERR_TAIL_BYTES = 4096;
 
+/**
+ * 还活着的子进程（ffmpeg）。
+ *
+ * 为什么需要这张表：服务收到 SIGTERM 走优雅关闭时，`server.close()` 只管
+ * HTTP 连接，**不会**带走这些子进程 —— 父进程一退，它们就被过继给 init
+ * 继续写 `data/tmp` 里的半成品，而库里的任务早已被标 failed。所以关闭
+ * 流程最后要显式把它们收掉（见 index.ts 的 shutdown 与 killRunningChildren）。
+ */
+const activeChildren = new Set<ChildProcess>();
+
+/** 当前活着的子进程数（测试与关闭流程用） */
+export function runningChildCount(): number {
+  return activeChildren.size;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 收掉全部活着的子进程：先 SIGTERM 给它们 flush 的机会，1 秒后还对
+ * 幸存者补 SIGKILL。ffmpeg 被 SIGTERM 时会正常结束并丢掉不完整的输出，
+ * 而我们的写入一律是「先 tmp 再 rename」，半成品文件下次启动就被清掉。
+ */
+export async function killRunningChildren(): Promise<void> {
+  const children = [...activeChildren];
+  for (const child of children) {
+    if (child.exitCode !== null || child.signalCode !== null) continue;
+    child.kill('SIGTERM');
+  }
+  if (children.length === 0) return;
+
+  await sleep(1000);
+  for (const child of children) {
+    if (child.exitCode !== null || child.signalCode !== null) continue;
+    child.kill('SIGKILL');
+  }
+}
+
 export function runProcess(options: RunProcessOptions): Promise<ProcessResult> {
   const { bin, args, timeoutMs, label, missingBinMessage, onStdout } = options;
   const stderrTailBytes = options.stderrTailBytes ?? DEFAULT_STDERR_TAIL_BYTES;
@@ -41,6 +81,7 @@ export function runProcess(options: RunProcessOptions): Promise<ProcessResult> {
     const child = spawn(bin, args, {
       stdio: ['ignore', onStdout ? 'pipe' : 'ignore', 'pipe'],
     });
+    activeChildren.add(child);
 
     let stderr = '';
     let settled = false;
@@ -72,6 +113,8 @@ export function runProcess(options: RunProcessOptions): Promise<ProcessResult> {
     }
 
     child.on('error', (error: NodeJS.ErrnoException) => {
+      // spawn 失败（ENOENT 等）时 close 不保证触发，这里自己摘表
+      activeChildren.delete(child);
       if (error.code === 'ENOENT') {
         finish(new Error(missingBinMessage));
         return;
@@ -81,6 +124,7 @@ export function runProcess(options: RunProcessOptions): Promise<ProcessResult> {
 
     // 超时被杀同样走 close，调用方看 timedOut 决定怎么报
     child.on('close', (code) => {
+      activeChildren.delete(child);
       finish(undefined, { code, timedOut, stderr });
     });
   });

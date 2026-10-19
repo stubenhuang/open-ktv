@@ -21,10 +21,24 @@ const pending: QueueItem[] = [];
 const progress = new Map<string, number>();
 let active: QueueItem | null = null;
 
+/** 等「队列彻底空」的等待者；pump 发现空闲时统一放行 */
+const idleWaiters: { resolve: () => void }[] = [];
+
+function notifyIdle(): void {
+  if (active || pending.length > 0) return;
+  while (idleWaiters.length > 0) {
+    idleWaiters.pop()!.resolve();
+  }
+}
+
 function pump(): void {
   if (active) return;
   const next = pending.shift();
-  if (!next) return;
+  if (!next) {
+    // 队空了：可能在等关闭流程里的 whenQueueIdle
+    notifyIdle();
+    return;
+  }
 
   active = next;
   const startedAt = Date.now();
@@ -59,6 +73,20 @@ export function enqueue(
   progress.set(key, 0);
   log.debug(`入队 ${key}`, { waiting: pending.length });
   setImmediate(pump);
+}
+
+/**
+ * 等队列彻底空（没有在跑的、也没有排队的）。
+ *
+ * 服务优雅关闭时用：给正在跑的那一次混音/转码一个落盘的机会，
+ * 而不是父进程一退就把 ffmpeg 过继给 init。调用方应自行加超时
+ * （Promise.race），本函数不保证一定会在有限时间内 resolve。
+ */
+export function whenQueueIdle(): Promise<void> {
+  if (!active && pending.length === 0) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    idleWaiters.push({ resolve });
+  });
 }
 
 /** 0–1 的进度；任务不在队列里返回 null */

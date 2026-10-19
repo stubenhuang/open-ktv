@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { enqueue, getProgress, isQueued, queueState } from '../server/src/jobs.ts';
+import { enqueue, getProgress, isQueued, queueState, whenQueueIdle } from '../server/src/jobs.ts';
 
 /** 包一层 enqueue，任务结束（成功或失败）时 resolve，方便测试等待 */
 function runTask(
@@ -121,5 +121,31 @@ describe('任务队列', () => {
     });
     assert.ok(failure instanceof Error);
     assert.equal(failure!.message, '字符串错误');
+  });
+
+  it('whenQueueIdle：队列空时立即 resolve', async () => {
+    // 前一个用例跑完后队列一定是空的
+    await whenQueueIdle();
+  });
+
+  it('whenQueueIdle：有任务在跑时等最后一个结束才放行', async () => {
+    let release = () => {};
+    const blocker = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const blockerDone = runTask('idle:blocker', () => blocker);
+    let idleResolved = false;
+    const idle = whenQueueIdle().then(() => {
+      idleResolved = true;
+    });
+
+    // 让出一轮，确保队列已经启动（blocker 在跑）
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(idleResolved, false, '任务还在跑，不能算空闲');
+
+    release();
+    await Promise.all([blockerDone, idle]);
+    assert.equal(idleResolved, true, '队列空后必须放行');
   });
 });

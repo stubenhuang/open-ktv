@@ -98,6 +98,25 @@ function connection(): DatabaseSync {
   return db;
 }
 
+/**
+ * 关库（优雅关闭时调用）。
+ *
+ * SQLite 在最后一个连接关闭时会把 WAL 合并回主库 —— 不显式关的话，
+ * 优雅退出后 `ktv.db-wal` 里仍留着未合并的页（下次开库才合并）。
+ * 关失败只记日志：退出流程不能因为关库失败而卡住。
+ */
+export function closeDb(): void {
+  if (!db) return;
+  try {
+    db.close();
+    log.info('数据库已关闭（WAL 已合并）');
+  } catch (error) {
+    log.warn('关闭数据库失败', { error });
+  } finally {
+    db = null;
+  }
+}
+
 export function initDb(): void {
   ensureDirs();
   db = new DatabaseSync(DB_FILE);

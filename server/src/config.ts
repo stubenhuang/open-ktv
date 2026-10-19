@@ -81,6 +81,17 @@ export const JOB_TIMEOUT_MS = {
   preProcess: 5 * 60 * 1000,
 } as const;
 
+/**
+ * 优雅关闭时等待在跑任务的上限（ms）。
+ *
+ * 服务收到 SIGTERM 后，正在跑的那一次混音/转码还有这个机会落盘；
+ * 超时就放弃（任务标 failed，用户重试即可，干声和伴奏都还在）。
+ *
+ * 默认 8s 是照着 openktv.sh 的 10s 强杀宽限留的余量 —— 服务端先退出，
+ * 脚本的 `kill -KILL` 就不会真的落到我们头上。
+ */
+export const SHUTDOWN_JOB_GRACE_MS = Number(process.env.SHUTDOWN_JOB_GRACE_MS ?? 8000);
+
 /* --------------------------------- 曲库源 --------------------------------- */
 
 /**

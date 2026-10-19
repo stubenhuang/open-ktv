@@ -1,6 +1,8 @@
-import { HOST, PORT } from './config.ts';
+import { HOST, PORT, SHUTDOWN_JOB_GRACE_MS } from './config.ts';
 import { createApp } from './app.ts';
-import { initDb, recoverInterruptedJobs } from './db.ts';
+import { closeDb, initDb, recoverInterruptedJobs } from './db.ts';
+import { killRunningChildren } from './process.ts';
+import { whenQueueIdle } from './jobs.ts';
 import { createLogger } from './logger.ts';
 import { cleanTmpDir } from './paths.ts';
 import { startLanHttpsMirror, stopLanHttpsMirror, isLoopbackHost } from './lanHttps.ts';
@@ -44,14 +46,78 @@ void startLanHttpsMirror(app).then((state) => {
   }
 });
 
-function shutdown(signal: string): void {
-  log.info(`收到 ${signal}，正在关闭服务…`);
-  // 镜像先收：它和主服务是同一个 app，先关少的那个
-  void stopLanHttpsMirror().finally(() => {
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 2000).unref();
-  });
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('SIGTERM', () => shutdown('SIGTERM'));
+/** 优雅关闭只能进一次：Ctrl+C 按两次时第二次直接无视（强杀由脚本层负责） */
+let shuttingDown = false;
+
+/**
+ * 优雅关闭。
+ *
+ * 顺序有讲究，每一步都在解决一个具体的「退出后留烂摊子」问题：
+ *
+ *  1. `server.close()` —— 不再接受新连接。但它**不会**断开已建立的
+ *     keep-alive 连接，浏览器开着的页面会让它一直不返回；
+ *  2. 2 秒后 `closeAllConnections()` —— 到点强制断开，保证退出流程走得动；
+ *  3. 等队列空（上限 SHUTDOWN_JOB_GRACE_MS）—— 给正在跑的那一次
+ *     混音/转码一个落盘机会。任务中途被杀，作品会停在 failed，
+ *     而干声和伴奏都还在，用户重点「合成」就能恢复；
+ *  4. `killRunningChildren()` —— 还没跑完的 ffmpeg 显式收掉。
+ *     父进程 exit 不会带走子进程，它们会被过继给 init 继续写
+ *     `data/tmp` 里的半成品（库里的任务却已标 failed，从此没人认领）；
+ *  5. 关 HTTPS 镜像、关库（WAL 合并回主库）。
+ *
+ * 整体再包一层总超时：关闭流程任何一步卡住都必须在有限时间内退出，
+ * 绝不能把「停止服务」本身变成需要被强杀的操作。
+ */
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  log.info(`收到 ${signal}，正在关闭服务…`);
+
+  // ① 停止接受新连接；② 到点强制断开 keep-alive，别让 close 永远悬着
+  server.close();
+  setTimeout(() => server.closeAllConnections(), 2000).unref();
+
+  // 总超时兜底：③④⑤ 任何一步卡住，到点也必须退出 —— 「停止服务」
+  // 本身不该变成需要被强杀的操作。各步骤自身也都有界（等待任务有
+  // 上限、kill 子进程最多 1s、关库是同步的），这里只是最后一道保险。
+  const hardDeadlineMs = SHUTDOWN_JOB_GRACE_MS + 5000;
+  let hardExit = false;
+  const hardTimer = setTimeout(() => {
+    hardExit = true;
+    log.warn('关闭流程超过总超时，强制退出');
+    process.exit(0);
+  }, hardDeadlineMs);
+  hardTimer.unref();
+
+  try {
+    // ③ 等在跑的任务（混音/转码），超时就放弃 —— 用户重试即可
+    const drained = await Promise.race([
+      whenQueueIdle().then(() => true),
+      sleep(SHUTDOWN_JOB_GRACE_MS).then(() => false),
+    ]);
+    if (!drained) {
+      log.warn(`等待任务结束超时（${SHUTDOWN_JOB_GRACE_MS}ms），将继续关闭`);
+    }
+
+    // ④ 收掉还在跑的 ffmpeg，别留孤儿进程写 tmp
+    await killRunningChildren();
+
+    // ⑤ 镜像与数据库
+    await stopLanHttpsMirror();
+    closeDb();
+  } catch (error) {
+    log.error('关闭过程中出错', { error });
+  }
+
+  if (!hardExit) {
+    clearTimeout(hardTimer);
+    process.exit(0);
+  }
+}
+
+process.on('SIGINT', () => void shutdown('SIGINT'));
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
