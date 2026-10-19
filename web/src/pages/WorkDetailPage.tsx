@@ -163,6 +163,29 @@ export default function WorkDetailPage() {
     }
   };
 
+  /** 撤销上一步分段重录：换回重录前的干声，并自动重新混音（只回退一级） */
+  const handleUndoRetake = async () => {
+    if (!work) return;
+    const confirmed = await confirmAction({
+      title: '撤销重录',
+      message:
+        '确定恢复到上一步重录前的干声吗？当前干声会被替换掉，并自动重新混音。' +
+        '（只回退一级：再往前的一版已经被覆盖。）',
+      confirmText: '撤销并重新混音',
+    });
+    if (!confirmed) return;
+    setBusy(true);
+    try {
+      await api.undoRetake(work.id);
+      // 状态已翻成 mixing；load 一次让徽章和轮询跟上
+      await load();
+    } catch (err) {
+      setActionError(errorMessage(err, '撤销重录失败'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (loadError) {
     return (
       <div>
@@ -244,6 +267,23 @@ export default function WorkDetailPage() {
           <Link className="btn btn-ghost" to="/works">
             返回作品库
           </Link>
+          {/* 伴奏被删的作品不能再混音，重录（拼完要重新混音）同理不给入口 */}
+          {work.trackId && (
+            <Link className="btn" to={`/works/${work.id}/retake`}>
+              分段重录
+            </Link>
+          )}
+          {work.hasPrevVocal && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={busy}
+              onClick={() => void handleUndoRetake()}
+              title="恢复上一步重录前的干声，并自动重新混音"
+            >
+              撤销重录
+            </button>
+          )}
           <button type="button" className="btn btn-danger" onClick={() => void handleDelete()}>
             删除
           </button>

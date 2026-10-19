@@ -291,6 +291,22 @@ export const api = {
   remixWork: (id: string, params: Partial<MixParams>) =>
     request<Work>(`/api/works/${encodeURIComponent(id)}/mix`, jsonInit('POST', params)),
 
+  /**
+   * 分段重录：把一段新录音拼进干声的 [startSec, endSec)（干声时间轴，秒）。
+   * 服务端拼接完成后自动重新混音，返回时作品状态已是 mixing。
+   */
+  retakeWork: (id: string, input: { vocal: Blob; startSec: number; endSec: number }) => {
+    const form = new FormData();
+    form.append('segment', input.vocal, 'segment.wav');
+    form.append('startSec', String(input.startSec));
+    form.append('endSec', String(input.endSec));
+    return upload<Work>(`/api/works/${encodeURIComponent(id)}/retake`, form);
+  },
+
+  /** 撤销上一步分段重录（恢复重录前的干声并重新混音；只回退一级） */
+  undoRetake: (id: string) =>
+    request<Work>(`/api/works/${encodeURIComponent(id)}/retake-undo`, jsonInit('POST', {})),
+
   updateWork: (id: string, patch: { title?: string }) =>
     request<Work>(`/api/works/${encodeURIComponent(id)}`, jsonInit('PATCH', patch)),
 

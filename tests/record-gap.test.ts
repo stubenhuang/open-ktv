@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { MAX_MEASURED_GAP_MS, resolveRecordGapMs } from '../shared/mix.ts';
+import {
+  MAX_MEASURED_GAP_MS,
+  resolveRecordGapMs,
+  segmentSpliceOffsetSec,
+} from '../shared/mix.ts';
 
 /**
  * 「起录 → 伴奏真正起播」间隔的收敛。
@@ -54,5 +58,39 @@ describe('resolveRecordGapMs（起播间隔收敛）', () => {
       resolveRecordGapMs({ captureStartPerf: 500, accompStartPerf: 650, prerollMs: preroll }),
       150,
     );
+  });
+});
+
+/**
+ * 分段重录的落点偏移。
+ *
+ * 重录把伴奏 seek 到歌内 P 再起录，新录音 t' ↔ 干声时间 t' + spliceOffset。
+ * 这个数错一整段 lead-in，用户就会听到「新录的那句整体挪位」——
+ * 而它是前端上传前唯一的计算，服务端只按目标区间盲拼。
+ */
+describe('segmentSpliceOffsetSec（重录落点偏移）', () => {
+  it('两次起播间隔相同 → 偏移就是 seek 位置', () => {
+    assert.equal(segmentSpliceOffsetSec(30, 200, 200), 30);
+  });
+
+  it('重录起播更快（G_new < G）→ 偏移略大于 seek 位置', () => {
+    // 30 + (200 − 150)/1000：新录音里内容要再往后放 50ms
+    assert.equal(segmentSpliceOffsetSec(30, 200, 150), 30.05);
+  });
+
+  it('重录起播更慢（G_new > G）→ 偏移略小于 seek 位置', () => {
+    assert.equal(segmentSpliceOffsetSec(30, 200, 260), 29.94);
+  });
+
+  it('G_new 没测到回退到预备静音 150ms → 与原 G 的差照算', () => {
+    assert.equal(segmentSpliceOffsetSec(30, 200, 150), 30.05);
+  });
+
+  it('seek 被钳到 0（片段就在歌头）→ 只剩两次间隔之差', () => {
+    assert.equal(segmentSpliceOffsetSec(0, 200, 180), 0.02);
+  });
+
+  it('非有限输入按 0 处理，不产出 NaN', () => {
+    assert.equal(segmentSpliceOffsetSec(Number.NaN, Number.NaN, Number.NaN), 0);
   });
 });

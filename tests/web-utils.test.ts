@@ -394,6 +394,7 @@ function makeWork(overrides: Partial<WorkListItem> = {}): WorkListItem {
     trackKind: 'audio',
     trackArtist: '周杰伦',
     sizeBytes: 4_000_000,
+    hasPrevVocal: false,
     ...overrides,
   };
 }

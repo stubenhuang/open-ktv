@@ -296,6 +296,11 @@ export interface WorkListItem extends Work {
    * 列表接口顺带 fs.stat 出来（本地文件，失败只影响这一个字段）。
    */
   sizeBytes: number | null;
+  /**
+   * 有没有「重录前的上一版干声」可撤销（分段重录的备份）。
+   * 只回退一级：再重录一次，备份就被更新成更新前的那一版。
+   */
+  hasPrevVocal: boolean;
 }
 
 export const MIX_LIMITS = {
@@ -361,6 +366,25 @@ export const REVERB_LABELS: Record<ReverbKind, string> = {
 export const MAX_RECORD_MS = 15 * 60 * 1000;
 /** 低于该时长的录音拒绝出片 */
 export const MIN_RECORD_MS = 1000;
+
+/* --------------------------------- 分段重录 --------------------------------- */
+
+/**
+ * 分段重录的共用限制：服务端校验与前端控件都从这里取。
+ *
+ * 一次重录只替换干声时间轴上的 [startSec, endSec) 一段；拼接在服务端做，
+ * 两端边界用 fadeSec 的交叉淡化防咔哒声，输出干声总长不变（vocalDuration 不动）。
+ */
+export const RETAKE_LIMITS = {
+  /** 重录时伴奏从「片段开始前这么多个秒」响起，给歌手找拍（lead-in） */
+  leadInSec: 3,
+  /** 片段时长下限（秒）：再短的片段，拼接对齐的收益还没边界噪声大 */
+  minSegmentSec: 0.3,
+  /** 拼接边界交叉淡化时长（秒）；头部「旧淡出/新淡入」、尾部「新淡出/旧淡入」 */
+  fadeSec: 0.02,
+  /** 伴奏过「片段结束」后这么久自动停录（秒）——之后唱得再好也不会被采用 */
+  tailSec: 1,
+} as const;
 
 /** 上传单文件上限：1GB */
 export const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;

@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import type {
   Track,
   TrackDetail,
@@ -8,6 +9,7 @@ import type {
 } from '../../shared/types.ts';
 import type { TrackRecord, WorkRecord } from './db.ts';
 import { getProgress } from './jobs.ts';
+import { backupVocalPath } from './vocalSplice.ts';
 
 export function transcodeKey(trackId: string): string {
   return `transcode:${trackId}`;
@@ -90,5 +92,7 @@ export function workToListItem(
     trackKind: track?.kind ?? null,
     trackArtist: track?.artist ?? null,
     sizeBytes: mp3SizeBytes ?? null,
+    // 「撤销重录」的入口判据：备份干声在不在（路径见 vocalSplice.ts）
+    hasPrevVocal: fs.existsSync(backupVocalPath(record.vocalPath)),
   };
 }

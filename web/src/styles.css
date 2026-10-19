@@ -2679,6 +2679,80 @@ input[type='range']:disabled::-webkit-slider-thumb {
   line-height: 1.75;
 }
 
+/* ------------------------------ 分段重录选段卡 ------------------------------ */
+
+/* 数字起止 + 时长 + 试听：一行摊开，输入框只占窄格 */
+.retake-range-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 14px;
+  margin-top: 10px;
+}
+
+.retake-range-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.retake-range-row .text-input {
+  width: 92px;
+}
+
+/* 歌词行点选：一行一句，行时刻 + 文本 + 起/止两个小按钮 */
+.retake-lyrics {
+  max-height: 220px;
+  overflow-y: auto;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+
+.retake-lyric-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid rgba(38, 45, 64, 0.55);
+  font-size: var(--fs-sm);
+}
+
+.retake-lyric-row:last-child {
+  border-bottom: none;
+}
+
+/* 选区内的行：左边一道竖线 + 文字提亮，扫一眼就知道覆盖了哪几句 */
+.retake-lyric-row.in-range {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.retake-lyric-row.in-range .retake-lyric-text {
+  color: var(--text);
+}
+
+.retake-lyric-time {
+  flex: 0 0 52px;
+}
+
+.retake-lyric-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.retake-lyric-row .btn {
+  flex: 0 0 auto;
+  padding: 1px 8px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 /* --------------------------------- 点歌台 --------------------------------- */
 
 /* 搜索框里的放大镜：绝对定位压在输入框左侧，输入框留出左内边距 */

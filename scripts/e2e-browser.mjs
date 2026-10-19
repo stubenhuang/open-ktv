@@ -1736,6 +1736,160 @@ async function main() {
     pass('已清理点歌产生的伴奏');
   }
 
+  /* --------------------- 5.5 分段重录：选段 → 录 → 自动拼接重混 --------------------- */
+  step('分段重录：选一段 → 开录 → 自动停 → 拼接并重新混音');
+  await page.send('Page.navigate', { url: `${BASE_URL}/works/${workId}` });
+  await waitFor(
+    page,
+    `[...document.querySelectorAll('button, a')].some((n) => n.textContent.includes('分段重录'))`,
+    { timeoutMs: 30_000, label: '作品详情页出现「分段重录」入口' },
+  );
+  const enteredRetake = await evaluate(page, clickByText('分段重录'), '点「分段重录」');
+  if (!enteredRetake) throw new Error('找不到「分段重录」按钮');
+
+  await waitFor(
+    page,
+    `location.pathname === '/works/${workId}/retake' && document.body.innerText.includes('重录哪一段')`,
+    { timeoutMs: 30_000, label: '进入重录页' },
+  );
+
+  /*
+   * 区间设成干声轴 [1s, 2s)。测试伴奏只有 6 秒：lead-in 3 秒会把 seek 钳到 0，
+   * 片段结束 ≈ 歌内 1.85s，加 1s 尾量 → 录到约 2.85s 自动停。
+   * 走自动停而不是手点「完成重录」—— seek 之后的起播测量 + 自动停录
+   * 正是这条链路最容易错的两处。
+   */
+  const rangeSet = await evaluate(
+    page,
+    `(() => {
+      const inputs = [...document.querySelectorAll('.retake-range-row input[type=number]')];
+      if (inputs.length < 2) return false;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(inputs[0], '1');
+      inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+      setter.call(inputs[1], '2');
+      inputs[1].dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`,
+    '设置重录区间 [1s, 2s)',
+  );
+  if (!rangeSet) throw new Error('找不到重录区间的数字输入');
+
+  await waitFor(
+    page,
+    `(() => { const b = document.querySelector('button.btn-primary.btn-lg'); return Boolean(b) && !b.disabled && b.textContent.includes('开始重录'); })()`,
+    { timeoutMs: 30_000, label: '重录页就绪（麦克风接入）' },
+  );
+  const retakeStarted = await evaluate(page, clickByText('开始重录'), '点「开始重录」');
+  if (!retakeStarted) throw new Error('找不到「开始重录」按钮');
+
+  await waitFor(
+    page,
+    `document.querySelector('.stage-fullscreen') !== null && document.body.innerText.includes('重录中')`,
+    { timeoutMs: 15_000, label: '进入重录全屏层' },
+  );
+
+  /*
+   * 证明是「自动停」而不是「等歌唱完」：采样全屏计时器。片段结束 ≈ 歌内 1.85s，
+   * 加 1s 尾量 → 应在 ≈2.85s 停录；测试伴奏共 6 秒，等它放完可不止这个数。
+   */
+  let maxRecordSec = 0;
+  const sampleDeadline = Date.now() + 60_000;
+  while (Date.now() < sampleDeadline) {
+    let sample;
+    try {
+      sample = await evaluate(
+        page,
+        `(() => {
+          const status = document.querySelector('.stage-fs-status');
+          const match = status ? status.innerText.match(/(\\d{2}):(\\d{2})\\.(\\d{3})/) : null;
+          return JSON.stringify({
+            onRetake: location.pathname.endsWith('/retake'),
+            sec: match ? Number(match[1]) * 60 + Number(match[2]) + Number(match[3]) / 1000 : null,
+          });
+        })()`,
+        '采样重录计时器',
+      );
+    } catch {
+      break; // 页面正在导航走（拼接完成跳回作品页）
+    }
+    const state = JSON.parse(sample);
+    if (!state.onRetake) break;
+    if (state.sec !== null && state.sec > maxRecordSec) maxRecordSec = state.sec;
+    await sleep(120);
+  }
+  if (maxRecordSec <= 0) throw new Error('没采到重录计时器读数');
+  if (maxRecordSec > 4.5) {
+    throw new Error(
+      `重录没有在片段结束后自动停（录到 ${maxRecordSec.toFixed(2)}s，而伴奏只有 6s）`,
+    );
+  }
+  note(`自动停录时刻 ≈ ${maxRecordSec.toFixed(2)}s（片段结束 + 1s 尾量；伴奏共 6s）`);
+
+  await waitFor(
+    page,
+    `location.pathname === '/works/${workId}'`,
+    { timeoutMs: 60_000, label: '自动停录 → 拼接完成 → 跳回作品页' },
+  );
+  pass('自动停录后完成拼接并回到作品页');
+
+  await waitFor(page, `document.body.innerText.includes('已就绪')`, {
+    timeoutMs: 90_000,
+    label: '重录后的新成品就绪',
+  });
+
+  const retakeState = await evaluate(
+    page,
+    `(async () => {
+      const work = await (await fetch('/api/works/${workId}')).json();
+      const audio = await fetch('/api/works/${workId}/audio');
+      return JSON.stringify({
+        status: work.status,
+        hasPrevVocal: work.hasPrevVocal,
+        audioOk: audio.ok,
+        audioType: audio.headers.get('content-type'),
+      });
+    })()`,
+    '核对重录后的作品状态',
+  );
+  const retakeInfo = JSON.parse(retakeState);
+  if (!retakeInfo.hasPrevVocal) throw new Error('重录后没有留下可撤销的备份');
+  if (!retakeInfo.audioOk || !retakeInfo.audioType?.includes('audio/mpeg')) {
+    throw new Error(`重录后的成品不对：${retakeState}`);
+  }
+  pass('重录后自动混音出新成品，且留有可撤销的上一版干声');
+
+  /* --------------------- 5.6 撤销重录：换回旧干声并重新混音 --------------------- */
+  step('撤销重录：换回上一版干声并重新混音');
+  const undoClicked = await evaluate(page, clickByText('撤销重录'), '点「撤销重录」');
+  if (!undoClicked) throw new Error('找不到「撤销重录」按钮');
+  await waitFor(page, `document.querySelector('.confirm-panel') !== null`, {
+    timeoutMs: 5000,
+    label: '弹出撤销确认框',
+  });
+  const undoConfirmed = await evaluate(page, clickByText('撤销并重新混音'), '确认撤销');
+  if (!undoConfirmed) throw new Error('找不到撤销确认按钮');
+  await waitFor(page, `document.querySelector('.confirm-panel') === null`, {
+    timeoutMs: 5000,
+    label: '确认框关闭',
+  });
+
+  await waitFor(page, `document.body.innerText.includes('已就绪')`, {
+    timeoutMs: 90_000,
+    label: '撤销后的重新混音完成',
+  });
+  const undoState = await evaluate(
+    page,
+    `(async () => {
+      const work = await (await fetch('/api/works/${workId}')).json();
+      return JSON.stringify({ hasPrevVocal: work.hasPrevVocal, status: work.status });
+    })()`,
+    '核对撤销后的作品状态',
+  );
+  const undoInfo = JSON.parse(undoState);
+  if (undoInfo.hasPrevVocal !== false) throw new Error('撤销后备份应被消费掉（只回退一级）');
+  pass('撤销重录生效：旧干声换回、备份消费、作品重新就绪');
+
   /* -------------------------------- 6. 收尾 -------------------------------- */
   step('清理测试数据');
   await evaluate(

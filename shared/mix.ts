@@ -56,6 +56,34 @@ export function resolveRecordGapMs(input: {
 }
 
 /**
+ * 分段重录时，新录音在**干声时间轴**上的落点偏移（秒）。
+ *
+ * 原录音的对应关系是「歌内位置 x ↔ 干声时间 x + G/1000」（G = 作品的
+ * autoOffsetMs，混音时人声提前 G 就是按它对齐，见 effectiveOffsetMs）。
+ * 重录把伴奏 seek 到歌内位置 P 再起录，起播间隔重新量得 G_new：
+ * 新录音 t' 时刻歌手听到的歌内位置 = P + (t' − G_new/1000)，换算回干声轴
+ *
+ *     v = P + (t' − G_new/1000) + G/1000 = t' + spliceOffset
+ *
+ * 所以裁窗口时：目标干声区间 [S, E) 对应新录音 [S − spliceOffset, E − spliceOffset)。
+ *
+ * @param seekPosSec **实际** seek 到的歌内位置（秒）。片段靠近歌头时它会被钳到 0，
+ *   传理想值会整体错位一整段 lead-in —— 这是最容易错的一处。
+ * @param autoOffsetMs 作品的自动对齐间隔 G（原录音）
+ * @param newGapMs 这次重录实测的起播间隔 G_new
+ */
+export function segmentSpliceOffsetSec(
+  seekPosSec: number,
+  autoOffsetMs: number,
+  newGapMs: number,
+): number {
+  const seek = Number.isFinite(seekPosSec) ? seekPosSec : 0;
+  const gap = Number.isFinite(autoOffsetMs) ? autoOffsetMs : 0;
+  const measured = Number.isFinite(newGapMs) ? newGapMs : 0;
+  return seek + (gap - measured) / 1000;
+}
+
+/**
  * 对齐偏移的合成（服务端 ffmpeg 与前端预览共用同一套公式）。
  *
  * 语义：offsetMs 是**人声相对混音时间轴的延迟**，正数 = 人声更晚，

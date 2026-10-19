@@ -8,6 +8,7 @@ import {
   MAX_RECORD_MS,
   MIN_RECORD_MS,
   MIX_LIMITS,
+  RETAKE_LIMITS,
   REVERB_KINDS,
   VOCAL_PRESETS,
   type MixParams,
@@ -35,6 +36,7 @@ import { decodeOriginalName, safeExtension } from '../naming.ts';
 import { VOCALS_DIR } from '../paths.ts';
 import { probeFile } from '../probe.ts';
 import { uploadEndpoint } from '../upload.ts';
+import { spliceRetakeIntoVocal, undoRetake, backupVocalPath } from '../vocalSplice.ts';
 import { withRecord } from './guard.ts';
 
 const log = createLogger('work');
@@ -249,13 +251,8 @@ router.get(
   '/:id',
   withWork((_req, res, work) => {
     const track = work.trackId ? getTrack(work.trackId) : undefined;
-    res.json({
-      ...workToDto(work),
-      trackTitle: track?.title ?? null,
-      trackKind: track?.kind ?? null,
-      trackArtist: track?.artist ?? null,
-      sizeBytes: mp3Size(work),
-    });
+    // 走 workToListItem：字段与列表项同构（含 hasPrevVocal），前端一份类型通吃
+    res.json(workToListItem(work, track, mp3Size(work)));
   }),
 );
 
@@ -315,11 +312,104 @@ router.get(
   }),
 );
 
+router.post(
+  '/:id/retake',
+  uploadEndpoint({
+    field: 'segment',
+    maxBytes: MAX_VOCAL_BYTES,
+    tmpPrefix: 'retake',
+    sizeLimitMessage: '重录片段超过 256MB，可能是录制时间过长',
+    missingFileMessage: '没有收到重录片段（表单字段名应为 segment）',
+    errorLabel: '上传重录片段失败',
+    logMessage: '分段重录失败',
+    handle: async (req, res, file) => {
+      // params.id 在通配路由下可能是数组，取第一段（与 withRecord 同口径）
+      const rawId = req.params.id;
+      const workId = Array.isArray(rawId) ? (rawId[0] ?? '') : rawId;
+      const work = getWork(workId);
+      if (!work) {
+        res.status(404).json({ error: '作品不存在' });
+        return;
+      }
+      if (!work.trackId) {
+        res.status(409).json({ error: '伴奏已删除，这个作品不能再重录（重录后需要重新混音）' });
+        return;
+      }
+      // 正在合成时拼接会读到「半截状态」：混音任务自己会重新读库，但 startMix 又排一次
+      // 会互相覆盖 mp3，所以直接挡住（与 /:id/mix 同一口径）
+      if (isQueued(mixKey(work.id))) {
+        res.status(409).json({ error: '上一次合成还没结束，请稍等几秒' });
+        return;
+      }
+
+      const body = req.body as Record<string, string | undefined>;
+      const duration = work.vocalDuration;
+      // 区间一律夹到干声时长内：超出部分没有旧干声可替换（补录结尾是另一件事）
+      const startSec = clampNumber(body.startSec, 0, duration, Number.NaN);
+      const endSec = clampNumber(body.endSec, 0, duration, Number.NaN);
+      if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) {
+        res.status(400).json({ error: '重录区间的起止时间不正确' });
+        return;
+      }
+      if (!(endSec > startSec)) {
+        res.status(400).json({ error: '重录区间的结束时间要晚于开始时间' });
+        return;
+      }
+      if (endSec - startSec < RETAKE_LIMITS.minSegmentSec) {
+        res.status(400).json({ error: `重录区间太短（至少 ${RETAKE_LIMITS.minSegmentSec} 秒）` });
+        return;
+      }
+
+      // 片段文件本身没坏就行；时长和区间差得远只告警不拒绝 —— 拼接以目标
+      // 长度为准（不足补静音、超出截断），客户端裁窗口的舍入误差不是错误
+      const probed = await probeFile(file.path);
+      const segmentDuration = Number(probed.format?.duration);
+      if (!Number.isFinite(segmentDuration) || segmentDuration <= 0) {
+        res.status(400).json({ error: '重录文件解析失败，请重新录制这一段' });
+        return;
+      }
+      if (segmentDuration < (endSec - startSec) * 0.3) {
+        res.status(400).json({ error: '上传的重录片段和所选区间差得太远，请重新录制' });
+        return;
+      }
+
+      await spliceRetakeIntoVocal({ work, segmentPath: file.path, startSec, endSec });
+      // 干声时长分毫未动，只翻状态重新出片；成品 MP3 在合成成功前一直是上一版
+      updateWork(work.id, { status: 'mixing', error: null });
+      startMix(work.id);
+      log.info(`分段重录 ${work.title}`, { id: work.id, startSec, endSec });
+      res.status(202).json(workToDto(getWork(work.id)!));
+    },
+  }),
+);
+
+router.post(
+  '/:id/retake-undo',
+  withWork((_req, res, work) => {
+    if (isQueued(mixKey(work.id))) {
+      res.status(409).json({ error: '上一次合成还没结束，请稍等几秒' });
+      return;
+    }
+    try {
+      undoRetake(work);
+    } catch (error) {
+      // 典型是「没有可撤销的重录备份」——备份被上一次撤销消费掉了
+      res.status(409).json({ error: error instanceof Error ? error.message : '撤销失败' });
+      return;
+    }
+    updateWork(work.id, { status: 'mixing', error: null });
+    startMix(work.id);
+    log.info(`撤销重录 ${work.title}`, { id: work.id });
+    res.status(202).json(workToDto(getWork(work.id)!));
+  }),
+);
+
 router.delete(
   '/:id',
   withWork((_req, res, work) => {
     deleteWork(work.id);
     void fs.promises.rm(work.vocalPath, { force: true });
+    void fs.promises.rm(backupVocalPath(work.vocalPath), { force: true });
     void fs.promises.rm(workMp3Path(work.id), { force: true });
 
     log.info(`删除作品 ${work.title}`, { id: work.id });

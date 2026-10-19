@@ -42,6 +42,13 @@ const ACCOMP_START_GRACE_SEC = 0.4;
 const ACCOMP_POLL_MS = 8;
 /** 起播间隔的钳制范围：异常值（设备抽风）不至于把成品拖垮 */
 const MAX_MEASURED_GAP_MS = 10_000;
+/**
+ * 分段重录自动停录的轮询间隔（ms）。
+ *
+ * 不需要跟起播轮询一样密（8ms）：停录时刻只决定「多录了几百毫秒尾巴」，
+ * 而裁窗口按目标区间算，停早停晚都不影响拼接结果。25ms 足够。
+ */
+const SEGMENT_STOP_POLL_MS = 25;
 
 let sharedContext: AudioContext | null = null;
 let workletModulePromise: Promise<void> | null = null;
@@ -110,6 +117,25 @@ export interface RecordResult {
   droppedRatio: number;
   /** 实际生效的麦克风设置，用来确认浏览器没偷偷加重处理 */
   captureSettings: MicCaptureSettings;
+  /**
+   * 干声的原始单声道 PCM（sampleRate 下，与 blob 同一份数据、只是没编码）。
+   *
+   * 给分段重录裁窗口用：目标区间在新录音里的起止要按实测起播间隔换算，
+   * 换算是采样点级的，从编好的 WAV 里再解一遍纯属浪费。整首录音用不到它
+   * （上传 blob 即可），所以字段名不叫 vocal 而叫 samples —— 它是「这次采集
+   * 到了什么」，不是「要交什么」。
+   */
+  samples: Float32Array;
+}
+
+/** startRecording 的可选项（分段重录用；整首录音一个都不传） */
+export interface StartRecordingOptions {
+  /** 伴奏起播位置（歌内秒）。默认 0 = 从头播；分段重录 seek 到片段开始前 */
+  seekTo?: number;
+  /** 伴奏到这个歌内位置就自动停录（分段重录的「片段结束 + 尾量」） */
+  stopAtSongPos?: number;
+  /** 自动停录时回调（页面据此走「完成录制」同一套收尾） */
+  onAutoStop?: () => void;
 }
 
 export interface MicCaptureSettings {
@@ -178,6 +204,8 @@ export class KtvEngine {
   /** 起播信号收敛协程：stopRecording 会等它（正常情况早就 resolve 了） */
   private gapWatcher: Promise<void> | null = null;
   private pollTimer: number | null = null;
+  /** 分段重录的自动停录轮询；与起播轮询分开（后者几百毫秒就撤，见下） */
+  private segmentStopTimer: number | null = null;
   private onElementPlaying: (() => void) | null = null;
   private lastStats: CaptureStats | null = null;
   private captureSettings: MicCaptureSettings = {
@@ -371,11 +399,18 @@ export class KtvEngine {
    * 由 onset worklet / playing 事件在**同一个渲染时钟**下测得，两者之差就是
    * 服务端要的自动对齐间隔 G —— 混音时人声提前 G 才能贴到伴奏时间轴上
    * （推导见 shared/mix.ts）。不阻塞录音：信号收敛协程后台跑，stopRecording 再收。
+   *
+   * @param options.seekTo 伴奏起播位置（歌内秒）；分段重录 seek 到「片段开始 −
+   *   lead-in」，整首录音不传（= 0）。
+   * @param options.stopAtSongPos + onAutoStop 分段重录的自动停录：伴奏过了
+   *   「片段结束 + 尾量」就收工 —— 之后唱得再好也不会被拼进干声，没必要一直录。
    */
-  async startRecording(): Promise<void> {
+  async startRecording(options: StartRecordingOptions = {}): Promise<void> {
     if (!this.micSource) throw new Error('还没有可用的麦克风');
     await this.init();
     await this.resume();
+
+    const seekTo = Number.isFinite(options.seekTo) ? Math.max(0, options.seekTo!) : 0;
 
     this.chunks = [];
     this.accepting = true;
@@ -390,17 +425,21 @@ export class KtvEngine {
     await sleep(PREROLL_MS);
     if (!this.recording) return;
 
-    this.element.currentTime = 0;
+    this.element.currentTime = seekTo;
     // 先武装探测器再 play()：seek 期间 Chrome 对 MediaElementSource 喂静音，
     // 不会误触；真有异常也有 playing 事件兜底（见 computeGapMs）
     this.onsetNode?.port.postMessage('record:begin');
-    this.armAccompStartWatcher();
+    this.armAccompStartWatcher(this.element.currentTime);
+    if (options.stopAtSongPos !== undefined && options.onAutoStop) {
+      this.armSegmentStopWatcher(options.stopAtSongPos, options.onAutoStop);
+    }
     try {
       await this.element.play();
     } catch (error) {
       this.recording = false;
       this.accepting = false;
       this.disarmAccompStartWatcher();
+      this.disarmSegmentStopWatcher();
       throw new Error(
         `伴奏播放被浏览器拦住了：${errorMessage(error)}`,
       );
@@ -409,7 +448,12 @@ export class KtvEngine {
 
   /* ----------------------------- 起播信号收敛 ----------------------------- */
 
-  private armAccompStartWatcher(): void {
+  /**
+   * @param baselineCurrentTime 武装时的 currentTime。起播轮询判「相对基线真正
+   *   前进」而不是「> 0」—— seek 到歌曲中段时 currentTime 一开始就不是 0，
+   *   拿 > 0 判会把 seek 残留当成起播信号，G 直接算错一整段。
+   */
+  private armAccompStartWatcher(baselineCurrentTime: number): void {
     const markPlaySignal = () => {
       if (this.accompPlaySignalCtxTime === null) {
         this.accompPlaySignalCtxTime = this.context.currentTime;
@@ -418,13 +462,45 @@ export class KtvEngine {
     };
     this.onElementPlaying = markPlaySignal;
     this.element.addEventListener('playing', this.onElementPlaying);
-    // playing 事件之外的双保险：个别浏览器/驱动事件不可靠时靠轮询 currentTime
+    // playing 事件之外的双保险：个别浏览器/驱动事件不可靠时靠轮询 currentTime。
+    // 注意这个轮询是**短命**的：信号一收敛（resolveAccompStart 的 finally）就撤，
+    // 所以自动停录不能搭它的车 —— 那是另一个生命周期，见 armSegmentStopWatcher。
     this.pollTimer = window.setInterval(() => {
-      if (this.accompPlaySignalCtxTime === null && this.element.currentTime > 0) {
+      if (this.accompPlaySignalCtxTime === null && this.element.currentTime > baselineCurrentTime) {
         markPlaySignal();
       }
     }, ACCOMP_POLL_MS);
     this.gapWatcher = this.resolveAccompStart();
+  }
+
+  /**
+   * 分段重录的自动停录：伴奏过了「片段结束 + 尾量」就收工。
+   *
+   * 单独一个轮询，不并进起播轮询：那个轮询在起播信号收敛时就撤了（播放开始
+   * 几百毫秒内），搭它的车会导致「永远等不到自动停，一路录到歌唱完」——
+   * 裁窗口虽然不受影响（按目标区间算），但「自动停」这个承诺就没了。
+   *
+   * 停录时刻只决定多录几百毫秒尾巴，对拼接零影响；所以 25ms 粒度足够。
+   */
+  private armSegmentStopWatcher(stopAtSongPos: number, onAutoStop: () => void): void {
+    this.segmentStopTimer = window.setInterval(() => {
+      if (!this.recording) {
+        this.disarmSegmentStopWatcher();
+        return;
+      }
+      if (this.element.currentTime >= stopAtSongPos) {
+        // 先撤再回调：onAutoStop 里会走 stopRecording，双重触发会录出两条
+        this.disarmSegmentStopWatcher();
+        onAutoStop();
+      }
+    }, SEGMENT_STOP_POLL_MS);
+  }
+
+  private disarmSegmentStopWatcher(): void {
+    if (this.segmentStopTimer !== null) {
+      window.clearInterval(this.segmentStopTimer);
+      this.segmentStopTimer = null;
+    }
   }
 
   private disarmAccompStartWatcher(): void {
@@ -497,6 +573,7 @@ export class KtvEngine {
     if (!this.recording) throw new Error('当前没有在录音');
 
     this.element.pause();
+    this.disarmSegmentStopWatcher();
     this.lastStats = null;
     this.captureNode?.port.postMessage('flush');
     await sleep(FLUSH_WAIT_MS);
@@ -530,6 +607,8 @@ export class KtvEngine {
 
     return {
       blob: encodeWavBlob(mono, sampleRate),
+      // 与 blob 同源（mono 就是编码输入）：不额外拷贝，只让它在结果里多留一会
+      samples: mono,
       durationSec: mono.length / sampleRate,
       autoOffsetMs: Math.round(gapMs ?? PREROLL_MS),
       sampleRate,
@@ -547,6 +626,7 @@ export class KtvEngine {
     this.measuredGapMs = null;
     this.gapWatcher = null;
     this.disarmAccompStartWatcher();
+    this.disarmSegmentStopWatcher();
   }
 
   dispose(): void {
@@ -555,6 +635,7 @@ export class KtvEngine {
     this.chunks = [];
     this.gapWatcher = null;
     this.disarmAccompStartWatcher();
+    this.disarmSegmentStopWatcher();
     this.element.pause();
 
     this.teardownMic();

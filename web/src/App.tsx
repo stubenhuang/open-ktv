@@ -7,6 +7,7 @@ import { TokenGate } from './components/TokenGate';
 import DiscoverPage from './pages/DiscoverPage';
 import LibraryPage from './pages/LibraryPage';
 import MobileLayout from './pages/mobile/MobileLayout';
+import RetakePage from './pages/RetakePage';
 import SingPage from './pages/SingPage';
 import WorkDetailPage from './pages/WorkDetailPage';
 import WorksPage from './pages/WorksPage';
@@ -78,6 +79,7 @@ function DesktopRoutes() {
       <Route path="/sing/:trackId" element={<SingPage />} />
       <Route path="/works" element={<WorksPage />} />
       <Route path="/works/:workId" element={<WorkDetailPage />} />
+      <Route path="/works/:workId/retake" element={<RetakePage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
