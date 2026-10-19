@@ -14,6 +14,7 @@ import {
   type TrackRecord,
 } from '../db.ts';
 import { transcodeKey, trackToDetail, trackToListItem } from '../dto.ts';
+import { ensureFreeSpace } from '../disk.ts';
 import { isQueued } from '../jobs.ts';
 import { createLogger } from '../logger.ts';
 import { forgetTrackLoudness } from '../mixJob.ts';
@@ -58,6 +59,12 @@ router.post(
     logMessage: '上传处理失败',
     handle: async (req, res, file) => {
       const body = req.body as Record<string, string | undefined>;
+
+      // 落盘前的空间预检：tmp 一份 + originals 一份 + 不能直接播的格式
+      // 还要再转一份代理，所以按 3 倍估。不够就明说，别等 ffmpeg 写到
+      // 一半才吐一句 "No space left on device"。
+      await ensureFreeSpace(file.size * 3, '上传这个伴奏');
+
       // 探测 / 命名 / 入库 / 按需转码全在 ingestFile 里 ——
       // 与「曲库点歌下载」共用同一条链路，两条入口的行为不会分叉
       const result = await ingestFile({

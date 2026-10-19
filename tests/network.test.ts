@@ -208,7 +208,17 @@ describe('手机 HTTPS 镜像', () => {
     // 自签名证书：关掉校验，验的是「TLS 通道通 + app 在服务」
     const health = await httpsGet(state.port, '/api/health');
     assert.equal(health.status, 200);
-    assert.deepEqual(JSON.parse(health.body), { ok: true, queue: { active: null, waiting: 0 } });
+    const healthBody = JSON.parse(health.body) as {
+      ok: boolean;
+      queue: { active: string | null; waiting: number };
+      disk: { freeBytes: number | null };
+    };
+    assert.equal(healthBody.ok, true);
+    assert.deepEqual(healthBody.queue, { active: null, waiting: 0 });
+    assert.ok(
+      healthBody.disk.freeBytes === null || healthBody.disk.freeBytes > 0,
+      '磁盘余量要么量不到（null），要么是正数',
+    );
 
     // 镜像起来后 /api/network 应该换成 https 入口
     const info = (await (await fetch(`${baseUrl}/api/network`)).json()) as {

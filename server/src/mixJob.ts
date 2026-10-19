@@ -11,6 +11,7 @@ import {
 import { encodeWavBytesFloat } from '../../shared/wav.ts';
 import { AUDIO, JOB_TIMEOUT_MS } from './config.ts';
 import type { TrackRecord, WorkRecord } from './db.ts';
+import { ensureFreeSpace } from './disk.ts';
 import { runFfmpeg } from './ffmpeg.ts';
 import { createLogger } from './logger.ts';
 import { measureLoudness, normalizeGainDb } from './loudness.ts';
@@ -112,6 +113,14 @@ export async function mixWorkToMp3(input: {
 }): Promise<MixResult> {
   const { work, track, onProgress } = input;
   const params = work.mixParams;
+
+  // 落盘前的空间预检。这次合成要写的：预处理 WAV（48k 立体声 16bit ≈
+  // 192KB/s）+ 成品 mp3（192kbps ≈ 24KB/s），外加混响 IR（最长 6.5s 立体声
+  // 浮点 ≈ 2.5MB）。按每秒 500KB 估，短歌给 32MB 底数，留足余量。
+  await ensureFreeSpace(
+    Math.max(32 * 1024 * 1024, work.vocalDuration * 500_000),
+    '这次合成',
+  );
 
   const wantsVocalPre = needsVocalPreProcess(params);
 

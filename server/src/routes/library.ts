@@ -10,6 +10,7 @@ import {
 } from '../config.ts';
 import { getTrackByLibraryRef } from '../db.ts';
 import { trackToDetail } from '../dto.ts';
+import { ensureFreeSpace } from '../disk.ts';
 import { enqueue, getProgress, isQueued } from '../jobs.ts';
 import { createLogger } from '../logger.ts';
 import { TMP_DIR } from '../paths.ts';
@@ -191,6 +192,13 @@ export function createLibraryRouter(registry: LibraryRegistry, deps: LibraryRout
         const tmpPath = path.join(TMP_DIR, `library-${randomUUID()}`);
 
         try {
+          // 下载前预检：tmp + originals + 可能的转码代理。清单给了大小就按
+          // 3 倍估；没给（5sing 常见）按 192MB 兜底，够覆盖绝大多数伴奏/MV。
+          const estimated = item.sizeBytes
+            ? Math.min(MAX_UPLOAD_BYTES, item.sizeBytes * 3)
+            : 192 * 1024 * 1024;
+          await ensureFreeSpace(estimated, '下载这个伴奏');
+
           const bytes = await downloadWithBackup(item, tmpPath, report);
 
           // 歌词：源站自带优先，否则问歌词源（酷狗）。拿不到不挡入库。

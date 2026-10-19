@@ -24,6 +24,7 @@ import {
   type WorkRecord,
 } from '../db.ts';
 import { mixKey, workToDto, workToListItem } from '../dto.ts';
+import { ensureFreeSpace } from '../disk.ts';
 import { clampNumber } from '../../../shared/numbers.ts';
 import { anchorSpace, describeReverb } from '../../../shared/mix.ts';
 import { isQueued, enqueue } from '../jobs.ts';
@@ -205,6 +206,9 @@ router.post(
       const id = randomUUID();
       const extension = safeExtension(decodeOriginalName(file.originalname), '.wav');
       const vocalPath = path.join(VOCALS_DIR, `${id}${extension}`);
+
+      // 落盘前预检：干声 WAV + 混音时的预处理 WAV + 成品 mp3，按 2 倍估
+      await ensureFreeSpace(file.size * 2, '保存这条录音');
       await fs.promises.rename(file.path, vocalPath);
 
       const autoOffsetMs = Math.round(clampNumber(body.autoOffsetMs, 0, 30_000, 0));

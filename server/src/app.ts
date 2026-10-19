@@ -2,11 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
-import { LIBRARY_SOURCES, KUGOU_LYRICS_ENABLED, WEB_DIST_DIR } from './config.ts';
+import { LIBRARY_SOURCES, KUGOU_LYRICS_ENABLED, WEB_DIST_DIR, DATA_DIR } from './config.ts';
 import { createDefaultRegistry, type LibraryRegistry } from './library/registry.ts';
 import { createKugouLyrics } from './library/lyrics/kugou.ts';
 import type { LyricsLookup } from './library/lyrics/types.ts';
 import { queueState } from './jobs.ts';
+import { freeBytes } from './disk.ts';
 import { createLogger, type LogLevel } from './logger.ts';
 import { createLibraryRouter } from './routes/library.ts';
 import { createNetworkRouter } from './routes/network.ts';
@@ -63,8 +64,16 @@ export function createApp(options: CreateAppOptions = {}): express.Express {
     next();
   });
 
-  app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, queue: queueState() });
+  // 健康检查：队列状态 + 数据盘余量。openktv.sh status 打的就是它，
+  // 磁盘快满时在这里一眼能看见（上传前的预检也是同一份数据）。
+  app.get('/api/health', async (_req, res) => {
+    let free: number | null = null;
+    try {
+      free = await freeBytes(DATA_DIR);
+    } catch {
+      // 量不到就只报队列，别让健康检查本身失败
+    }
+    res.json({ ok: true, queue: queueState(), disk: { freeBytes: free } });
   });
 
   app.use('/api/tracks', createTracksRouter({ lyrics }));
