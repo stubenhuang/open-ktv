@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # 项目要求 Node ≥ 22.6（node:sqlite + 原生 TS 类型擦除）
+          node-version: '22'
+          cache: npm
+
+      # 测试要用 ffmpeg 造素材、量混响尾音。ubuntu-latest 镜像自带，
+      # 这里显式打一版版本号：缺了它的时候失败信息是「ffmpeg 启动失败」，
+      # 看不出是环境问题。
+      - name: 确认 ffmpeg / ffprobe 在位
+        run: |
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+
+      - run: npm ci
+
+      - name: 类型检查（前端 + 服务端两份 tsconfig）
+        run: npm run typecheck
+
+      # 单元测试全程不碰外网：5sing / 酷狗都有本地桩（见 tests/*.test.ts）。
+      # 不跑 test:e2e —— 那个要真实 Chrome 和显示环境。
+      - name: 单元测试
+        run: npm test

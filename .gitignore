@@ -5,3 +5,4 @@ data/
 .run/
 *.log
 .DS_Store
+backups/

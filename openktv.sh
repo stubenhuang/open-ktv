@@ -11,6 +11,7 @@
 #   ./openktv.sh restart          重启（沿用上次的模式）
 #   ./openktv.sh status           查看状态（运行中退出码 0，没运行退出码 1）
 #   ./openktv.sh logs             跟踪日志（Ctrl+C 退出，不会关服务）
+#   ./openktv.sh backup           备份数据目录（WAL 安全快照 → backups/ 下 tar.gz）
 #
 # 前台模式（默认）下 Ctrl+C 一次是优雅关闭，再按一次就是强制结束。
 # 前台后台都会把 pid 写进 .run/openktv.pid，所以另开一个终端跑 status / stop 一样管用。
@@ -30,6 +31,10 @@
 #   KUGOU_LYRICS_ENABLED    点歌时自动匹配酷狗歌词开关，默认 1
 #   LIBRARY_SOURCES         自建曲库源，逗号分隔的「名字=清单URL」
 #
+# 日志轮转：
+#   LOG_MAX_BYTES  日志超过多少字节就滚动，默认 20MB（20971520）
+#   LOG_KEEP       保留几代滚动日志（.1/.2/.3…），默认 3
+#
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -44,6 +49,9 @@ PORT="${PORT:-8787}"
 WEB_PORT="${WEB_PORT:-5173}"
 # 开发模式默认给 Vite 上 TLS（手机扫码即用，见 vite.config.ts）；设 0 关掉
 VITE_HTTPS="${VITE_HTTPS:-1}"
+# 日志轮转：超过 LOG_MAX_BYTES 就 .1 → .2 … 滚动，只留 LOG_KEEP 代
+LOG_MAX_BYTES="${LOG_MAX_BYTES:-20971520}"
+LOG_KEEP="${LOG_KEEP:-3}"
 
 # 开发模式前端的协议：开了 VITE_HTTPS 就是 https（自签名证书，首次有一次性警告）
 if [[ "$VITE_HTTPS" != "0" ]]; then
@@ -177,6 +185,30 @@ spawn_daemon() {
   nohup "$@" < /dev/null >> "$LOG_FILE" 2>&1 &
   DAEMON_PID=$!
   printf '%s %s\n' "$DAEMON_PID" "$mode" > "$PID_FILE"
+}
+
+# 日志轮转：超过阈值就把 openktv.log → .1 → .2 …，只留 LOG_KEEP 代。
+#
+# 只在启动时检查一次：单机 K 歌重启足够频繁，20MB 也够写很久，没必要
+# 为它引入 newsyslog / logrotate 这类外部依赖。真有人拿它连跑几个月
+# 不重启，重启一次也就滚了。
+rotate_log() {
+  [[ -f "$LOG_FILE" ]] || return 0
+  local size
+  size="$(wc -c < "$LOG_FILE" 2>/dev/null | tr -d '[:space:]' || echo 0)"
+  [[ "$size" =~ ^[0-9]+$ ]] || return 0
+  if (( size <= LOG_MAX_BYTES )); then return 0; fi
+
+  local i
+  rm -f "${LOG_FILE}.${LOG_KEEP}"
+  for (( i = LOG_KEEP - 1; i >= 1; i-- )); do
+    if [[ -f "${LOG_FILE}.${i}" ]]; then
+      mv "${LOG_FILE}.${i}" "${LOG_FILE}.$((i + 1))"
+    fi
+  done
+  mv "$LOG_FILE" "${LOG_FILE}.1"
+  : > "$LOG_FILE"
+  info "日志超过 $((LOG_MAX_BYTES / 1024 / 1024))MB，已轮转为 ${LOG_FILE}.1（保留 ${LOG_KEEP} 代）"
 }
 
 # ------------------------------ 前台模式（默认） ------------------------------
@@ -392,6 +424,7 @@ cmd_start() {
     ensure_ports_free "$PORT"
   fi
 
+  rotate_log
   {
     echo ""
     echo "========== $(date '+%Y-%m-%d %H:%M:%S') 启动（模式：${mode}） =========="
@@ -606,6 +639,36 @@ cmd_logs() {
   tail -n 60 -f "$LOG_FILE"
 }
 
+# ---------------------------------- backup -----------------------------------
+
+# 备份数据目录。真正干活的在 scripts/backup.mjs：用 VACUUM INTO 做一致快照
+# （WAL 里没合并的写入也在里面），再和媒体文件一起打 tar.gz。
+# 直接拷 data/ 是不安全的 —— 详见 README「数据存放」。
+cmd_backup() {
+  local out=""
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help)
+        dim "用法：$0 backup [输出路径.tar.gz]"
+        dim "  不给路径就存到 backups/openktv-<时间戳>.tar.gz"
+        return 0
+        ;;
+      *) out="$arg" ;;
+    esac
+  done
+
+  if is_running; then
+    # VACUUM INTO 在在线库上也是一致的，但备份媒体文件的瞬间它们仍可能被写
+    warn "服务正在运行：数据库快照是一致的，但最稳是先 $0 stop 再备份"
+  fi
+
+  if [[ -n "$out" ]]; then
+    node --disable-warning=ExperimentalWarning scripts/backup.mjs "$out"
+  else
+    node --disable-warning=ExperimentalWarning scripts/backup.mjs
+  fi
+}
+
 # ----------------------------------- 入口 ------------------------------------
 
 case "${1:-}" in
@@ -614,6 +677,7 @@ case "${1:-}" in
   restart) shift; cmd_restart "$@" ;;
   status)  shift; cmd_status "$@" ;;
   logs)    shift; cmd_logs "$@" ;;
+  backup)  shift; cmd_backup "$@" ;;
   ""|-h|--help|help) usage ;;
   *) err "未知命令：$1"; echo; usage; exit 2 ;;
 esac
