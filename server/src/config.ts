@@ -150,3 +150,34 @@ export const KUGOU_LYRICS_TIMEOUT_MS = Number(process.env.KUGOU_LYRICS_TIMEOUT_M
 
 export const FFMPEG_BIN = process.env.FFMPEG_BIN ?? 'ffmpeg';
 export const FFPROBE_BIN = process.env.FFPROBE_BIN ?? 'ffprobe';
+
+/* ---------------------------------- 访问令牌 --------------------------------- */
+
+/**
+ * 可选的局域网访问令牌（默认空 = 不设防，与以前完全一致）。
+ *
+ * 背景：默认绑 0.0.0.0，同一 WiFi 下谁都能打开页面、调接口 —— 包括
+ * DELETE /api/tracks/:id 这种 destructive 操作。家里随便唱无所谓，
+ * 宿舍/办公室环境下这就是个真实风险。
+ *
+ * 设了之后的规则（见 server/src/auth.ts）：
+ *  · **回环地址永远放行** —— 桌面本机使用零感知，不用记令牌；
+ *  · 非回环（手机 / 局域网其他设备）必须带令牌：header `x-access-token`
+ *    或 query `?token=`（`<audio>`/`<video>` 的 src 带不了 header）；
+ *  · 二维码地址由服务端自动追加 `?token=`，手机扫码即用，无感。
+ */
+export const ACCESS_TOKEN = (process.env.ACCESS_TOKEN ?? '').trim();
+
+/* ------------------------------ 曲库私网地址开关 ------------------------------ */
+
+/**
+ * 是否拦截曲库源里的私网地址（默认 0 = 不拦）。
+ *
+ * 清单内容是外部数据，条目 url 理论上可以指向内网服务（SSRF 面）。
+ * 但 README 明确宣传「NAS / 对象存储 / 局域网 HTTP 都能当源用」——
+ * 那些恰恰是私网地址，默认拦截会直接把宣传出去的功能打死。
+ * 所以只做开关：觉得自己配的源不可信、或机器放在不可信网络里，
+ * 设 1 打开；此时清单地址、条目 url、下载重定向的每一跳都会过校验
+ * （见 server/src/library/urlGuard.ts）。
+ */
+export const LIBRARY_BLOCK_PRIVATE_NET = (process.env.LIBRARY_BLOCK_PRIVATE_NET ?? '0') !== '0';

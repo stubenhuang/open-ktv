@@ -3,6 +3,7 @@ import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { ConfirmHost } from './components/ConfirmDialog';
 import { PhoneConnectMenu } from './components/PhoneConnectMenu';
 import { ToastStack } from './components/ToastStack';
+import { TokenGate } from './components/TokenGate';
 import DiscoverPage from './pages/DiscoverPage';
 import LibraryPage from './pages/LibraryPage';
 import MobileLayout from './pages/mobile/MobileLayout';
@@ -62,6 +63,8 @@ function Layout({ children }: { children: ReactNode }) {
       {/* 轻提示与确认框挂在 shell 上：任何页面 toast() / confirmAction() 都能用 */}
       <ToastStack />
       <ConfirmHost />
+      {/* 访问令牌闸门：ACCESS_TOKEN 配了且没有令牌时才渲染（默认不出现） */}
+      <TokenGate />
     </div>
   );
 }

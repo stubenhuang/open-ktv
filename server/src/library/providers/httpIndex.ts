@@ -26,6 +26,7 @@
 
 import { LIBRARY_CACHE_TTL_MS, LIBRARY_SEARCH_TIMEOUT_MS } from '../../config.ts';
 import { createLogger } from '../../logger.ts';
+import { assertPublicHttpUrl, isPublicHttpUrl, privateNetBlockingEnabled } from '../urlGuard.ts';
 import type { LibraryItem, LibraryProvider, LibraryQuery } from '../types.ts';
 
 const log = createLogger('library');
@@ -107,6 +108,32 @@ function parseManifestItem(raw: ManifestItem, providerId: string, base: string):
   };
 }
 
+/**
+ * 滤掉指向私网的条目（开关关着时原样返回）。
+ *
+ * 条目 url 和 lrcUrl 都要查 —— 歌词下载同样是服务端代发的请求。
+ * 并发查：一张清单几千条时，串行 DNS 会把清单加载拖到秒级。
+ * 导出供单测：否则「私网条目被滤掉」这条路只能靠连真公网桩才能覆盖。
+ */
+export async function filterPrivateItems(items: LibraryItem[]): Promise<LibraryItem[]> {
+  if (!privateNetBlockingEnabled()) return items;
+  const verdicts = await Promise.all(
+    items.map(async (item) => {
+      const [urlOk, lrcOk] = await Promise.all([
+        isPublicHttpUrl(item.url),
+        item.lrcUrl ? isPublicHttpUrl(item.lrcUrl) : Promise.resolve(true),
+      ]);
+      return urlOk && lrcOk;
+    }),
+  );
+  const kept = items.filter((_, index) => verdicts[index]);
+  const dropped = items.length - kept.length;
+  if (dropped > 0) {
+    log.warn(`已滤掉 ${dropped} 个指向私网的曲库条目（LIBRARY_BLOCK_PRIVATE_NET=1）`);
+  }
+  return kept;
+}
+
 export interface HttpIndexProviderOptions {
   id: string;
   /** 清单地址 */
@@ -171,6 +198,10 @@ export class HttpIndexProvider implements LibraryProvider {
   }
 
   private async fetchManifest(): Promise<CacheEntry> {
+    // 开关开着时，清单地址自己也要过私网校验（LIBRARY_SOURCES 是管理员配的，
+    // 但「指向内网」仍应是显式选择，见 config.ts 的 LIBRARY_BLOCK_PRIVATE_NET）
+    await assertPublicHttpUrl(this.manifestUrl);
+
     const response = await fetch(this.manifestUrl, {
       signal: AbortSignal.timeout(this.searchTimeoutMs),
       headers: { accept: 'application/json' },
@@ -204,9 +235,18 @@ export class HttpIndexProvider implements LibraryProvider {
       items.push(item);
     }
 
+    // 开关开着时，把指向私网的条目滤掉：清单是外部数据，条目 url 不该
+    // 能把服务端的 fetch 引向内网服务。被滤掉的条目不报错 —— 对用户来说
+    // 它们只是「没搜到」，和源站本来就没有这首歌无法区分。
+    const safeItems = await filterPrivateItems(items);
+
     const name = asText(parsed.name) ?? this.labelOverride ?? new URL(this.manifestUrl).host;
-    log.debug(`曲库源 ${this.id} 清单已加载`, { items: items.length, name });
-    return { at: Date.now(), name, items };
+    log.debug(`曲库源 ${this.id} 清单已加载`, {
+      items: safeItems.length,
+      dropped: items.length - safeItems.length,
+      name,
+    });
+    return { at: Date.now(), name, items: safeItems };
   }
 
   async search(query: LibraryQuery): Promise<LibraryItem[]> {

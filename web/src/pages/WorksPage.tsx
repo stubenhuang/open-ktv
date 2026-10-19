@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { VOCAL_PRESET_LABELS } from '../../../shared/types';
 import { describeReverb } from '../../../shared/mix';
-import { api, workAudioUrl, workVocalUrl, type WorkListItem } from '../api';
+import {
+  api,
+  workAudioDownloadUrl,
+  workAudioUrl,
+  workVocalDownloadUrl,
+  type WorkListItem,
+} from '../api';
 import { AudioPlayer } from '../components/AudioPlayer';
 import { confirmAction } from '../components/ConfirmDialog';
 import { EmptyState } from '../components/EmptyState';
@@ -365,7 +371,7 @@ export default function WorksPage() {
             调整效果
           </Link>
           {work.status === 'ready' ? (
-            <a className="btn btn-sm" href={`${workAudioUrl(work.id)}?download=1`}>
+            <a className="btn btn-sm" href={workAudioDownloadUrl(work.id)}>
               下载 MP3
             </a>
           ) : (
@@ -375,7 +381,7 @@ export default function WorksPage() {
           )}
           <a
             className="btn btn-sm btn-ghost"
-            href={`${workVocalUrl(work.id)}?download=1`}
+            href={workVocalDownloadUrl(work.id)}
             title="下载干声 WAV（未经处理的原始录音）"
           >
             干声

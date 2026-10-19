@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { ConfirmHost } from '../../components/ConfirmDialog';
 import { ToastStack } from '../../components/ToastStack';
+import { TokenGate } from '../../components/TokenGate';
 import MobileDiscoverPage from './MobileDiscoverPage';
 import MobileHomePage from './MobileHomePage';
 import MobileSingPage from './MobileSingPage';
@@ -46,6 +47,8 @@ export default function MobileLayout() {
       {showTabBar && <MobileTabBar />}
       <ToastStack />
       <ConfirmHost />
+      {/* 令牌闸门：正常扫码进入不会出现（URL 上就带令牌）；令牌失效时才需要手输 */}
+      <TokenGate />
     </div>
   );
 }

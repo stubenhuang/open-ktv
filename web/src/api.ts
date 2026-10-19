@@ -17,12 +17,107 @@ import { log } from './log';
 
 export class ApiError extends Error {
   status: number;
+  /** 服务端给的机器可读码（如 token_required）；普通错误没有 */
+  code: string | null;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code: string | null = null) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = code;
   }
+}
+
+/* --------------------------------- 访问令牌 --------------------------------- */
+
+/**
+ * 访问令牌（ACCESS_TOKEN 配了才用得上；没配时这一切全是空转）。
+ *
+ * 三个来源：
+ *  1. URL 上的 `?token=` —— 手机扫的二维码由服务端生成时已带上（见
+ *     server/src/routes/network.ts），落地第一件事就是收进 localStorage；
+ *  2. localStorage —— 之后所有请求都靠它，刷新不丢；
+ *  3. 用户手输 —— 收到 401 token_required 时弹输入框（见 TokenGate）。
+ *
+ * 令牌送两路：JSON/XHR 请求走 header `x-access-token`；`<audio>/<video>/
+ * <img>` 的 src 带不了 header，只能拼 query（withToken）。
+ */
+
+const TOKEN_KEY = 'ktv.access-token';
+
+function readToken(): string {
+  try {
+    return window.localStorage.getItem(TOKEN_KEY) ?? '';
+  } catch {
+    // 隐私模式等读不了 storage 的场合：当没有令牌，请求会 401，走手输流程
+    return '';
+  }
+}
+
+function writeToken(token: string): void {
+  try {
+    if (token) window.localStorage.setItem(TOKEN_KEY, token);
+    else window.localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // 存不下就算了：当前会话仍可用（内存里的这份继续生效）
+  }
+}
+
+// 模块级缓存：每个请求都读一遍 localStorage 没必要，写入时同步更新即可
+let accessToken = '';
+
+/** 启动时把 URL 上的 token 收进来（二维码带来的那次落地） */
+function captureTokenFromUrl(): void {
+  if (typeof window === 'undefined') return;
+  const fromUrl = new URLSearchParams(window.location.search).get('token');
+  if (fromUrl && fromUrl !== accessToken) {
+    accessToken = fromUrl;
+    writeToken(fromUrl);
+    // 地址栏里留着令牌不值当：它已经进了 storage，而且会跟着分享链接外泄
+    const clean = new URL(window.location.href);
+    clean.searchParams.delete('token');
+    window.history.replaceState(null, '', clean.toString());
+  }
+}
+
+captureTokenFromUrl();
+if (!accessToken) accessToken = readToken();
+
+/** 当前持有的令牌（空串 = 没有） */
+export function currentAccessToken(): string {
+  return accessToken;
+}
+
+/** 记下用户手输的令牌（TokenGate 提交时调） */
+export function saveAccessToken(token: string): void {
+  accessToken = token.trim();
+  writeToken(accessToken);
+}
+
+type TokenRequiredListener = (required: boolean) => void;
+const tokenRequiredListeners = new Set<TokenRequiredListener>();
+let tokenRequired = false;
+
+/** 订阅「服务端要令牌」状态（TokenGate 用） */
+export function onTokenRequiredChange(listener: TokenRequiredListener): () => void {
+  tokenRequiredListeners.add(listener);
+  return () => tokenRequiredListeners.delete(listener);
+}
+
+export function isTokenRequired(): boolean {
+  return tokenRequired;
+}
+
+function markTokenRequired(): void {
+  if (tokenRequired) return;
+  tokenRequired = true;
+  for (const listener of tokenRequiredListeners) listener(true);
+}
+
+/** 给带不了 header 的 URL（媒体 src / 下载链接）拼上令牌 */
+function withToken(url: string): string {
+  if (!accessToken) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(accessToken)}`;
 }
 
 async function readBody(response: Response): Promise<unknown> {
@@ -43,7 +138,13 @@ function errorMessage(data: unknown, fallback: string): string {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(path, init);
+    response = await fetch(path, {
+      ...init,
+      headers: {
+        ...init?.headers,
+        ...(accessToken ? { 'x-access-token': accessToken } : {}),
+      },
+    });
   } catch (error) {
     log.debug('api', '网络请求失败', path, error);
     throw new ApiError('连不上后端服务，请确认 npm run dev 已经在跑', 0);
@@ -52,7 +153,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const data = await readBody(response);
   if (!response.ok) {
     log.debug('api', '接口返回错误', path, response.status, errorMessage(data, ''));
-    throw new ApiError(errorMessage(data, `请求失败（HTTP ${response.status}）`), response.status);
+    const code = (data as { code?: unknown } | null)?.code;
+    if (response.status === 401 && code === 'token_required') {
+      // 服务端要令牌而我们没有（或给错了）：广播出去，让 TokenGate 弹输入框
+      markTokenRequired();
+    }
+    throw new ApiError(
+      errorMessage(data, `请求失败（HTTP ${response.status}）`),
+      response.status,
+      typeof code === 'string' ? code : null,
+    );
   }
   return data as T;
 }
@@ -71,6 +181,7 @@ function upload<T>(path: string, form: FormData, onProgress?: (ratio: number) =>
     const xhr = new XMLHttpRequest();
     xhr.open('POST', path);
     xhr.timeout = 30 * 60 * 1000;
+    if (accessToken) xhr.setRequestHeader('x-access-token', accessToken);
 
     xhr.upload.onprogress = (event) => {
       if (onProgress && event.lengthComputable && event.total > 0) {
@@ -89,7 +200,14 @@ function upload<T>(path: string, form: FormData, onProgress?: (ratio: number) =>
         resolve(data as T);
         return;
       }
-      reject(new ApiError(errorMessage(data, `上传失败（HTTP ${xhr.status}）`), xhr.status));
+      const code = (data as { code?: unknown } | null)?.code;
+      reject(
+        new ApiError(
+          errorMessage(data, `上传失败（HTTP ${xhr.status}）`),
+          xhr.status,
+          typeof code === 'string' ? code : null,
+        ),
+      );
     };
 
     xhr.onerror = () => reject(new ApiError('上传失败：网络中断', 0));
@@ -203,28 +321,42 @@ export const api = {
   getNetwork: () => request<NetworkInfo>('/api/network'),
 };
 
-/** 手机端二维码图片地址（服务端现生成 SVG） */
+/** 手机端二维码图片地址（服务端现生成 SVG；码里已含令牌，见 network.ts） */
 export function networkQrUrl(): string {
-  return '/api/network/qr.svg';
+  return withToken('/api/network/qr.svg');
 }
 
 /** 自签名证书下载地址（iPhone 想彻底信任时装它） */
 export function networkCertUrl(): string {
-  return '/api/network/cert.crt';
+  return withToken('/api/network/cert.crt');
 }
 
 export function trackMediaUrl(trackId: string): string {
-  return `/api/media/track/${encodeURIComponent(trackId)}`;
+  return withToken(`/api/media/track/${encodeURIComponent(trackId)}`);
 }
 
 /** cacheBust：重新混音后文件名不变，必须靠查询参数绕开浏览器缓存 */
 export function workAudioUrl(workId: string, cacheBust?: number): string {
   const base = `/api/works/${encodeURIComponent(workId)}/audio`;
-  return cacheBust ? `${base}?v=${cacheBust}` : base;
+  return withToken(cacheBust ? `${base}?v=${cacheBust}` : base);
 }
 
 export function workVocalUrl(workId: string): string {
-  return `/api/works/${encodeURIComponent(workId)}/vocal`;
+  return withToken(`/api/works/${encodeURIComponent(workId)}/vocal`);
+}
+
+/**
+ * 带 `download=1` 的成品 / 干声下载地址。
+ *
+ * 单独给函数而不是让调用方拼 `${workAudioUrl(id)}?download=1`：令牌也是
+ * 拼在 query 上的，两处各拼一半会产出 `?token=x?download=1` 这种坏地址。
+ */
+export function workAudioDownloadUrl(workId: string): string {
+  return withToken(`/api/works/${encodeURIComponent(workId)}/audio?download=1`);
+}
+
+export function workVocalDownloadUrl(workId: string): string {
+  return withToken(`/api/works/${encodeURIComponent(workId)}/vocal?download=1`);
 }
 
 export type {

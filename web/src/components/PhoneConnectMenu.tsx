@@ -120,6 +120,11 @@ export function PhoneConnectMenu() {
               <img src={networkQrUrl()} alt="扫码用手机演唱" width={148} height={148} />
             </div>
             <p className="phone-menu-hint">手机连同一个 WiFi，扫码即开移动端演唱页。</p>
+            {info.tokenRequired && (
+              <p className="phone-menu-hint">
+                服务开启了访问保护，二维码地址里已带上令牌，手机扫码即用、无需手输。
+              </p>
+            )}
             {info.micBlocked && (
               <div className="phone-menu-error">⚠️ {info.reason ?? 'http 入口下手机浏览器会禁用麦克风。'}</div>
             )}

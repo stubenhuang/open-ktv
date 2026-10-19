@@ -8,6 +8,7 @@ import { createKugouLyrics } from './library/lyrics/kugou.ts';
 import type { LyricsLookup } from './library/lyrics/types.ts';
 import { queueState } from './jobs.ts';
 import { freeBytes } from './disk.ts';
+import { createTokenGate } from './auth.ts';
 import { createLogger, type LogLevel } from './logger.ts';
 import { createLibraryRouter } from './routes/library.ts';
 import { createNetworkRouter } from './routes/network.ts';
@@ -63,6 +64,10 @@ export function createApp(options: CreateAppOptions = {}): express.Express {
     });
     next();
   });
+
+  // 访问令牌闸门（ACCESS_TOKEN 没配时完全透明）。放在所有 /api 路由之前，
+  // 静态前端壳和 SPA 兜底不设限 —— 页面谁都能看，数据接口才需要令牌。
+  app.use('/api', createTokenGate());
 
   // 健康检查：队列状态 + 数据盘余量。openktv.sh status 打的就是它，
   // 磁盘快满时在这里一眼能看见（上传前的预检也是同一份数据）。

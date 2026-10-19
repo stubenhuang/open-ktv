@@ -2,6 +2,7 @@ import { Router } from 'express';
 import QRCode from 'qrcode';
 import type { NetworkInfo } from '../../../shared/types.ts';
 import {
+  ACCESS_TOKEN,
   DEV_MODE,
   LAN_HTTPS,
   MOBILE_PATH,
@@ -69,6 +70,11 @@ export function networkInfo(): NetworkInfo {
     ? lanAddresses_.map((address) => buildLanUrl(address, origin.scheme, origin.port, MOBILE_PATH))
     : [];
 
+  // 配了访问令牌时，把令牌直接编进手机入口地址：扫码即用，不需要用户手输。
+  // 桌面端走回环不过这一关，所以二维码里带令牌不影响电脑使用。
+  const withToken = (url: string): string =>
+    ACCESS_TOKEN ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(ACCESS_TOKEN)}` : url;
+
   let reason: string | null = null;
   if (isLoopbackHost()) {
     reason =
@@ -89,10 +95,11 @@ export function networkInfo(): NetworkInfo {
     lanAddresses: lanAddresses_,
     mobilePath: MOBILE_PATH,
     mobileOrigin: origin,
-    mobileUrl: mobileUrls[0] ?? null,
-    mobileUrls,
+    mobileUrl: mobileUrls[0] ? withToken(mobileUrls[0]) : null,
+    mobileUrls: mobileUrls.map(withToken),
     selfSigned,
     micBlocked: origin?.scheme === 'http',
+    tokenRequired: Boolean(ACCESS_TOKEN),
     reason,
   };
 }

@@ -445,6 +445,12 @@ export interface NetworkInfo {
    * true 时页面能浏览/播放，但录不了音。
    */
   micBlocked: boolean;
+  /**
+   * 服务端要求访问令牌（ACCESS_TOKEN 配了）。
+   * true 时 mobileUrl / mobileUrls 已带 `?token=`，二维码扫码即用；
+   * 桌面端页面据此在需要时提示输入令牌。
+   */
+  tokenRequired: boolean;
   /** 说明 / 告警；一切正常时为 null */
   reason: string | null;
 }
