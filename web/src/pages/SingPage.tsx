@@ -566,11 +566,26 @@ export default function SingPage() {
               </div>
             </div>
           )}
+
+          {/*
+            录音说明挂在左列底部（原来是右列最后一张卡）：右列四张控件卡
+            几乎比左列高出一倍，说明卡搬过来正好把左列下方的空白填掉，
+            两列高度也就齐了 —— 它本来就跟「开始演唱」是一件事的注脚。
+          */}
+          <div className="card small muted" style={{ marginTop: 16 }}>
+            <div className="panel-card-title">📋 录音说明</div>
+            <ul className="record-notes">
+              <li>只录你的干声，伴奏不进录音文件。</li>
+              <li>唱完自动把干声和伴奏合成一版 MP3。</li>
+              <li>想换效果，去作品库点「调整效果」：实时试听即时生效，点「合成」出新版 MP3。</li>
+              <li>开始时会先录 0.15 秒静音再放伴奏，用来自动对齐人声，不用手动调。</li>
+            </ul>
+          </div>
         </div>
 
         {/*
           右侧控制面板按「开唱前后要弄好的事」分四卡：
-          麦克风（有没有声音）→ 耳机监听（听到什么）→ 歌词（字幕对不对）→ 录音说明。
+          麦克风（有没有声音）→ 耳机监听（听到什么）→ 升降调（定调）→ 歌词（字幕对不对）。
         */}
         <div className="control-panel">
           <div className="card">
@@ -727,16 +742,6 @@ export default function SingPage() {
               </div>
             </div>
           )}
-
-          <div className="card small muted">
-            <div className="panel-card-title">📋 录音说明</div>
-            <ul className="record-notes">
-              <li>只录你的干声，伴奏不进录音文件。</li>
-              <li>唱完自动把干声和伴奏合成一版 MP3。</li>
-              <li>想换效果，去作品库点「调整效果」：实时试听即时生效，点「合成」出新版 MP3。</li>
-              <li>开始时会先录 0.15 秒静音再放伴奏，用来自动对齐人声，不用手动调。</li>
-            </ul>
-          </div>
         </div>
       </div>
     </div>

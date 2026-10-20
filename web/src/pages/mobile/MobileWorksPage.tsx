@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type WorkListItem } from '../../api';
+import { VOCAL_PRESET_LABELS } from '../../../../shared/types';
 import { coverGradient, errorMessage, formatDuration, formatRelativeTime, selectVisibleWorks } from '../../utils';
 
 type StatusFilter = 'all' | WorkListItem['status'];
@@ -116,17 +117,31 @@ export default function MobileWorksPage() {
         {visible.map((work) => (
           <li key={work.id}>
             <Link className="m-track" to={`/m/work/${work.id}`}>
+              {/*
+                封条改首字（和桌面 .work-row-cover 一个语言）：原来是一枚通用 🎤，
+                九行九个一样的话筒，等于没有信息。
+              */}
               <span className="m-work-cover" style={{ background: coverGradient(work.title) }} aria-hidden="true">
-                {work.status === 'mixing' ? <span className="spin" /> : '🎤'}
+                {work.status === 'mixing' ? (
+                  <span className="spin" />
+                ) : (
+                  <span className="m-work-cover-char">{Array.from(work.title)[0] ?? '♪'}</span>
+                )}
               </span>
               <span className="m-track-main">
                 <span className="m-track-title">{work.title}</span>
+                {/* 元信息补齐成桌面那一套：伴奏 · 时长 · 效果 · 时间 */}
                 <span className="m-track-meta">
-                  {work.trackTitle ?? '伴奏已删除'} · {formatDuration(work.vocalDuration)} ·{' '}
+                  {work.trackTitle ?? '伴奏已删除'}
+                  {work.trackArtist ? ` · ${work.trackArtist}` : ''} ·{' '}
+                  {formatDuration(work.vocalDuration)} ·{' '}
+                  {VOCAL_PRESET_LABELS[work.mixParams.vocalPreset]} ·{' '}
                   {formatRelativeTime(work.createdAt)}
                 </span>
               </span>
-              <span className={`m-badge${work.status === 'ready' ? ' m-badge-ok' : work.status === 'failed' ? ' m-badge-warn' : ''}`}>
+              {/* 状态改「点 + 字」：原来右侧一个药丸徽章，和封条、标题三件套打架 */}
+              <span className={`m-work-status is-${work.status}`}>
+                <span className="m-work-status-dot" aria-hidden="true" />
                 {work.status === 'ready' ? '已就绪' : work.status === 'mixing' ? '合成中' : '失败'}
               </span>
             </Link>

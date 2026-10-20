@@ -251,10 +251,16 @@ export function coverHue(text: string): number {
   return (hash >>> 0) % 360;
 }
 
-/** 作品卡封条渐变：主色相 + 旁边 48° 的邻近色，比单色更有层次 */
+/**
+ * 作品卡封条渐变：主色相 + 旁边 35° 的邻近色，比单色更有层次。
+ *
+ * 色相被压进 0～84 这一段（朱 → 橙 → 金 → 山吹）：主题换成「和風暖色」之后，
+ * 封条是页面里唯一还留着全色相的地方，一出现蓝绿封条就破功。
+ * 输出格式与饱和度都不变 —— 调用方和单测零改动。
+ */
 export function coverGradient(text: string): string {
-  const hue = coverHue(text);
-  return `linear-gradient(135deg, hsl(${hue} 68% 46%), hsl(${(hue + 48) % 360} 72% 36%))`;
+  const warm = coverHue(text) % 50;
+  return `linear-gradient(135deg, hsl(${warm} 68% 46%), hsl(${warm + 35} 72% 36%))`;
 }
 
 /* ------------------------------ 相对时间 ------------------------------ */

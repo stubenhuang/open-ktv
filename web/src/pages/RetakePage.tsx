@@ -698,6 +698,25 @@ export default function RetakePage() {
               </div>
             </div>
           )}
+
+          {/*
+            重录说明挂在左列底部（原来是右列最后一张卡）：右列「重录哪一段」带着
+            歌词行列表，比左列高出将近一倍，说明卡搬过来正好填掉左列下方的空白，
+            两列高度也就齐了 —— 它本来就跟「开始重录」是一件事的注脚。
+          */}
+          <div className="card small muted" style={{ marginTop: 16 }}>
+            <div className="panel-card-title">📋 重录说明</div>
+            <ul className="record-notes">
+              <li>只替换 [{formatTimer(startSec * 1000)}, {formatTimer(endSec * 1000)}) 之间的干声，其余原样保留。</li>
+              <li>
+                伴奏从片段开始前 {RETAKE_LIMITS.leadInSec} 秒响起（给你找拍），
+                到片段结束自动停录；起录时也会先留 0.15 秒静音，用来自动对齐，唱进去就行。
+              </li>
+              <li>拼接边界有 20ms 交叉淡化，不会咔哒；干声总时长不变。</li>
+              <li>重录前的干声会留一份备份，作品页可以「撤销重录」（只回退一级）。</li>
+              <li>拼接完成后自动重新混音，回作品页等「已就绪」即可。</li>
+            </ul>
+          </div>
         </div>
 
         <div className="control-panel">
@@ -776,7 +795,10 @@ export default function RetakePage() {
               <div className="field" style={{ marginTop: 16 }}>
                 <div className="field-label">
                   <span>按歌词行选</span>
-                  <span className="faint small">「起」= 从这句开始替换，「止」= 到这句唱完</span>
+                </div>
+                {/* 说明单独一行：塞在标题右边会在窄列里折成两半，读着像排版错误 */}
+                <div className="small faint">
+                  「起」= 从这句开始替换，「止」= 到这句唱完
                 </div>
                 <div className="retake-lyrics">
                   {lyricRanges.map((line, index) => {
@@ -868,20 +890,6 @@ export default function RetakePage() {
               </div>
               <LevelMeter engine={engine} active={micReady} />
             </div>
-          </div>
-
-          <div className="card small muted">
-            <div className="panel-card-title">📋 重录说明</div>
-            <ul className="record-notes">
-              <li>只替换 [{formatTimer(startSec * 1000)}, {formatTimer(endSec * 1000)}) 之间的干声，其余原样保留。</li>
-              <li>
-                伴奏从片段开始前 {RETAKE_LIMITS.leadInSec} 秒响起（给你找拍），
-                到片段结束自动停录；起录时也会先留 0.15 秒静音，用来自动对齐，唱进去就行。
-              </li>
-              <li>拼接边界有 20ms 交叉淡化，不会咔哒；干声总时长不变。</li>
-              <li>重录前的干声会留一份备份，作品页可以「撤销重录」（只回退一级）。</li>
-              <li>拼接完成后自动重新混音，回作品页等「已就绪」即可。</li>
-            </ul>
           </div>
         </div>
       </div>

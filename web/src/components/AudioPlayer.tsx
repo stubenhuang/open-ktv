@@ -14,6 +14,13 @@ import { formatDuration } from '../utils';
  *  - 拖动过程中只更新 UI，松手（或停手 120ms）才一次性 seek，避免每个像素
  *    都去挪 currentTime；
  *  - 模块级单例：同一时刻只有一个播放器在响，播新的自动暂停旧的。
+ *
+ * 两种排布：
+ *  - `variant="bar"`（默认）—— 按钮 + 进度 + 时间 一行。伴奏库试听、实时试听用。
+ *  - `variant="row"` —— 作品库的列表行：父容器对 `.audio-player` 设
+ *    `display: contents`，按钮和 `.audio-player-seek` 就各自成为行网格的直接
+ *    子项（按钮占左侧一格，进度条贴行底）。DOM 只多一层透明 span，
+ *    `bar` 模式的视觉与今天完全一致。
  */
 interface Props {
   src: string;
@@ -21,12 +28,30 @@ interface Props {
   autoPlay?: boolean;
   preload?: 'none' | 'metadata' | 'auto';
   onEnded?: () => void;
+  /** 排布形态，见文件头说明 */
+  variant?: 'bar' | 'row';
+  /**
+   * 已知总时长（秒）：预填总时长读数。
+   * 作品库用 `preload="none"`（不为 9 行预告片发 9 个请求），但接口本来就回了
+   * `vocalDuration`，直接喂进来，行上就能显示 `04:41` 而不必等元数据。
+   */
+  totalDuration?: number;
+  /** 播放/暂停状态变化：列表行用它给当前行打 `is-playing` */
+  onPlayingChange?: (playing: boolean) => void;
 }
 
 /** 正在播放的元素：模块级，跨组件实例共享 */
 let currentAudio: HTMLAudioElement | null = null;
 
-export function AudioPlayer({ src, autoPlay = false, preload = 'metadata', onEnded }: Props) {
+export function AudioPlayer({
+  src,
+  autoPlay = false,
+  preload = 'metadata',
+  onEnded,
+  variant = 'bar',
+  totalDuration,
+  onPlayingChange,
+}: Props) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const rangeRef = useRef<HTMLInputElement>(null);
   const currentRef = useRef<HTMLSpanElement>(null);
@@ -35,9 +60,11 @@ export function AudioPlayer({ src, autoPlay = false, preload = 'metadata', onEnd
   /** 拖动中：暂停 rAF 的位置刷新，避免和用户输入打架 */
   const draggingRef = useRef(false);
   const seekTimerRef = useRef<number | null>(null);
-  /** onEnded 用 ref 拿最新回调：effect 不必因为它重挂 */
+  /** onEnded / onPlayingChange 用 ref 拿最新回调：effect 不必因为它们重挂 */
   const endedRef = useRef(onEnded);
   endedRef.current = onEnded;
+  const playingChangeRef = useRef(onPlayingChange);
+  playingChangeRef.current = onPlayingChange;
 
   // 播放中：rAF 直写进度与时间（不触发重渲染）
   useEffect(() => {
@@ -49,6 +76,11 @@ export function AudioPlayer({ src, autoPlay = false, preload = 'metadata', onEnd
         const position = audio.currentTime;
         if (rangeRef.current) rangeRef.current.value = String(position);
         if (currentRef.current) currentRef.current.textContent = formatDuration(position);
+        // 已播比例写进 CSS 变量：行底那条 3px 进度轨靠它做填充（.work-row 用）
+        const total = Number(rangeRef.current?.max ?? '0');
+        if (rangeRef.current && total > 0) {
+          rangeRef.current.style.setProperty('--fill', `${(position / total) * 100}%`);
+        }
       }
       frame = requestAnimationFrame(tick);
     };
@@ -75,6 +107,17 @@ export function AudioPlayer({ src, autoPlay = false, preload = 'metadata', onEnd
     };
   }, []);
 
+  // 调用方给了总时长（preload="none" 拿不到元数据）：先填上，元数据到了再覆盖
+  useEffect(() => {
+    if (totalDuration === undefined || !Number.isFinite(totalDuration)) return;
+    if (rangeRef.current && Number(rangeRef.current.max) === 0) {
+      rangeRef.current.max = String(totalDuration);
+    }
+    if (totalRef.current && totalRef.current.textContent === formatDuration(0)) {
+      totalRef.current.textContent = formatDuration(totalDuration);
+    }
+  }, [totalDuration]);
+
   // 卸载：丢掉没提交的 seek 定时器；若自己是当前响着的那个，让出单例
   useEffect(
     () => () => {
@@ -87,6 +130,10 @@ export function AudioPlayer({ src, autoPlay = false, preload = 'metadata', onEnd
   const writePosition = (position: number) => {
     if (rangeRef.current) rangeRef.current.value = String(position);
     if (currentRef.current) currentRef.current.textContent = formatDuration(position);
+    const total = Number(rangeRef.current?.max ?? '0');
+    if (rangeRef.current && total > 0) {
+      rangeRef.current.style.setProperty('--fill', `${(position / total) * 100}%`);
+    }
   };
 
   /**
@@ -130,7 +177,7 @@ export function AudioPlayer({ src, autoPlay = false, preload = 'metadata', onEnd
   };
 
   return (
-    <div className="audio-player">
+    <div className={`audio-player audio-player--${variant}`}>
       <button
         type="button"
         className={`audio-player-btn${playing ? ' playing' : ''}`}
@@ -139,31 +186,35 @@ export function AudioPlayer({ src, autoPlay = false, preload = 'metadata', onEnd
       >
         <span aria-hidden="true">{playing ? '⏸' : '▶'}</span>
       </button>
-      <input
-        ref={rangeRef}
-        className="audio-player-track"
-        type="range"
-        min={0}
-        max={0}
-        step={0.1}
-        defaultValue={0}
-        aria-label="播放进度"
-        onChange={(event) => {
-          // 输入中：只让 UI 跟手，引擎那侧攒着，停手后合并成一次 seek
-          draggingRef.current = true;
-          writePosition(Number(event.target.value));
-          if (seekTimerRef.current !== null) window.clearTimeout(seekTimerRef.current);
-          seekTimerRef.current = window.setTimeout(commitSeek, 120);
-        }}
-        onPointerUp={commitSeek}
-        onPointerCancel={commitSeek}
-        onKeyUp={commitSeek}
-        onBlur={commitSeek}
-      />
-      <span className="audio-player-time">
-        <span ref={currentRef}>{formatDuration(0)}</span>
-        {' / '}
-        <span ref={totalRef}>{formatDuration(0)}</span>
+      {/* range + 时间包一层：bar 模式下这层只是个透明 flex 容器，视觉不变；
+          row 模式下整层成为行网格的一格（贴行底的进度条） */}
+      <span className="audio-player-seek">
+        <input
+          ref={rangeRef}
+          className="audio-player-track"
+          type="range"
+          min={0}
+          max={0}
+          step={0.1}
+          defaultValue={0}
+          aria-label="播放进度"
+          onChange={(event) => {
+            // 输入中：只让 UI 跟手，引擎那侧攒着，停手后合并成一次 seek
+            draggingRef.current = true;
+            writePosition(Number(event.target.value));
+            if (seekTimerRef.current !== null) window.clearTimeout(seekTimerRef.current);
+            seekTimerRef.current = window.setTimeout(commitSeek, 120);
+          }}
+          onPointerUp={commitSeek}
+          onPointerCancel={commitSeek}
+          onKeyUp={commitSeek}
+          onBlur={commitSeek}
+        />
+        <span className="audio-player-time">
+          <span ref={currentRef}>{formatDuration(0)}</span>
+          {' / '}
+          <span ref={totalRef}>{formatDuration(0)}</span>
+        </span>
       </span>
       <audio
         ref={audioRef}
@@ -173,13 +224,16 @@ export function AudioPlayer({ src, autoPlay = false, preload = 'metadata', onEnd
         onPlay={(event) => {
           claim(event.currentTarget);
           setPlaying(true);
+          playingChangeRef.current?.(true);
         }}
         onPause={() => {
           setPlaying(false);
+          playingChangeRef.current?.(false);
           if (currentAudio === audioRef.current) currentAudio = null;
         }}
         onEnded={() => {
           setPlaying(false);
+          playingChangeRef.current?.(false);
           if (currentAudio === audioRef.current) currentAudio = null;
           writePosition(0);
           endedRef.current?.();

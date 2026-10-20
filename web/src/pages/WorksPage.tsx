@@ -30,15 +30,20 @@ import {
 /**
  * 我的作品（作品库列表页）。
  *
- * 一屏之内要回答三个问题：「我唱过什么」（卡片）、「哪首是哪个」（信息）、
+ * 一屏之内要回答三个问题：「我唱过什么」（列表行）、「哪首是哪个」（信息）、
  * 「那首在哪」（搜索 / 排序 / 过滤）。所以：
- *  - 卡片按「封面 + 标题 + 伴奏/歌手 + 时长/大小/时间 + 效果摘要」重排，
- *    两行截断放长标题，状态徽章补全（已就绪 / 合成中 / 合成失败）；
+ *  - 列表用**发丝线分隔的行**（.work-row，和風「帳簿」的语言：细罫线 + 留白），
+ *    一行两行字装完「标题 + 状态」和「伴奏 · 歌手 · 时长 · 大小 · 效果 · 时间」；
+ *    原来是 330px 的卡片网格，一卡四行堆叠，九部作品要三行卡片才放完；
  *  - 工具栏做纯客户端筛选（作品就自己家几十首，和伴奏库同构，见
  *    utils.ts 的 selectVisibleWorks）；
  *  - 改名、重试合成这类一次性的小操作就地完成，不再跳详情页。
  *
- * 与后端/其它页的契约：卡片根元素保留 data-work-id（合成后跳回来定位用，
+ * 播放态：AudioPlayer 的 onPlayingChange 把当前行 id 喂给 playingId，
+ * 那一行加 .is-playing（左缘朱线 + 淡朱底 + 行底进度条）。不用 :has() ——
+ * iOS 14.5 的 Safari 不支持，而手机端也要能看这个页面。
+ *
+ * 与后端/其它页的契约：行根元素保留 data-work-id（合成后跳回来定位用，
  * e2e 也指着它）；轮询只在真有作品在混音时跑（usePolling）。
  */
 
@@ -75,6 +80,8 @@ export default function WorksPage() {
   const [renameDraft, setRenameDraft] = useState('');
   /** 改名 / 重试这类单卡操作 in-flight */
   const [busyId, setBusyId] = useState<string | null>(null);
+  /** 正在播放的作品 id（AudioPlayer 的 onPlayingChange 喂）；null = 没在播 */
+  const [playingId, setPlayingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -98,8 +105,8 @@ export default function WorksPage() {
     if (!card) return;
     focusedRef.current = true;
     card.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    card.classList.add('work-card-focus');
-    const timer = window.setTimeout(() => card.classList.remove('work-card-focus'), 2600);
+    card.classList.add('work-row-focus');
+    const timer = window.setTimeout(() => card.classList.remove('work-row-focus'), 2600);
     return () => window.clearTimeout(timer);
   }, [focusWorkId, loading, works]);
 
@@ -219,47 +226,81 @@ export default function WorksPage() {
 
   /* -------------------------------- 渲染 -------------------------------- */
 
-  const renderCard = (work: WorkListItem) => {
+  const renderRow = (work: WorkListItem) => {
     const renaming = renamingId === work.id;
-    const remixed = work.updatedAt - work.createdAt > REMIX_HINT_MS;
+    // 「重混过」只进 title 提示：元信息行里再并排一个「10-16重混 · 10-16演唱」
+    // 是两个重复日期，读起来像排版错误
+    const remixHint = work.updatedAt - work.createdAt > REMIX_HINT_MS
+      ? ` · 最近混音：${formatDateTime(work.updatedAt)}`
+      : '';
+    const playing = playingId === work.id;
 
     return (
       <div
         key={work.id}
-        className={`work-card${work.status === 'mixing' ? ' is-mixing' : ''}`}
+        className={[
+          'work-row',
+          work.status === 'mixing' ? 'is-mixing' : '',
+          work.status === 'failed' ? 'is-failed' : '',
+          playing ? 'is-playing' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
         data-work-id={work.id}
       >
         {/*
-          封条色相由标题哈希决定（coverGradient）：同一首歌每次同色、
-          不同歌错开，一屏八张卡不再是一片同样的灰。
+          封条：标题首字（明朝体，落款感）+ 由标题哈希决定的渐变。
+          原来这里是一枚通用 🎵 —— 一屏九张卡九个一样的音符，等于没有信息。
+          时长不放封条了，元信息行里有，不重复。
         */}
-        <div className="work-cover" style={{ background: coverGradient(work.title) }} aria-hidden="true">
-          <span className="work-cover-icon">🎵</span>
-          <span className="work-cover-duration">{formatDuration(work.vocalDuration)}</span>
+        <div
+          className="work-row-cover"
+          style={{ background: coverGradient(work.title) }}
+          aria-hidden="true"
+        >
+          <span className="work-row-cover-char">{Array.from(work.title)[0] ?? '♪'}</span>
         </div>
 
-        <div className="work-card-head">
-          {renaming ? (
-            <input
-              className="text-input work-card-rename"
-              value={renameDraft}
-              autoFocus
-              aria-label="作品名"
-              onChange={(event) => setRenameDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') void commitRename(work);
-                if (event.key === 'Escape') setRenamingId(null);
-              }}
-            />
-          ) : (
-            <div className="work-card-title" title={work.title}>
-              {work.title}
-            </div>
-          )}
+        {/* 播放位：就绪的出播放器；合成中的出 spinner；失败的出感叹号 */}
+        {work.status === 'ready' ? (
+          <AudioPlayer
+            variant="row"
+            src={workAudioUrl(work.id, work.updatedAt)}
+            preload="none"
+            totalDuration={work.vocalDuration}
+            onPlayingChange={(isPlaying) => setPlayingId(isPlaying ? work.id : null)}
+          />
+        ) : (
+          <span
+            className={`work-row-play-badge${work.status === 'failed' ? ' is-failed' : ''}`}
+            title={work.status === 'mixing' ? '正在合成' : '合成失败'}
+          >
+            {work.status === 'mixing' ? <span className="spin" /> : '!'}
+          </span>
+        )}
 
-          <div className="work-card-head-side">
+        <div className="work-row-main">
+          <div className="work-row-title">
             {renaming ? (
-              <>
+              <input
+                className="text-input work-row-rename"
+                value={renameDraft}
+                autoFocus
+                aria-label="作品名"
+                onChange={(event) => setRenameDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void commitRename(work);
+                  if (event.key === 'Escape') setRenamingId(null);
+                }}
+              />
+            ) : (
+              <span className="work-row-name" title={work.title}>
+                {work.title}
+              </span>
+            )}
+
+            {renaming ? (
+              <span className="work-row-rename-actions">
                 <button
                   type="button"
                   className="btn btn-primary btn-sm"
@@ -275,144 +316,167 @@ export default function WorksPage() {
                 >
                   取消
                 </button>
-              </>
+              </span>
             ) : (
-              <>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm work-card-rename-btn"
-                  aria-label={`把「${work.title}」改名`}
-                  title="改名"
-                  onClick={() => {
-                    setRenameDraft(work.title);
-                    setRenamingId(work.id);
-                  }}
-                >
-                  ✎
-                </button>
-                {work.status === 'ready' && <span className="badge badge-ok">已就绪</span>}
+              <span className="work-row-status">
+                {work.status === 'ready' && (
+                  <>
+                    <span className="work-row-dot is-ok" aria-hidden="true" />
+                    已就绪
+                  </>
+                )}
                 {work.status === 'mixing' && (
-                  <span className="badge badge-work">
-                    <span className="spin" style={{ borderTopColor: 'var(--accent-2)' }} />
-                    正在合成…
-                  </span>
+                  <>
+                    <span className="work-row-dot is-mixing" aria-hidden="true" />
+                    合成中
+                  </>
                 )}
                 {work.status === 'failed' && (
-                  <span className="badge badge-fail" title={work.error ?? ''}>
+                  <>
+                    <span className="work-row-dot is-failed" aria-hidden="true" />
                     合成失败
-                  </span>
+                  </>
                 )}
-              </>
+              </span>
             )}
           </div>
-        </div>
 
-        <div className="work-card-meta">
-          <div className="work-card-meta-line">
+          {/*
+            元信息一行装完：伴奏 · 歌手 · 时长 · 大小 · 效果 · 时间。
+            超长就截断，全文进 title —— 列表行要的是「一眼扫完一列」，
+            不是把每首歌的档案摊开。
+          */}
+          <div
+            className="work-row-meta"
+            title={[
+              work.trackTitle ? `伴奏：${work.trackTitle}` : '伴奏已删除',
+              work.trackArtist,
+              `时长 ${formatDuration(work.vocalDuration)}`,
+              work.sizeBytes !== null ? `成品 MP3 ${formatBytes(work.sizeBytes)}` : '',
+              `人声预设：${VOCAL_PRESET_LABELS[work.mixParams.vocalPreset]}`,
+              `混响：${describeReverb(work.mixParams.reverbSpace, work.mixParams.reverbWet)}`,
+              `演唱于 ${formatDateTime(work.createdAt)}`,
+              remixHint.trim(),
+              work.error ?? '',
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          >
             {work.trackTitle ? (
-              <span className="work-card-track" title={`伴奏：${work.trackTitle}`}>
-                伴奏：{work.trackTitle}
+              <span className="work-row-track">
+                {work.trackTitle}
                 {work.trackArtist ? ` · ${work.trackArtist}` : ''}
               </span>
             ) : (
-              <span className="badge badge-fail" title="伴奏已删除，成品还能听，但不能重新合成">
-                伴奏已删除
-              </span>
+              <span className="work-row-track is-gone">伴奏已删除</span>
             )}
-          </div>
-          <div className="work-card-meta-line faint">
+            <span className="work-row-sep" aria-hidden="true">
+              ·
+            </span>
             <span className="mono">{formatDuration(work.vocalDuration)}</span>
             {work.sizeBytes !== null && (
               <>
-                <span aria-hidden="true">·</span>
-                <span title={`成品 MP3 ${formatBytes(work.sizeBytes)}`}>{formatBytes(work.sizeBytes)}</span>
+                <span className="work-row-sep" aria-hidden="true">
+                  ·
+                </span>
+                <span>{formatBytes(work.sizeBytes)}</span>
               </>
             )}
-            <span aria-hidden="true">·</span>
+            <span className="work-row-sep" aria-hidden="true">
+              ·
+            </span>
+            <span>
+              {VOCAL_PRESET_LABELS[work.mixParams.vocalPreset]} ·{' '}
+              {describeReverb(work.mixParams.reverbSpace, work.mixParams.reverbWet)}
+            </span>
+            {/* 伴奏被移调过：这版的调和原文件不一样，得说出来 */}
+            {work.trackPitchSemitones !== 0 && (
+              <>
+                <span className="work-row-sep" aria-hidden="true">
+                  ·
+                </span>
+                <span title={`混音时伴奏移调了 ${describePitch(work.trackPitchSemitones)}`}>
+                  {describePitch(work.trackPitchSemitones)}
+                </span>
+              </>
+            )}
+            <span className="work-row-sep" aria-hidden="true">
+              ·
+            </span>
             <span title={`演唱于 ${formatDateTime(work.createdAt)}`}>
               {formatRelativeTime(work.createdAt)}演唱
             </span>
           </div>
-          <div className="work-card-chips">
-            <span
-              className="badge badge-kind"
-              title={`人声预设：${VOCAL_PRESET_LABELS[work.mixParams.vocalPreset]} · 混响：${describeReverb(work.mixParams.reverbSpace, work.mixParams.reverbWet)}`}
-            >
-              {VOCAL_PRESET_LABELS[work.mixParams.vocalPreset]} ·{' '}
-              {describeReverb(work.mixParams.reverbSpace, work.mixParams.reverbWet)}
-            </span>
-            {/* 伴奏被移调过：这版的调和原文件不一样，卡片上要说出来 */}
-            {work.trackPitchSemitones !== 0 && (
-              <span
-                className="badge badge-kind"
-                title={`混音时伴奏移调了 ${work.trackPitchSemitones > 0 ? '+' : ''}${work.trackPitchSemitones} 半音`}
-              >
-                {describePitch(work.trackPitchSemitones)}
-              </span>
-            )}
-            {remixed && (
-              <span className="badge badge-kind" title={`最近混音：${formatDateTime(work.updatedAt)}`}>
-                {formatRelativeTime(work.updatedAt)}重混
-              </span>
-            )}
-          </div>
+
+          {work.status === 'failed' && (
+            <div className="work-row-error">合成失败：{work.error ?? '未知原因'}</div>
+          )}
         </div>
 
-        {work.status === 'ready' && (
-          <AudioPlayer src={workAudioUrl(work.id, work.updatedAt)} preload="none" />
-        )}
-        {work.status === 'mixing' && (
-          <div className="work-card-pending" role="status">
-            <span className="spin" style={{ borderTopColor: 'var(--accent-2)' }} />
-            正在合成，完成后再来回听
-          </div>
-        )}
-        {work.status === 'failed' && (
-          <div className="work-card-error">合成失败：{work.error ?? '未知原因'}</div>
-        )}
-
-        <div className="work-card-actions">
-          <Link
-            className="btn btn-sm"
-            to={`/works/${work.id}`}
-            title="试听效果、调整参数并重新合成"
-          >
-            调整效果
-          </Link>
-          {work.status === 'ready' ? (
-            <a className="btn btn-sm" href={workAudioDownloadUrl(work.id)}>
-              下载 MP3
-            </a>
-          ) : (
-            <button type="button" className="btn btn-sm" disabled title="作品还没就绪，不能下载">
-              下载 MP3
-            </button>
+        <div className="work-row-actions">
+          {renaming ? null : (
+            <>
+              <Link
+                className="btn btn-sm"
+                to={`/works/${work.id}`}
+                title="试听效果、调整参数并重新合成"
+              >
+                调整效果
+              </Link>
+              {work.status === 'ready' ? (
+                <a className="btn btn-sm" href={workAudioDownloadUrl(work.id)}>
+                  下载 MP3
+                </a>
+              ) : (
+                <button type="button" className="btn btn-sm" disabled title="作品还没就绪，不能下载">
+                  下载 MP3
+                </button>
+              )}
+              <a
+                className="btn btn-sm btn-ghost work-row-action-vocal work-row-action-soft"
+                href={workVocalDownloadUrl(work.id)}
+                title="下载干声 WAV（未经处理的原始录音）"
+              >
+                干声
+              </a>
+              {work.status === 'failed' && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={busyId === work.id}
+                  onClick={() => void handleRetry(work)}
+                >
+                  重试合成
+                </button>
+              )}
+              {/*
+                改名 / 删除是低频且（删除）危险的操作：默认不占位置，
+                行 hover 或键盘焦点落进行里才显形。触屏没有 hover，:focus-within
+                兜底；而行本身可点进详情页，详情页里也有删除，不构成死角。
+              */}
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm work-row-action-soft work-row-action-icon work-row-rename-trigger"
+                aria-label={`把「${work.title}」改名`}
+                title="改名"
+                onClick={() => {
+                  setRenameDraft(work.title);
+                  setRenamingId(work.id);
+                }}
+              >
+                ✎
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm work-row-action-soft work-row-action-icon is-danger"
+                aria-label={`删除「${work.title}」`}
+                title="删除"
+                onClick={() => void handleDelete(work)}
+              >
+                ✕
+              </button>
+            </>
           )}
-          <a
-            className="btn btn-sm btn-ghost"
-            href={workVocalDownloadUrl(work.id)}
-            title="下载干声 WAV（未经处理的原始录音）"
-          >
-            干声
-          </a>
-          {work.status === 'failed' && (
-            <button
-              type="button"
-              className="btn btn-sm"
-              disabled={busyId === work.id}
-              onClick={() => void handleRetry(work)}
-            >
-              重试合成
-            </button>
-          )}
-          <span className="spacer" />
-          <button
-            type="button"
-            className="btn btn-danger btn-sm"
-            onClick={() => void handleDelete(work)}
-          >
-            删除
-          </button>
         </div>
       </div>
     );
@@ -423,12 +487,10 @@ export default function WorksPage() {
       <div className="page-head">
         <div>
           <h1 className="page-title">
-            我的作品{works.length > 0 && <span className="badge badge-kind">{works.length} 部</span>}
+            我的作品
+            {works.length > 0 && <span className="page-count">共 {works.length} 部</span>}
           </h1>
-          <p className="page-sub">
-            每唱一次都会存下一版 MP3，随时回听、下载或调整效果；支持按作品名 / 伴奏 / 歌手搜索（按 /
-            快速定位搜索框）。
-          </p>
+          <p className="page-sub">每唱一次都会存下一版 MP3，随时回听、下载或调整效果。</p>
         </div>
         <Link className="btn" to="/">
           去伴奏库
@@ -535,7 +597,7 @@ export default function WorksPage() {
           }
         />
       ) : (
-        <div className="work-list">{visibleWorks.map(renderCard)}</div>
+        <div className="work-list">{visibleWorks.map(renderRow)}</div>
       )}
     </div>
   );

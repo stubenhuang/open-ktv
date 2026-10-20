@@ -17,12 +17,22 @@ export function TrackSkeletonList({ count = 4 }: { count?: number }) {
   );
 }
 
-/** 作品库网格的骨架卡（封面 + 标题 + 播放器 + 操作行的高度） */
+/**
+ * 作品库的骨架行：和 .work-row 同形（封条 + 播放键 + 两行字），
+ * 换真数据时行高一致，页面不跳。
+ */
 export function WorkSkeletonGrid({ count = 6 }: { count?: number }) {
   return (
     <div className="work-list">
       {Array.from({ length: count }, (_, index) => (
-        <div key={index} className="skeleton skeleton-card" />
+        <div key={index} className="work-row work-row-skeleton" aria-hidden="true">
+          <div className="skeleton work-row-skeleton-cover" />
+          <div className="skeleton work-row-skeleton-play" />
+          <div className="work-row-main">
+            <div className="skeleton skeleton-line" style={{ width: '42%' }} />
+            <div className="skeleton skeleton-line is-short" />
+          </div>
+        </div>
       ))}
     </div>
   );
