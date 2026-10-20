@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { VOCAL_PRESET_LABELS } from '../../../shared/types';
-import { describeReverb } from '../../../shared/mix';
+import { describePitch, describeReverb } from '../../../shared/mix';
 import {
   api,
   workAudioDownloadUrl,
@@ -341,6 +341,15 @@ export default function WorksPage() {
               {VOCAL_PRESET_LABELS[work.mixParams.vocalPreset]} ·{' '}
               {describeReverb(work.mixParams.reverbSpace, work.mixParams.reverbWet)}
             </span>
+            {/* 伴奏被移调过：这版的调和原文件不一样，卡片上要说出来 */}
+            {work.trackPitchSemitones !== 0 && (
+              <span
+                className="badge badge-kind"
+                title={`混音时伴奏移调了 ${work.trackPitchSemitones > 0 ? '+' : ''}${work.trackPitchSemitones} 半音`}
+              >
+                {describePitch(work.trackPitchSemitones)}
+              </span>
+            )}
             {remixed && (
               <span className="badge badge-kind" title={`最近混音：${formatDateTime(work.updatedAt)}`}>
                 {formatRelativeTime(work.updatedAt)}重混

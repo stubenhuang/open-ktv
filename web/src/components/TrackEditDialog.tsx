@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { LRC_LIMITS } from '../../../shared/types';
+import { LRC_LIMITS, type TrackSummary } from '../../../shared/types';
 import { api, type TrackListItem } from '../api';
+import { PitchControl } from './PitchControl';
 import { toast } from './ToastStack';
 import { errorMessage } from '../utils';
 
@@ -74,6 +75,19 @@ export function TrackEditDialog({ track, onClose, onSaved }: Props) {
       cancelled = true;
     };
   }, [track.id, track.hasLyrics]);
+
+  /** 升降调要看的实时状态（生成中会变，单独拉一份，别和表单字段混在一起） */
+  const [pitchTrack, setPitchTrack] = useState<TrackSummary>(track);
+  useEffect(() => setPitchTrack(track), [track]);
+
+  // 移调生成中轮询详情：好了/失败了就地更新，用户不用关掉弹窗再看
+  useEffect(() => {
+    if (pitchTrack.pitchStatus !== 'processing') return;
+    const timer = window.setInterval(() => {
+      void api.getTrack(track.id).then(setPitchTrack).catch(() => {});
+    }, 1200);
+    return () => window.clearInterval(timer);
+  }, [pitchTrack.pitchStatus, track.id]);
 
   const save = async () => {
     setBusy(true);
@@ -265,6 +279,20 @@ export function TrackEditDialog({ track, onClose, onSaved }: Props) {
             onChange={(event) => setLyricsOffsetMs(Number(event.target.value))}
           />
           <div className="small faint">正值 = 歌词更晚出现；歌词跑在伴奏前面就往右拖。</div>
+        </div>
+
+        {/*
+           * 升降调：立即生效（不等「保存」）—— 它背后是一次服务端生成任务，
+           * 和歌名/歌词那种「纯字段」不是一回事。生成状态就地显示，失败可原地重试。
+           * 实时状态单独拉一份（pitchTrack），别和表单字段混在一起。
+           */}
+        <div className="field">
+          <PitchControl
+            track={pitchTrack}
+            disabled={busy}
+            onStatusChange={() => void onSaved()}
+            onError={(message) => setError(message)}
+          />
         </div>
 
         <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>

@@ -4,9 +4,11 @@ import { MAX_RECORD_MS, MIN_RECORD_MS } from '../../../../shared/types';
 import { api, trackMediaUrl, type TrackDetail } from '../../api';
 import { LevelMeter } from '../../components/LevelMeter';
 import { LyricsView } from '../../components/LyricsView';
+import { PitchControl } from '../../components/PitchControl';
 import { isMicSupported } from '../../audio/engine';
 import { MobileEngine } from '../../audio/mobileEngine';
 import { useMicDevices } from '../../hooks/useMicDevices';
+import { usePolling } from '../../hooks/usePolling';
 import { errorMessage, formatDuration, formatTimer } from '../../utils';
 
 /** 录音阶段：idle = 待唱 / 收尾中；saving = 正在上传合成 */
@@ -142,18 +144,24 @@ export default function MobileSingPage() {
   const [phase, setPhase] = useState<Phase>('idle');
   const [actionError, setActionError] = useState<string | null>(null);
   const [captureWarning, setCaptureWarning] = useState<string | null>(null);
+  /**
+   * 伴奏地址的版本号：升降调会在**同一个 URL** 背后换文件（移调伴奏生成好之后），
+   * 浏览器不会自己重新加载 —— 移调状态每变一次就涨一位。
+   * （放在所有提前 return 之前：hooks 的顺序不能变）
+   */
+  const [mediaVersion, setMediaVersion] = useState(0);
+  const bumpMediaVersion = useCallback(() => setMediaVersion((value) => value + 1), []);
 
   const elapsedRef = useRef(0);
   const handleStopRef = useRef<() => Promise<void>>(async () => {});
 
   /* ------------------------------- 加载伴奏 ------------------------------- */
 
-  useEffect(() => {
+  const loadTrack = useCallback((id: string) => {
     let cancelled = false;
-    setTrack(null);
     setLoadError(null);
     api
-      .getTrack(trackId)
+      .getTrack(id)
       .then((result) => {
         if (!cancelled) setTrack(result);
       })
@@ -163,7 +171,15 @@ export default function MobileSingPage() {
     return () => {
       cancelled = true;
     };
-  }, [trackId]);
+  }, []);
+
+  useEffect(() => {
+    setTrack(null);
+    return loadTrack(trackId);
+  }, [trackId, loadTrack]);
+
+  // 移调生成中轮询：生成好之后要把媒体地址涨个版本号，手机才会重新拉移调后的伴奏
+  usePolling(() => loadTrack(trackId), 1200, track?.pitchStatus === 'processing');
 
   /* -------------------------------- 音频引擎 -------------------------------- */
 
@@ -400,9 +416,20 @@ export default function MobileSingPage() {
   }
 
   // 必须选中一个外置输入设备才给唱：不允许静默回退到机身麦克风
+  // 只有「正在移调」才禁唱：那几秒听到的还是原调，唱出来和成品对不上。
+  // failed 不禁 —— 播放和混音都已回落原调，照常唱不串调（见 pitch.ts）。
   const canStart =
-    Boolean(engine) && mic.deviceId !== '' && micReady && !recording && phase === 'idle';
-  const mediaUrl = trackMediaUrl(track.id);
+    Boolean(engine) &&
+    mic.deviceId !== '' &&
+    micReady &&
+    !recording &&
+    phase === 'idle' &&
+    track.pitchStatus !== 'processing';
+  /**
+   * 伴奏地址的版本号：升降调会在同一个 URL 背后换文件（移调伴奏生成好之后），
+   * 浏览器不会自己重新加载 —— 移调状态每变一次就涨一位（见上面的 state）。
+   */
+  const mediaUrl = trackMediaUrl(track.id, mediaVersion);
 
   return (
     <div className={`m-page m-sing${recording ? ' m-sing-recording' : ''}`}>
@@ -489,6 +516,19 @@ export default function MobileSingPage() {
         {!recording && phase === 'idle' && (
           <>
             <MobileTransport mediaEl={mediaEl} disabled={false} />
+
+            {/*
+              升降调：唱之前把伴奏的调定下来。服务端据此生成一份移调伴奏，
+              耳机里 / 成品里混的全是那一份（见 server/src/pitch.ts）。
+            */}
+            <PitchControl
+              track={track}
+              compact
+              disabled={recording || phase !== 'idle'}
+              onStatusChange={bumpMediaVersion}
+              onError={setActionError}
+            />
+
             {/*
               输入设备：只列外置（机身麦默认隐藏，与桌面同口径）。
               手机只有一个机身麦，默认接入的必然是他 —— 外放伴奏会被收进混音，
@@ -581,6 +621,14 @@ export default function MobileSingPage() {
           >
             开始演唱
           </button>
+        )}
+
+        {/* 移调失败：不禁唱（这一版混的已经是原调），但得让人知道为什么没上新调 */}
+        {!recording && phase === 'idle' && track.pitchStatus === 'failed' && (
+          <p className="m-notes">
+            ⚠️ 移调没成功（{track.pitchError ?? '原因未知'}），将按原调演唱。
+            想用新调就在上面的「升降调」里重试，或拖回「原调」。
+          </p>
         )}
 
         {!recording && phase === 'idle' && (

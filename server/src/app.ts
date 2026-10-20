@@ -7,6 +7,7 @@ import { createDefaultRegistry, type LibraryRegistry } from './library/registry.
 import { createKugouLyrics } from './library/lyrics/kugou.ts';
 import type { LyricsLookup } from './library/lyrics/types.ts';
 import { queueState } from './jobs.ts';
+import { detectFfmpegCapabilities } from './ffmpegCapabilities.ts';
 import { freeBytes } from './disk.ts';
 import { createTokenGate } from './auth.ts';
 import { createLogger, type LogLevel } from './logger.ts';
@@ -78,7 +79,16 @@ export function createApp(options: CreateAppOptions = {}): express.Express {
     } catch {
       // 量不到就只报队列，别让健康检查本身失败
     }
-    res.json({ ok: true, queue: queueState(), disk: { freeBytes: free } });
+    // capabilities：ffmpeg 能力（rubberband）。缺它时前端把升降调禁掉并说明原因，
+    // 而不是等用户选了调、点了保存才失败。现探一次（带缓存）：没跑过启动探测时
+    // （例如测试里直接 createApp）也能给出真实答案
+    const capabilities = await detectFfmpegCapabilities();
+    res.json({
+      ok: true,
+      queue: queueState(),
+      disk: { freeBytes: free },
+      capabilities,
+    });
   });
 
   app.use('/api/tracks', createTracksRouter({ lyrics }));

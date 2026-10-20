@@ -13,10 +13,17 @@ import {
   updateTrack,
   type TrackRecord,
 } from '../db.ts';
-import { transcodeKey, trackToDetail, trackToListItem } from '../dto.ts';
+import { pitchStatusOf, transcodeKey, trackToDetail, trackToListItem } from '../dto.ts';
 import { ensureFreeSpace } from '../disk.ts';
 import { isQueued } from '../jobs.ts';
 import { createLogger } from '../logger.ts';
+import { detectFfmpegCapabilities } from '../ffmpegCapabilities.ts';
+import {
+  forgetTrackPitch,
+  normalizeSemitones,
+  rubberbandMissingMessage,
+  startPitchShift,
+} from '../pitch.ts';
 import { forgetTrackLoudness } from '../mixJob.ts';
 import { decodeOriginalName } from '../naming.ts';
 import { PROXIES_DIR } from '../paths.ts';
@@ -191,55 +198,113 @@ function parseLyricsInput(
 
 router.patch(
   '/:id',
-  withTrack((req, res, record) => {
-    const body = req.body as { title?: unknown; artist?: unknown; lyrics?: unknown; lyricsOffsetMs?: unknown };
-    const patch: {
-      title?: string;
-      artist?: string | null;
-      lyrics?: string | null;
-      lyricsOffsetMs?: number;
-    } = {};
-
-    if (body.title !== undefined) {
-      const title = String(body.title).trim();
-      if (!title) {
-        res.status(400).json({ error: '歌名不能为空' });
-        return;
-      }
-      if (title.length > 120) {
-        res.status(400).json({ error: '歌名太长（最多 120 字）' });
-        return;
-      }
-      patch.title = title;
+  // 异步：升降调分支要现探一次 ffmpeg 能力（探测带缓存，第一次约 0.1 秒）
+  withTrack(async (req, res, record) => {
+    try {
+      await patchTrack(req, res, record);
+    } catch (error) {
+      log.error('更新伴奏失败', { id: record.id, error });
+      res.status(500).json({ error: error instanceof Error ? error.message : '更新失败' });
     }
-
-    if (body.artist !== undefined) {
-      const artist = String(body.artist ?? '').trim();
-      patch.artist = artist || null;
-    }
-
-    if (body.lyrics !== undefined) {
-      const parsed = parseLyricsInput(body.lyrics);
-      if (!parsed.ok) {
-        res.status(400).json({ error: parsed.error });
-        return;
-      }
-      patch.lyrics = parsed.lyrics;
-    }
-
-    if (body.lyricsOffsetMs !== undefined) {
-      patch.lyricsOffsetMs = clampInt(
-        body.lyricsOffsetMs,
-        LRC_LIMITS.offsetMs.min,
-        LRC_LIMITS.offsetMs.max,
-        record.lyricsOffsetMs,
-      );
-    }
-
-    updateTrack(record.id, patch);
-    res.json(trackToDetail(getTrack(record.id)!));
   }),
 );
+
+/** PATCH /:id 的业务本体（拆出来只是为了上面那层 try/catch 好写） */
+async function patchTrack(req: Request, res: Response, record: TrackRecord): Promise<void> {
+  const body = req.body as {
+    title?: unknown;
+    artist?: unknown;
+    lyrics?: unknown;
+    lyricsOffsetMs?: unknown;
+    pitchSemitones?: unknown;
+  };
+  const patch: {
+    title?: string;
+    artist?: string | null;
+    lyrics?: string | null;
+    lyricsOffsetMs?: number;
+    pitchSemitones?: number;
+    pitchPath?: string | null;
+    pitchError?: string | null;
+  } = {};
+
+  if (body.title !== undefined) {
+    const title = String(body.title).trim();
+    if (!title) {
+      res.status(400).json({ error: '歌名不能为空' });
+      return;
+    }
+    if (title.length > 120) {
+      res.status(400).json({ error: '歌名太长（最多 120 字）' });
+      return;
+    }
+    patch.title = title;
+  }
+
+  if (body.artist !== undefined) {
+    const artist = String(body.artist ?? '').trim();
+    patch.artist = artist || null;
+  }
+
+  if (body.lyrics !== undefined) {
+    const parsed = parseLyricsInput(body.lyrics);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    patch.lyrics = parsed.lyrics;
+  }
+
+  if (body.lyricsOffsetMs !== undefined) {
+    patch.lyricsOffsetMs = clampInt(
+      body.lyricsOffsetMs,
+      LRC_LIMITS.offsetMs.min,
+      LRC_LIMITS.offsetMs.max,
+      record.lyricsOffsetMs,
+    );
+  }
+
+  if (body.pitchSemitones !== undefined) {
+    const semitones = normalizeSemitones(body.pitchSemitones, record.pitchSemitones);
+    // 值没变也要分两种情况：失败的移调要能重试（用户点了「重试」就是原值再发一次），
+    // 已经好了的就当没发生（不重复排任务、不重复生成文件）。
+    const wantsRetry = semitones === record.pitchSemitones && pitchStatusOf(record) === 'failed';
+
+    if (semitones !== record.pitchSemitones || wantsRetry) {
+      if (record.status !== 'ready') {
+        res.status(409).json({ error: '这个伴奏还在处理中，转好之后才能调升降调' });
+        return;
+      }
+      if (semitones !== 0 && !(await detectFfmpegCapabilities()).rubberband) {
+        res.status(400).json({ error: rubberbandMissingMessage() });
+        return;
+      }
+
+      patch.pitchSemitones = semitones;
+      // 换调 = 换一份伴奏：先把旧的移调结果作废（播放立刻回落到原调），
+      // 生成成功后由任务把新路径写回来
+      patch.pitchPath = null;
+      patch.pitchError = null;
+      // 顺手删掉磁盘上的旧文件：同时只留一份移调伴奏，别让 data/proxies 越堆越多
+      forgetTrackPitch(record.id, record.pitchPath);
+
+      if (semitones !== 0) {
+        // 任务里重新读库，这里传的只是「用什么源、移到哪个调」
+        startPitchShift({
+          trackId: record.id,
+          sourcePath: record.originalPath,
+          semitones,
+          kind: record.kind,
+          durationSec: record.duration,
+        });
+        log.info(`伴奏 ${record.id}（${record.title}）升降调 → ${semitones > 0 ? '+' : ''}${semitones} 半音`);
+      }
+    }
+  }
+
+  updateTrack(record.id, patch);
+  res.json(trackToDetail(getTrack(record.id)!));
+}
 
 /** 路由参数里的 id（通配路由下可能是数组，只取第一段） */
 function readId(req: Request): string {
@@ -359,6 +424,8 @@ router.delete(
 
     deleteTrack(record.id);
     forgetTrackLoudness(record.id);
+    // 移调伴奏也是这个伴奏的派生文件，一起清掉（路径在库里，见 server/src/pitch.ts）
+    forgetTrackPitch(record.id, record.pitchPath);
     void fs.promises.rm(record.originalPath, { force: true });
     if (record.playablePath !== record.originalPath) {
       void fs.promises.rm(record.playablePath, { force: true });
@@ -366,6 +433,9 @@ router.delete(
     // 兜底：把可能残留的两种代理文件都清一遍
     void fs.promises.rm(path.join(PROXIES_DIR, `${record.id}.mp4`), { force: true });
     void fs.promises.rm(path.join(PROXIES_DIR, `${record.id}.mp3`), { force: true });
+    // 移调伴奏同理（库里记的路径万一和磁盘对不上，这两行兜底）
+    void fs.promises.rm(path.join(PROXIES_DIR, `${record.id}.pitch.mp4`), { force: true });
+    void fs.promises.rm(path.join(PROXIES_DIR, `${record.id}.pitch.mp3`), { force: true });
 
     log.info(`删除伴奏 ${record.title}`, { id: record.id, keptWorks });
     res.json({ ok: true, keptWorks });

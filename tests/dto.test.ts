@@ -42,6 +42,9 @@ function makeTrack(overrides: Partial<TrackRecord> = {}): TrackRecord {
     lyricsOffsetMs: 0,
     source: 'upload',
     libraryRef: null,
+    pitchSemitones: 0,
+    pitchPath: null,
+    pitchError: null,
     ...overrides,
   };
 }
@@ -58,6 +61,7 @@ function makeWork(overrides: Partial<WorkRecord> = {}): WorkRecord {
     mixParams,
     levels: null,
     mp3Path: null,
+    pitchSemitones: 0,
     status: 'mixing' as WorkStatus,
     error: null,
     createdAt: 2000,
@@ -111,6 +115,28 @@ describe('trackToDto / trackToListItem / trackToDetail', () => {
     const item = trackToListItem(makeTrack({ source: 'library', libraryRef: 'http-index:abc' }), 0);
     assert.equal(item.source, 'library');
     assert.equal('libraryRef' in item, false);
+  });
+
+  it('升降调三个字段透传，且不下发移调文件路径', () => {
+    // 原调
+    const plain = trackToListItem(makeTrack(), 0);
+    assert.equal(plain.pitchSemitones, 0);
+    assert.equal(plain.pitchStatus, 'ready');
+    assert.equal(plain.pitchError, null);
+
+    // 移调已生成
+    const pitched = trackToListItem(
+      makeTrack({ pitchSemitones: -4, pitchPath: '/data/proxies/x.pitch.mp3' }),
+      0,
+    );
+    assert.equal(pitched.pitchSemitones, -4);
+    assert.equal(pitched.pitchStatus, 'ready');
+    assert.equal('pitchPath' in pitched, false, '移调文件路径是内部实现，不下发');
+
+    // 移调失败：原因要透传给界面（用户得知道为什么没生效）
+    const failed = trackToListItem(makeTrack({ pitchSemitones: 3, pitchError: 'rubberband 炸了' }), 0);
+    assert.equal(failed.pitchStatus, 'failed');
+    assert.equal(failed.pitchError, 'rubberband 炸了');
   });
 
   it('非 processing 状态 progress 为 null', () => {

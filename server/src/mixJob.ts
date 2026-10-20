@@ -23,6 +23,7 @@ import {
   type MixLevels,
   reverbActive,
 } from './mix.ts';
+import { mixAccompFileFor } from './pitch.ts';
 import { TMP_DIR, WORKS_DIR } from './paths.ts';
 
 const log = createLogger('mix');
@@ -79,17 +80,26 @@ export interface MixResult {
 /**
  * 伴奏响度测量结果缓存：伴奏文件本身不可变，量一次就够了。
  * 重新生成作品（改音量/混响）时能省掉一次全曲解码。
+ *
+ * 键是「文件路径」而不是伴奏 id：设了升降调之后，同一个伴奏会被换成移调后的
+ * 那份文件，那是**另一段音频**，必须重新量（缓存里连路径一起记着，
+ * 路径变了就自动失效，不需要谁记得去清）。原调时量的就是原始文件，
+ * 与升降调上线之前逐字节一致。
  */
-const loudnessCache = new Map<string, Awaited<ReturnType<typeof measureLoudness>>>();
+const loudnessCache = new Map<
+  string,
+  { path: string; measured: Awaited<ReturnType<typeof measureLoudness>> }
+>();
 const LOUDNESS_CACHE_LIMIT = 200;
 
 async function accompanimentLoudness(track: TrackRecord) {
+  const file = mixAccompFileFor(track);
   const cached = loudnessCache.get(track.id);
-  if (cached) return cached;
+  if (cached && cached.path === file) return cached.measured;
 
-  const measured = await measureLoudness(track.originalPath);
+  const measured = await measureLoudness(file);
   if (loudnessCache.size >= LOUDNESS_CACHE_LIMIT) loudnessCache.clear();
-  loudnessCache.set(track.id, measured);
+  loudnessCache.set(track.id, { path: file, measured });
   return measured;
 }
 
@@ -140,7 +150,9 @@ export async function mixWorkToMp3(input: {
   /** 本次合成产生的中间文件，结束（无论成败）都要清掉 */
   const intermediates: string[] = [];
   let vocalPath = work.vocalPath;
-  const accompanimentPath = track.originalPath;
+  // 设了升降调且移调伴奏已生成 → 混的是移调后的那份；否则原文件/转码代理。
+  // 歌手是照着这份伴奏唱的，成品必须和耳机里听到的同一段音频。
+  const accompanimentPath = mixAccompFileFor(track);
 
   // 混响激活时才生成 IR（旁通 = 干声，滤镜串与输入列表都和旧版一致）
   const irPath = reverbActive(params.reverbSpace, params.reverbWet)

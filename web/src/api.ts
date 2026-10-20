@@ -251,6 +251,8 @@ export const api = {
       lyrics?: string | null;
       /** 歌词全局微调（ms）：正值 = 歌词更晚显示 */
       lyricsOffsetMs?: number;
+      /** 升降调（半音，−12…+12）；0 = 原调 */
+      pitchSemitones?: number;
     },
   ) => request<TrackDetail>(`/api/tracks/${encodeURIComponent(id)}`, jsonInit('PATCH', patch)),
 
@@ -347,8 +349,26 @@ export function networkCertUrl(): string {
   return withToken('/api/network/cert.crt');
 }
 
-export function trackMediaUrl(trackId: string): string {
-  return withToken(`/api/media/track/${encodeURIComponent(trackId)}`);
+/**
+ * 伴奏播放地址。
+ *
+ * @param version 伴奏「换了文件」的版本号。同一个 URL 下浏览器不会重新加载
+ *   `<audio>`，而升降调恰恰是在同一个 URL 后面换文件（移调伴奏生成好之后）——
+ *   所以调用方在移调状态变化时要把这个值涨一下，元素才会重新拉一份。
+ */
+export function trackMediaUrl(trackId: string, version?: number | string): string {
+  const base = `/api/media/track/${encodeURIComponent(trackId)}`;
+  return withToken(version === undefined ? base : `${base}?v=${encodeURIComponent(String(version))}`);
+}
+
+/** 服务端能力（ffmpeg 有没有 rubberband → 升降调能不能用） */
+export function health(): Promise<{
+  ok: boolean;
+  queue: { active: string | null; waiting: number };
+  disk: { freeBytes: number | null };
+  capabilities: { rubberband: boolean };
+}> {
+  return request('/api/health');
 }
 
 /** cacheBust：重新混音后文件名不变，必须靠查询参数绕开浏览器缓存 */

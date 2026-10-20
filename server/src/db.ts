@@ -39,6 +39,12 @@ interface TrackRow {
   lyrics_offset_ms: number;
   source: string;
   library_ref: string | null;
+  /** 升降调（半音）；0 = 原调 */
+  pitch_semitones: number;
+  /** 移调伴奏的路径；null = 没有（原调，或还没生成好，或生成失败） */
+  pitch_path: string | null;
+  /** 移调失败的原因；null = 没失败 */
+  pitch_error: string | null;
 }
 
 interface WorkRow {
@@ -57,6 +63,14 @@ interface WorkRow {
   updated_at: number;
   /** 对齐公式版本：1 = 旧公式（offset = auto + user，人声被 adelay 推后）；2 = 新公式（offset = user − auto，可为负） */
   align_ver: number;
+  /**
+   * 混音时伴奏处在哪个调（半音）的快照；0 = 原调。
+   *
+   * 快照而不是去问伴奏的当前设置：用户随时能改伴奏的升降调，而已经混好的
+   * 成品里混的永远是「混音那一刻」的那一档。实时去问，老作品的徽章就会
+   * 跟着伴奏乱变，说的和成品里放的不是一回事。
+   */
+  pitch_semitones: number;
 }
 
 /** 完整伴奏记录（含磁盘路径，只在服务端内部使用） */
@@ -83,6 +97,19 @@ export interface TrackRecord {
    * 只走服务端内部：前端判「是否已在库」由接口直接回答，不下发这个内部键。
    */
   libraryRef: string | null;
+  /** 升降调（半音，−12…+12）；0 = 原调 */
+  pitchSemitones: number;
+  /**
+   * 移调伴奏的路径；null = 没有。
+   *
+   * 与 pitchSemitones 的组合才是「现在该播哪份文件」：
+   * semitones ≠ 0 且 pitchPath 有值 → 播移调伴奏；否则播 playablePath。
+   * 生成中（任务在跑）pitchPath 也是 null，所以播放不会中断 ——
+   * 只是那几秒听到的仍是原调，演唱页会据此挡住「开始演唱」。
+   */
+  pitchPath: string | null;
+  /** 移调失败的原因；null = 没失败 */
+  pitchError: string | null;
 }
 
 /** 完整作品记录（含磁盘路径） */
@@ -176,6 +203,11 @@ export function initDb(): void {
       ddl: 'ALTER TABLE works ADD COLUMN align_ver INTEGER NOT NULL DEFAULT 1',
     },
   ]);
+  // 升降调快照：这个作品混音时伴奏是哪个调。老作品补列后默认 0 = 原调，
+  // 恰好就是事实（升降调上线前的作品混的都是原调）。
+  ensureColumns(db, 'works', [
+    { name: 'pitch_semitones', ddl: 'ALTER TABLE works ADD COLUMN pitch_semitones INTEGER NOT NULL DEFAULT 0' },
+  ]);
   // 只有真的补过 align_ver（老库）才需要换算，新库插的就是版本 2
   if (addedAlignVer) migrateLegacyAlignment(db);
 
@@ -194,6 +226,14 @@ export function initDb(): void {
       ddl: `ALTER TABLE tracks ADD COLUMN source TEXT NOT NULL DEFAULT 'upload'`,
     },
     { name: 'library_ref', ddl: 'ALTER TABLE tracks ADD COLUMN library_ref TEXT' },
+    // 升降调：半音数 + 移调伴奏路径 + 失败原因。老库补列后 pitch_semitones 默认 0
+    // （= 原调），于是老伴奏的行为与这次改动前逐字节一致。
+    {
+      name: 'pitch_semitones',
+      ddl: 'ALTER TABLE tracks ADD COLUMN pitch_semitones INTEGER NOT NULL DEFAULT 0',
+    },
+    { name: 'pitch_path', ddl: 'ALTER TABLE tracks ADD COLUMN pitch_path TEXT' },
+    { name: 'pitch_error', ddl: 'ALTER TABLE tracks ADD COLUMN pitch_error TEXT' },
   ]);
 
   // 点歌去重的底座：同一个曲库条目只允许入库一次。
@@ -251,13 +291,15 @@ function ensureWorksForeignKey(connection: DatabaseSync): void {
         created_at     INTEGER NOT NULL,
         updated_at     INTEGER NOT NULL,
         levels         TEXT,
-        align_ver      INTEGER NOT NULL DEFAULT 1
+        align_ver      INTEGER NOT NULL DEFAULT 1,
+        pitch_semitones INTEGER NOT NULL DEFAULT 0
       );
       INSERT INTO works_reborn (id, track_id, title, vocal_path, vocal_duration, auto_offset_ms,
                                 mix_params, mp3_path, status, error, created_at, updated_at,
-                                levels, align_ver)
+                                levels, align_ver, pitch_semitones)
         SELECT id, track_id, title, vocal_path, vocal_duration, auto_offset_ms,
-               mix_params, mp3_path, status, error, created_at, updated_at, levels, align_ver
+               mix_params, mp3_path, status, error, created_at, updated_at, levels, align_ver,
+               pitch_semitones
           FROM works;
       DROP TABLE works;
       ALTER TABLE works_reborn RENAME TO works;
@@ -337,7 +379,7 @@ function migrateLegacyAlignment(db: DatabaseSync): void {
  * 服务重启后收敛状态：上次跑到一半的转码 / 混音任务已经不可能继续，
  * 统一标记为 failed，避免前端永远转圈。
  */
-export function recoverInterruptedJobs(): { tracks: number; works: number } {
+export function recoverInterruptedJobs(): { tracks: number; works: number; pitches: number } {
   const c = connection();
   const message = '服务重启导致任务中断，请重试或删除后重新上传';
   const tracks = c
@@ -346,9 +388,26 @@ export function recoverInterruptedJobs(): { tracks: number; works: number } {
   const works = c
     .prepare(`UPDATE works SET status = 'failed', error = ? WHERE status = 'mixing'`)
     .run(message);
+
+  // 移调任务同理：跑到一半的 ffmpeg 不可能续上。只碰「要求了非原调、移调伴奏
+  // 还没落库、而且没有失败原因」的那些 —— 这三条合起来正是「当时正在生成」。
+  //  · pitch_path 有值的说明早就生成好了，不能连坐；
+  //  · pitch_error 有值的是上一次真实失败（ffmpeg 报错那种），原因得留着，
+  //    覆盖成「重启导致的」就把真相改了。
+  // 把 pitch_path 抹掉但不改 pitch_semitones：用户选的调还在，重新设一次
+  // （或删掉重来）就能再生成，而播放会安全地回落到原调。
+  const pitches = c
+    .prepare(
+      `UPDATE tracks
+          SET pitch_path = NULL, pitch_error = '服务重启导致移调中断，请重新设置一次升降调'
+        WHERE pitch_semitones <> 0 AND pitch_path IS NULL AND pitch_error IS NULL`,
+    )
+    .run();
+
   return {
     tracks: Number(tracks.changes),
     works: Number(works.changes),
+    pitches: Number(pitches.changes),
   };
 }
 
@@ -375,6 +434,11 @@ function toTrack(row: TrackRow): TrackRecord {
     // 老库只有 'upload' 一种来源；脏值一律回落到 upload
     source: row.source === 'library' ? 'library' : 'upload',
     libraryRef: row.library_ref,
+    pitchSemitones: Number.isFinite(Number(row.pitch_semitones))
+      ? Number(row.pitch_semitones)
+      : 0,
+    pitchPath: row.pitch_path,
+    pitchError: row.pitch_error,
   };
 }
 
@@ -467,6 +531,8 @@ function toWork(row: WorkRow): WorkRecord {
     error: row.error,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
+    // 老库没有这一列：补列时 DEFAULT 0，读出来就是 0（= 原调，符合事实）
+    pitchSemitones: Number.isFinite(Number(row.pitch_semitones)) ? Number(row.pitch_semitones) : 0,
   };
 }
 
@@ -515,6 +581,8 @@ export interface NewTrack {
   /** 曲库来源 `providerId:itemId`；手动上传留空 */
   libraryRef?: string | null;
   lyrics?: string | null;
+  /** 升降调（半音）；默认 0 = 原调 */
+  pitchSemitones?: number;
 }
 
 export function insertTrack(input: NewTrack): void {
@@ -522,8 +590,8 @@ export function insertTrack(input: NewTrack): void {
     .prepare(
       `INSERT INTO tracks (id, title, artist, kind, original_name, original_path, playable_path,
                            proxy_kind, mime, size, duration, status, error, created_at,
-                           lyrics, lyrics_offset_ms, source, library_ref)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+                           lyrics, lyrics_offset_ms, source, library_ref, pitch_semitones)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
     )
     .run(
       input.id,
@@ -543,6 +611,7 @@ export function insertTrack(input: NewTrack): void {
       input.lyrics ?? null,
       input.source ?? 'upload',
       input.libraryRef ?? null,
+      Math.round(Number(input.pitchSemitones) || 0),
     );
 }
 
@@ -579,6 +648,12 @@ export interface TrackPatch {
   /** null = 清除歌词 */
   lyrics?: string | null;
   lyricsOffsetMs?: number;
+  /** 升降调（半音） */
+  pitchSemitones?: number;
+  /** 移调伴奏路径；null = 作废（换调 / 回原调 / 生成失败） */
+  pitchPath?: string | null;
+  /** 移调失败原因；null = 清掉 */
+  pitchError?: string | null;
 }
 
 export function updateTrack(id: string, patch: TrackPatch): void {
@@ -593,6 +668,11 @@ export function updateTrack(id: string, patch: TrackPatch): void {
   if (patch.error !== undefined) builder.set('error', patch.error);
   if (patch.lyrics !== undefined) builder.set('lyrics', patch.lyrics);
   if (patch.lyricsOffsetMs !== undefined) builder.set('lyrics_offset_ms', patch.lyricsOffsetMs);
+  if (patch.pitchSemitones !== undefined) {
+    builder.set('pitch_semitones', Math.round(Number(patch.pitchSemitones) || 0));
+  }
+  if (patch.pitchPath !== undefined) builder.set('pitch_path', patch.pitchPath);
+  if (patch.pitchError !== undefined) builder.set('pitch_error', patch.pitchError);
 
   builder.run(id);
 }
@@ -619,6 +699,8 @@ export interface NewWork {
   autoOffsetMs: number;
   mixParams: MixParams;
   status: WorkStatus;
+  /** 混音时伴奏处在哪个调（半音）的快照；0 = 原调 */
+  pitchSemitones?: number;
 }
 
 export function insertWork(input: NewWork): void {
@@ -626,8 +708,9 @@ export function insertWork(input: NewWork): void {
   connection()
     .prepare(
       `INSERT INTO works (id, track_id, title, vocal_path, vocal_duration, auto_offset_ms,
-                          mix_params, mp3_path, status, error, created_at, updated_at, align_ver)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, 2)`,
+                          mix_params, mp3_path, status, error, created_at, updated_at, align_ver,
+                          pitch_semitones)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, 2, ?)`,
     )
     .run(
       input.id,
@@ -640,6 +723,7 @@ export function insertWork(input: NewWork): void {
       input.status,
       now,
       now,
+      Math.round(Number(input.pitchSemitones) || 0),
     );
 }
 
@@ -664,6 +748,8 @@ export interface WorkPatch {
   mp3Path?: string | null;
   status?: WorkStatus;
   error?: string | null;
+  /** 混音时伴奏的调（半音）快照；每次混音前刷新 */
+  pitchSemitones?: number;
 }
 
 export function updateWork(id: string, patch: WorkPatch): void {
@@ -677,6 +763,9 @@ export function updateWork(id: string, patch: WorkPatch): void {
   if (patch.mp3Path !== undefined) builder.set('mp3_path', patch.mp3Path);
   if (patch.status !== undefined) builder.set('status', patch.status);
   if (patch.error !== undefined) builder.set('error', patch.error);
+  if (patch.pitchSemitones !== undefined) {
+    builder.set('pitch_semitones', Math.round(Number(patch.pitchSemitones) || 0));
+  }
 
   builder.set('updated_at', Date.now());
   builder.run(id);

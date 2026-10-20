@@ -264,6 +264,48 @@ describe('HTTP API（真实 Express + 临时数据目录）', () => {
     assert.equal(body.lyricsOffsetMs, before.lyricsOffsetMs, '清歌词不该顺带重置微调');
   });
 
+  it('升降调：半音数被钳到 ±12 并取整，非数字不碰原值', async () => {
+    const over = (await (
+      await fetch(`${baseUrl}/api/tracks/${trackId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pitchSemitones: 99 }),
+      })
+    ).json()) as { pitchSemitones: number; pitchStatus: string };
+    assert.equal(over.pitchSemitones, 12);
+    assert.equal(over.pitchStatus, 'processing', '非原调要排移调任务');
+
+    const rounded = (await (
+      await fetch(`${baseUrl}/api/tracks/${trackId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pitchSemitones: -12.4 }),
+      })
+    ).json()) as { pitchSemitones: number };
+    assert.equal(rounded.pitchSemitones, -12);
+
+    // 解析不出数字 → 回落当前值，绝不静默变成 0（= 偷偷回原调）
+    const dirty = (await (
+      await fetch(`${baseUrl}/api/tracks/${trackId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pitchSemitones: 'abc' }),
+      })
+    ).json()) as { pitchSemitones: number };
+    assert.equal(dirty.pitchSemitones, -12);
+
+    // 回原调：不排任务，直接 ready
+    const back = (await (
+      await fetch(`${baseUrl}/api/tracks/${trackId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pitchSemitones: 0 }),
+      })
+    ).json()) as { pitchSemitones: number; pitchStatus: string };
+    assert.equal(back.pitchSemitones, 0);
+    assert.equal(back.pitchStatus, 'ready');
+  });
+
   it('歌词：上传 .lrc 文件，非法内容 / 错误扩展名 / 不存在的伴奏都被拒', async () => {
     const upload = async (content: string, fileName: string, id = trackId) => {
       const form = new FormData();

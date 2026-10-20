@@ -128,6 +128,31 @@ export function dbToLinear(db: number): number {
   return Math.pow(10, db / 20);
 }
 
+/* -------------------------------- 升降调 -------------------------------- */
+
+/**
+ * 半音数 → 频率比。±12 半音 = 一个八度（2.0），0 = 原调（1.0）。
+ *
+ * 这就是 ffmpeg `rubberband=pitch=` 要的那个比值，也是任何「半音 → 音高」
+ * 换算的唯一来源。移调的是**伴奏**：服务端据此生成一份移调伴奏，
+ * 演唱 / 试听 / 混音三处用的都是同一份文件（见 server/src/pitch.ts）。
+ */
+export function semitonesToRatio(semitones: number): number {
+  const value = Number.isFinite(semitones) ? Math.round(semitones) : 0;
+  return Math.pow(2, value / 12);
+}
+
+/** 这次升降调是否真的改变了音高（0 = 原调，什么都不用生成） */
+export function pitchActive(semitones: number): boolean {
+  return Math.round(Number(semitones) || 0) !== 0;
+}
+
+/** 给人看的一行升降调摘要，如「+3 半音」/「原调」（作品库徽章 / 日志） */
+export function describePitch(semitones: number): string {
+  const value = Number.isFinite(semitones) ? Math.round(semitones) : 0;
+  return value === 0 ? '原调' : `${value > 0 ? '+' : ''}${value} 半音`;
+}
+
 /**
  * 单条轨最终乘上的线性增益：实测归一化增益（dB）× 用户滑块，夹在 0–4。
  *

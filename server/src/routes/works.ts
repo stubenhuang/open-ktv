@@ -27,12 +27,13 @@ import {
 import { mixKey, workToDto, workToListItem } from '../dto.ts';
 import { ensureFreeSpace } from '../disk.ts';
 import { clampNumber } from '../../../shared/numbers.ts';
-import { anchorSpace, describeReverb } from '../../../shared/mix.ts';
+import { anchorSpace, describePitch, describeReverb } from '../../../shared/mix.ts';
 import { isQueued, enqueue } from '../jobs.ts';
 import { createLogger } from '../logger.ts';
 import { sendMedia } from '../media.ts';
 import { mixWorkToMp3, workMp3Path } from '../mixJob.ts';
 import { decodeOriginalName, safeExtension } from '../naming.ts';
+import { effectivePitchSemitones } from '../pitch.ts';
 import { VOCALS_DIR } from '../paths.ts';
 import { probeFile } from '../probe.ts';
 import { uploadEndpoint } from '../upload.ts';
@@ -141,6 +142,15 @@ function startMix(workId: string): void {
       const track = getTrack(work.trackId);
       if (!track) throw new Error('对应的伴奏已被删除');
 
+      // 快照「这一版混的是哪个调」。必须在 mixWorkToMp3 之前：移调还在生成中
+      // （pitchPath 为空）时混进去的其实是原调，effectivePitchSemitones 会据实
+      // 给 0。所有重新合成的入口都走这里，所以徽章永远和成品对得上。
+      const pitchSemitones = effectivePitchSemitones(track);
+      if (work.pitchSemitones !== pitchSemitones) {
+        updateWork(workId, { pitchSemitones });
+        work.pitchSemitones = pitchSemitones;
+      }
+
       const result = await mixWorkToMp3({ work, track, onProgress: report });
       updateWork(workId, {
         status: 'ready',
@@ -152,7 +162,8 @@ function startMix(workId: string): void {
       log.info(
         `${work.title}｜对齐偏移 ${result.offsetMs}ms｜人声 ${result.vocalGainDb.toFixed(1)}dB ` +
           `×${work.mixParams.vocalGain}｜伴奏 ${result.accompGainDb.toFixed(1)}dB ×${work.mixParams.accompGain}｜` +
-          `混响 ${describeReverb(work.mixParams.reverbSpace, work.mixParams.reverbWet)}`,
+          `混响 ${describeReverb(work.mixParams.reverbSpace, work.mixParams.reverbWet)}` +
+          `｜${describePitch(work.pitchSemitones)}`,
         { id: workId, trackId: work.trackId },
       );
     },
@@ -225,6 +236,8 @@ router.post(
         autoOffsetMs,
         mixParams,
         status: 'mixing',
+        // 这份干声是照哪个调唱的，作品自己记一份（startMix 会按混音时的实情再校正一次）
+        pitchSemitones: effectivePitchSemitones(track),
       });
 
       startMix(id);

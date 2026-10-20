@@ -622,6 +622,67 @@ async function main() {
   }
   pass(`音量条有反应（峰值宽度 ${levelMoving.toFixed(1)}%）`);
 
+  /* ------------------------------ 2.1 升降调 ------------------------------ */
+  step('升降调：拖到 +2 半音，等移调伴奏生成好');
+  // 控件在右侧「🎚 升降调」卡片里；生成期间「开始演唱」会被禁用，
+  // 生成好了才恢复 —— 这正是不让用户照着原调白唱一遍的关键。
+  await waitFor(page, `document.querySelector('input[data-mix-param="pitchSemitones"]') !== null`, {
+    timeoutMs: 10_000,
+    label: '升降调滑块出现',
+  });
+  const pitched = await evaluate(
+    page,
+    `(async () => {
+      const slider = document.querySelector('input[data-mix-param="pitchSemitones"]');
+      if (!slider) return { error: '没有升降调滑块' };
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype, 'value',
+      ).set;
+      setter.call(slider, '2');
+      slider.dispatchEvent(new Event('input', { bubbles: true }));
+      // 停手 0.4s 后才写库，这里等它落库
+      await new Promise((r) => setTimeout(r, 1200));
+      return { value: slider.value };
+    })()`,
+    '拖动升降调滑块',
+  );
+  if (pitched.error) throw new Error(pitched.error);
+  if (pitched.value !== '2') throw new Error(`滑块应停在 2，实际 ${pitched.value}`);
+
+  // 等移调任务跑完（真实 ffmpeg + rubberband）：状态从 processing 变 ready
+  let pitchReady = false;
+  for (let i = 0; i < 60; i += 1) {
+    const track = await (await fetch(`${BASE_URL}/api/tracks/${trackId}`)).json();
+    if (track.pitchStatus === 'ready') {
+      pitchReady = true;
+      if (track.pitchSemitones !== 2) {
+        throw new Error(`库里应是 +2 半音，实际 ${track.pitchSemitones}`);
+      }
+      break;
+    }
+    if (track.pitchStatus === 'failed') {
+      throw new Error(`移调失败：${track.pitchError ?? '未知原因'}`);
+    }
+    await sleep(500);
+  }
+  if (!pitchReady) throw new Error('移调伴奏 30 秒还没生成好');
+  pass('移调伴奏已生成（+2 半音）');
+
+  // 生成期间「开始演唱」是被禁用的，生成好必须恢复 —— 这正是「别让用户照着
+  // 原调白唱一遍」的那道闸门，光看 pitchStatus 不算数，得看按钮真解禁了
+  const buttonEnabled = await evaluate(
+    page,
+    `(() => {
+       const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === '开始演唱');
+       return btn ? !btn.disabled : null;
+     })()`,
+    '读「开始演唱」禁用态',
+  );
+  if (buttonEnabled !== true) {
+    throw new Error(`移调生成好了「开始演唱」应恢复可用，实际 disabled=${buttonEnabled}`);
+  }
+  pass('「开始演唱」已恢复可用');
+
   step('点「开始演唱」，录 3 秒');
   const started = await evaluate(page, clickByText('开始演唱'), '点开始演唱');
   if (!started) throw new Error('找不到「开始演唱」按钮');

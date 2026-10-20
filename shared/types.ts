@@ -204,6 +204,19 @@ export interface MixParams {
   noiseReduction: boolean;
 }
 
+/**
+ * 升降调（移调）的状态。
+ *
+ *  · ready      当前调的伴奏可用（原调，或移调伴奏已经生成好）
+ *  · processing 正在生成移调伴奏（这期间播放/演唱听到的还是原调）
+ *  · failed     移调失败（原因见 TrackSummary.pitchError）
+ *
+ * 之所以单独一个状态而不是复用 tracks.status：移调是「在可用伴奏之上再派生
+ * 一份文件」，原伴奏始终能播 —— 混在一起会让演唱页把「正在移调」说成
+ * 「这个伴奏坏了」，而真相只是新调还没出来。
+ */
+export type PitchStatus = 'ready' | 'processing' | 'failed';
+
 /** 伴奏的公共字段（不含歌词正文）—— 列表、详情、单条都从这里派生 */
 export interface TrackSummary {
   id: string;
@@ -227,6 +240,18 @@ export interface TrackSummary {
    */
   hasLyrics: boolean;
   source: TrackSource;
+  /**
+   * 升降调（半音，−12…+12）；0 = 原调。
+   *
+   * 移的是**伴奏**：设成非 0 时服务端会生成一份移调伴奏，演唱时耳机里听到的、
+   * 实时试听里放的、成品 MP3 里混的，全是那一份 —— 歌手照着新调唱，人声不用动。
+   * 人声（干声）永远不做移调：它是「你真实的声音」，移了反而不自然。
+   */
+  pitchSemitones: number;
+  /** 移调伴奏的状态（见 PitchStatus） */
+  pitchStatus: PitchStatus;
+  /** 移调失败的原因；null = 没失败 */
+  pitchError: string | null;
 }
 
 /** 单个伴奏详情：在列表字段之上带歌词正文（演唱页跟唱要它） */
@@ -277,6 +302,15 @@ export interface Work {
   mixParams: MixParams;
   /** 最近一次成功混音的实测增益；实时预览对齐成品电平用，老作品为 null */
   levels: WorkLevels | null;
+  /**
+   * 混音时伴奏处在哪个调（半音，−12…+12）的快照；0 = 原调。
+   *
+   * 快照而不是去问伴奏的当前设置：用户随时可以改伴奏的升降调，而已经混好的
+   * 成品里混的永远是「混音那一刻」的那一档。实时去问，老作品的徽章就会跟着
+   * 伴奏乱变，说的和成品里放的不是一回事。每次（重新）合成前刷新一次，
+   * 见 server/src/routes/works.ts 的 startMix。
+   */
+  pitchSemitones: number;
   status: WorkStatus;
   error: string | null;
   createdAt: number;
@@ -292,6 +326,13 @@ export interface WorkListItem extends Work {
    */
   trackArtist: string | null;
   /**
+   * 混音时伴奏处在哪个调（半音，−12…+12）；0 = 原调或伴奏已删除。
+   * 作品库卡片据此显示「+3 半音」—— 移调过的作品听起来调不一样，
+   * 列表里必须能看出来。取自作品自己的快照（Work.pitchSemitones），
+   * 不是伴奏的当前设置：后者会随后者改动而变，徽章就不能信了。
+   */
+  trackPitchSemitones: number;
+  /**
    * 成品 MP3 的文件大小（字节）；null = 还没合成成功或文件已丢失。
    * 列表接口顺带 fs.stat 出来（本地文件，失败只影响这一个字段）。
    */
@@ -302,6 +343,16 @@ export interface WorkListItem extends Work {
    */
   hasPrevVocal: boolean;
 }
+
+/**
+ * 升降调的限制：半音数 ±12（一个八度），步进 1。
+ *
+ * 服务端校验与前端控件都从这里取。±12 已是实用极限：再大的移调量，
+ * 相位声码器的音质损失和「听起来像另一首歌」的程度都会超过收益。
+ */
+export const PITCH_LIMITS = {
+  semitones: { min: -12, max: 12, step: 1 },
+} as const;
 
 export const MIX_LIMITS = {
   gain: { min: 0, max: 2, step: 0.05 },

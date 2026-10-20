@@ -133,7 +133,8 @@ describe('works 外键迁移（删伴奏与作品解耦）', () => {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       levels TEXT,
-      align_ver INTEGER NOT NULL DEFAULT 1
+      align_ver INTEGER NOT NULL DEFAULT 1,
+      pitch_semitones INTEGER NOT NULL DEFAULT 0
     )`);
 
     // 老外键下删伴奏应该被拦住（SQLite 约束错误）—— 这正是迁移要解决的问题
@@ -173,13 +174,41 @@ describe('works 外键迁移（删伴奏与作品解耦）', () => {
 });
 
 describe('tracks 歌词与曲库来源', () => {
-  it('新伴奏默认：无歌词、微调 0、来源 upload', () => {
+  it('新伴奏默认：无歌词、微调 0、来源 upload、原调', () => {
     db.insertTrack(newTrack('lyr-default'));
     const record = db.getTrack('lyr-default')!;
     assert.equal(record.lyrics, null);
     assert.equal(record.lyricsOffsetMs, 0);
     assert.equal(record.source, 'upload');
     assert.equal(record.libraryRef, null);
+    // 升降调默认原调、没有移调文件、没有错误
+    assert.equal(record.pitchSemitones, 0);
+    assert.equal(record.pitchPath, null);
+    assert.equal(record.pitchError, null);
+  });
+
+  it('升降调三个字段各自可写，互不牵连', () => {
+    db.insertTrack(newTrack('pitch1'));
+
+    db.updateTrack('pitch1', { pitchSemitones: -3, pitchPath: '/tmp/pitch1.mp3' });
+    let record = db.getTrack('pitch1')!;
+    assert.equal(record.pitchSemitones, -3);
+    assert.equal(record.pitchPath, '/tmp/pitch1.mp3');
+    assert.equal(record.pitchError, null);
+
+    // 失败：只清路径与原因，不动用户选的调（播放回落到原调，调还在）
+    db.updateTrack('pitch1', { pitchPath: null, pitchError: 'rubberband 炸了' });
+    record = db.getTrack('pitch1')!;
+    assert.equal(record.pitchSemitones, -3);
+    assert.equal(record.pitchPath, null);
+    assert.equal(record.pitchError, 'rubberband 炸了');
+
+    // 回原调：三个一起归位
+    db.updateTrack('pitch1', { pitchSemitones: 0, pitchPath: null, pitchError: null });
+    record = db.getTrack('pitch1')!;
+    assert.equal(record.pitchSemitones, 0);
+    assert.equal(record.pitchPath, null);
+    assert.equal(record.pitchError, null);
   });
 
   it('歌词与微调往返，可显式清除', () => {
@@ -416,7 +445,145 @@ describe('recoverInterruptedJobs', () => {
     assert.equal(db.getTrack('rec-failed')!.status, 'failed');
 
     // 再跑一次没有可恢复的，计数归零
-    assert.deepEqual(db.recoverInterruptedJobs(), { tracks: 0, works: 0 });
+    assert.deepEqual(db.recoverInterruptedJobs(), { tracks: 0, works: 0, pitches: 0 });
+  });
+
+  it('中断的移调被作废：清路径、留调、补原因', () => {
+    db.insertTrack(newTrack('rec-pitch', { pitchSemitones: 4 }));
+    db.updateTrack('rec-pitch', { pitchPath: '/tmp/already.mp3' });
+    db.insertTrack(newTrack('rec-pitch-lost', { pitchSemitones: -2 }));
+
+    const recovered = db.recoverInterruptedJobs();
+
+    // 已经生成好移调伴奏的不连坐
+    assert.equal(db.getTrack('rec-pitch')!.pitchPath, '/tmp/already.mp3');
+    assert.equal(db.getTrack('rec-pitch')!.pitchError, null);
+    assert.equal(recovered.pitches, 1, `实际 ${recovered.pitches}`);
+
+    // 没落库的那个：路径作废（播放回落到原调）、用户选的调留着、原因补上
+    const lost = db.getTrack('rec-pitch-lost')!;
+    assert.equal(lost.pitchSemitones, -2, '用户选的调不能丢');
+    assert.equal(lost.pitchPath, null);
+    assert.match(lost.pitchError!, /重启/);
+  });
+
+  it('重启恢复不覆盖上一次真实的移调失败原因', () => {
+    db.insertTrack(newTrack('rec-pitch-real-err', { pitchSemitones: 6 }));
+    // 上一次是 ffmpeg 真的报错失败的（不是重启），原因得留着
+    db.updateTrack('rec-pitch-real-err', { pitchPath: null, pitchError: '移调 失败（退出码 254）：源文件损坏' });
+
+    const recovered = db.recoverInterruptedJobs();
+
+    const record = db.getTrack('rec-pitch-real-err')!;
+    assert.equal(record.pitchError, '移调 失败（退出码 254）：源文件损坏', '真实原因不能被"重启"顶掉');
+    // 它本来就已经是失败态了，没有什么可"作废"的，不该计入
+    assert.equal(recovered.pitches, 0, `实际 ${recovered.pitches}`);
+  });
+});
+
+describe('works 升降调快照', () => {
+  it('插入时记下混音时的调，可更新，默认 0 = 原调', () => {
+    db.insertWork(newWork('wp1', 'wt', { pitchSemitones: 5 }));
+    const record = db.getWork('wp1')!;
+    assert.equal(record.pitchSemitones, 5, '插入时要能带上调');
+
+    // 重新合成后刷新成新的调（用户改过伴奏的升降调）
+    db.updateWork('wp1', { pitchSemitones: -3 });
+    assert.equal(db.getWork('wp1')!.pitchSemitones, -3);
+
+    // 没传就是 0（老作品 / 原调）
+    db.insertWork(newWork('wp2', 'wt'));
+    assert.equal(db.getWork('wp2')!.pitchSemitones, 0);
+  });
+});
+
+/**
+ * 升降调老库迁移（放在最后：这个用例会重建 tracks 表，
+ * 前面的用例都跑完了，不会影响任何人）。
+ */
+describe('tracks 升降调老库补列', () => {
+  it('没有 pitch 三列的老表补列后：默认原调，其它字段不丢', () => {
+    exec('DROP TABLE IF EXISTS tracks_old_pitch');
+    exec('ALTER TABLE tracks RENAME TO tracks_old_pitch');
+    exec(`CREATE TABLE tracks (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      artist TEXT,
+      kind TEXT NOT NULL,
+      original_name TEXT NOT NULL,
+      original_path TEXT NOT NULL,
+      playable_path TEXT NOT NULL,
+      proxy_kind TEXT NOT NULL,
+      mime TEXT,
+      size INTEGER NOT NULL,
+      duration REAL,
+      status TEXT NOT NULL,
+      error TEXT,
+      created_at INTEGER NOT NULL,
+      lyrics TEXT,
+      lyrics_offset_ms INTEGER NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'upload',
+      library_ref TEXT
+    )`);
+    exec(`INSERT INTO tracks (id, title, kind, original_name, original_path, playable_path,
+                              proxy_kind, size, status, created_at, lyrics_offset_ms)
+          VALUES ('old-pitch', '老歌', 'audio', 'a.mp3', '/tmp/a.mp3', '/tmp/a.mp3', 'none', 1, 'ready', 1, -450)`);
+
+    // 重新初始化：应补上 pitch_semitones / pitch_path / pitch_error
+    db.initDb();
+
+    const record = db.getTrack('old-pitch')!;
+    assert.equal(record.title, '老歌', '补列不能丢数据');
+    assert.equal(record.lyricsOffsetMs, -450, '补列不能动别的字段');
+    assert.equal(record.pitchSemitones, 0, '老行默认原调');
+    assert.equal(record.pitchPath, null);
+    assert.equal(record.pitchError, null);
+
+    // 补过列的表照常可写
+    db.updateTrack('old-pitch', { pitchSemitones: 5, pitchPath: '/tmp/p.mp3' });
+    assert.equal(db.getTrack('old-pitch')!.pitchSemitones, 5);
+  });
+});
+
+/**
+ * works 表补 pitch_semitones 列（放在最后：这个用例会重建 works 表，
+ * 前面的用例都跑完了，不会影响任何人）。
+ */
+describe('works 升降调老库补列', () => {
+  it('没有 pitch_semitones 的老 works 表补列后：默认原调，作品不丢', () => {
+    exec('DROP TABLE IF EXISTS works_old_p');
+    exec('ALTER TABLE works RENAME TO works_old_p');
+    exec(`CREATE TABLE works (
+      id TEXT PRIMARY KEY,
+      track_id TEXT,
+      title TEXT NOT NULL,
+      vocal_path TEXT NOT NULL,
+      vocal_duration REAL NOT NULL,
+      auto_offset_ms INTEGER NOT NULL,
+      mix_params TEXT NOT NULL,
+      mp3_path TEXT,
+      status TEXT NOT NULL,
+      error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      levels TEXT,
+      align_ver INTEGER NOT NULL DEFAULT 2
+    )`);
+    exec(`INSERT INTO works (id, title, vocal_path, vocal_duration, auto_offset_ms, mix_params,
+                             status, created_at, updated_at)
+          VALUES ('old-wp', '老作品', '/tmp/w.wav', 60, 150, '{}', 'ready', 1, 1)`);
+
+    db.initDb();
+
+    const record = db.getWork('old-wp')!;
+    assert.equal(record.title, '老作品', '补列不能丢作品');
+    // 升降调上线前的作品混的都是原调，默认 0 恰好就是事实
+    assert.equal(record.pitchSemitones, 0, '老作品默认原调');
+
+    // 补过列的表照常可写
+    db.insertTrack(newTrack('wp-owner'));
+    db.insertWork(newWork('wp-new', 'wp-owner', { pitchSemitones: 7 }));
+    assert.equal(db.getWork('wp-new')!.pitchSemitones, 7);
   });
 });
 

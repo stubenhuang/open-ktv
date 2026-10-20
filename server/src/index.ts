@@ -3,6 +3,7 @@ import { createApp } from './app.ts';
 import { closeDb, initDb, recoverInterruptedJobs } from './db.ts';
 import { killRunningChildren } from './process.ts';
 import { whenQueueIdle } from './jobs.ts';
+import { detectFfmpegCapabilities } from './ffmpegCapabilities.ts';
 import { createLogger } from './logger.ts';
 import { cleanTmpDir } from './paths.ts';
 import { startLanHttpsMirror, stopLanHttpsMirror, isLoopbackHost } from './lanHttps.ts';
@@ -15,6 +16,13 @@ const recovered = recoverInterruptedJobs();
 if (recovered.tracks > 0 || recovered.works > 0) {
   log.info(`已把中断的任务标记为失败：伴奏 ${recovered.tracks} 个、作品 ${recovered.works} 个`);
 }
+if (recovered.pitches > 0) {
+  log.info(`已作废中断的移调伴奏 ${recovered.pitches} 个（播放回落到原调，重新设置升降调即可再生成）`);
+}
+
+// 升降调要用的 rubberband 是 ffmpeg 的编译期开关：先探一次，缺了就一路降级
+// （接口禁掉控件、说明原因），别等用户选了调才炸
+await detectFfmpegCapabilities();
 
 const app = createApp();
 

@@ -16,6 +16,7 @@ import { LevelMeter } from '../components/LevelMeter';
 import { LyricsView } from '../components/LyricsView';
 import { KtvEngine, isMicSupported } from '../audio/engine';
 import { useMicDevices } from '../hooks/useMicDevices';
+import { usePolling } from '../hooks/usePolling';
 import { errorMessage, formatDuration, formatTimer } from '../utils';
 
 /**
@@ -61,6 +62,13 @@ export default function RetakePage() {
   const [micReady, setMicReady] = useState(false);
   /** 「试听这一段」是否在播 */
   const [previewing, setPreviewing] = useState(false);
+  /**
+   * 伴奏地址的版本号：升降调会在**同一个 URL** 背后换文件（移调伴奏生成好之后），
+   * 浏览器不会自己重新加载 `<audio>` —— 移调状态每变一次就涨一位。
+   * （放在所有提前 return 之前：hooks 的顺序不能变）
+   */
+  const [mediaVersion, setMediaVersion] = useState(0);
+  const bumpMediaVersion = useCallback(() => setMediaVersion((value) => value + 1), []);
 
   const mic = useMicDevices();
   const requestedMic = useRef(false);
@@ -76,7 +84,7 @@ export default function RetakePage() {
 
   /* ------------------------------- 加载作品 ------------------------------- */
 
-  useEffect(() => {
+  const loadWork = useCallback(() => {
     let cancelled = false;
     setWork(null);
     setTrack(null);
@@ -100,6 +108,22 @@ export default function RetakePage() {
       cancelled = true;
     };
   }, [workId]);
+
+  useEffect(() => loadWork(), [loadWork]);
+
+  /*
+   * 伴奏正在移调时轮询：重录听到的伴奏必须和当初录这条干声时是同一份
+   * （否则新片段和旧片段的调对不上），所以移调没生成好就不给开录。
+   */
+  usePolling(() => loadWork(), 1200, track?.pitchStatus === 'processing');
+
+  // 移调状态变化 → 媒体地址涨版本号（同一个 URL 背后换了文件，浏览器不会自己重载）
+  const lastPitchStatusRef = useRef(track?.pitchStatus);
+  useEffect(() => {
+    if (!track || lastPitchStatusRef.current === track.pitchStatus) return;
+    lastPitchStatusRef.current = track.pitchStatus;
+    bumpMediaVersion();
+  }, [track, bumpMediaVersion]);
 
   /* ------------------------------ 默认选区段 ------------------------------ */
 
@@ -247,6 +271,10 @@ export default function RetakePage() {
     phase === 'pick' &&
     Boolean(work?.trackId) &&
     track?.status === 'ready' &&
+    // 伴奏正在移调：这时播放/听到的还是原调，重录出来和旧片段的调对不上。
+    // failed 不挡 —— 那意味着这一版混的已经是原调（pitch.ts 的 mixAccompFileFor
+    // 在移调文件不在位时回落母带），旧片段也是照原调录的，正好对得上。
+    track?.pitchStatus !== 'processing' &&
     Boolean(track?.duration) &&
     work?.status !== 'mixing' &&
     !beyondTrack;
@@ -496,19 +524,29 @@ export default function RetakePage() {
   }
 
   const fullscreen = phase !== 'pick';
-  const mediaUrl = trackMediaUrl(track.id);
+  /**
+   * 伴奏地址的版本号：升降调会在同一个 URL 背后换文件（移调伴奏生成好之后），
+   * 浏览器不会自己重新加载 —— 移调状态每变一次就涨一位（见上面的 effect）。
+   */
+  const mediaUrl = trackMediaUrl(track.id, mediaVersion);
 
-  const startHint = engine
-    ? mic.permission !== 'granted'
-      ? '等待麦克风授权…'
-      : mic.devices.length === 0
-        ? '没有可用的外置麦克风，插上麦克风后这里会自动出现。'
-        : micReady
-          ? seekPlan
-            ? `准备好了：戴好耳机点「开始重录」。伴奏会从 ${formatDuration(seekPlan.seekPos)} 响起（片段开始前 ${RETAKE_LIMITS.leadInSec} 秒），唱到片段结束自动停。`
-            : '正在准备音频…'
-          : '正在接入麦克风…'
-    : '正在准备音频…';
+  const startHint =
+    track.pitchStatus === 'processing'
+      ? '伴奏正在按新调生成，生成好才能重录…'
+      : track.pitchStatus === 'failed'
+        ? // 不挡重录（这版混的已经是原调），但要说清楚：重录片段会和旧片段同在原调上
+          `移调没成功（${track.pitchError ?? '原因未知'}），将按原调重录。想用新调就重试，或拖回「原调」。`
+        : engine
+          ? mic.permission !== 'granted'
+            ? '等待麦克风授权…'
+            : mic.devices.length === 0
+              ? '没有可用的外置麦克风，插上麦克风后这里会自动出现。'
+              : micReady
+                ? seekPlan
+                  ? `准备好了：戴好耳机点「开始重录」。伴奏会从 ${formatDuration(seekPlan.seekPos)} 响起（片段开始前 ${RETAKE_LIMITS.leadInSec} 秒），唱到片段结束自动停。`
+                  : '正在准备音频…'
+                : '正在接入麦克风…'
+          : '正在准备音频…';
 
   return (
     <div>

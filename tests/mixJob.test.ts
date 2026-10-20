@@ -17,6 +17,7 @@ let db: typeof import('../server/src/db.ts');
 let mixJob: typeof import('../server/src/mixJob.ts');
 let helpers: typeof import('./helpers.ts');
 let paths: typeof import('../server/src/paths.ts');
+let pitch: typeof import('../server/src/pitch.ts');
 let trackId = '';
 let workId = '';
 
@@ -34,6 +35,7 @@ before(async () => {
   db = await import('../server/src/db.ts');
   mixJob = await import('../server/src/mixJob.ts');
   paths = await import('../server/src/paths.ts');
+  pitch = await import('../server/src/pitch.ts');
   db.initDb();
 
   trackId = 'track-1';
@@ -68,6 +70,30 @@ before(async () => {
 after(async () => {
   if (dataDir) await removeIsolatedDataDir(dataDir);
 });
+
+/**
+ * 一段样本在某个频率上的能量（单频 Goertzel 式的相关幅值）。
+ * 用来验证「混音里到底混进了哪一档音高」：正弦伴奏移调后频率会变，
+ * 数零交叉在双音叠加下不可靠，直接问某个频率更准。
+ */
+function toneEnergy(
+  samples: Float32Array,
+  sampleRate: number,
+  fromSec: number,
+  toSec: number,
+  frequency: number,
+): number {
+  const from = Math.max(0, Math.round(fromSec * sampleRate));
+  const to = Math.min(samples.length, Math.round(toSec * sampleRate));
+  const omega = (2 * Math.PI * frequency) / sampleRate;
+  let re = 0;
+  let im = 0;
+  for (let i = from; i < to; i += 1) {
+    re += samples[i]! * Math.cos(omega * i);
+    im += samples[i]! * Math.sin(omega * i);
+  }
+  return Math.hypot(re, im) / Math.max(1, to - from);
+}
 
 describe('mixWorkToMp3', () => {
   it('真实跑一遍 ffmpeg，产出可播放的 MP3', async () => {
@@ -217,6 +243,42 @@ describe('mixWorkToMp3', () => {
       [],
       `混响 IR 中间文件应被清理，实际：${entries.join(', ')}`,
     );
+  });
+
+  /* ------------------------------ 升降调 ------------------------------ */
+
+  it('设了升降调：混的是移调后的那份伴奏（人声不动）', async () => {
+    // 用真实 rubberband 把 440Hz 的伴奏移成 220Hz（−12 半音），
+    // 再把它「登记」成这个伴奏的移调文件
+    const pitched = path.join(workDir, 'accomp-down12.wav');
+    await helpers.ffmpegOk(
+      pitch.buildPitchShiftArgs({
+        sourcePath: path.join(workDir, 'accomp.mp3'),
+        outputPath: pitched,
+        semitones: -12,
+        kind: 'audio',
+      }),
+    );
+    db.updateTrack(trackId, { pitchSemitones: -12, pitchPath: pitched });
+
+    const track = db.getTrack(trackId)!;
+    assert.equal(pitch.mixAccompFileFor(track), pitched, '混音要解析到移调文件');
+
+    const work = db.getWork(workId)!;
+    const result = await mixJob.mixWorkToMp3({ work, track, onProgress: () => {} });
+
+    const decoded = await helpers.decodeToFloat32(result.outputPath);
+    const energy = (hz: number) => toneEnergy(decoded.samples, decoded.sampleRate, 0.2, 1.8, hz);
+    // 伴奏被移到了 220Hz；人声（干声）仍是 880Hz，一点没动
+    assert.ok(
+      energy(220) > energy(440) * 20,
+      `成品里应主要是 220Hz 的伴奏（220=${energy(220).toExponential(2)} / 440=${energy(440).toExponential(2)}）`,
+    );
+    assert.ok(energy(880) > 1e-4, '干声（880Hz）必须原样混进去');
+
+    // 收尾：回原调，别影响后面的用例
+    db.updateTrack(trackId, { pitchSemitones: 0, pitchPath: null, pitchError: null });
+    mixJob.forgetTrackLoudness(trackId);
   });
 
   it('writeReverbIr：产出的是立体声浮点 WAV，L2 复刻浏览器卷积器增益', async () => {

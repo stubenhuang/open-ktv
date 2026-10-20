@@ -4,8 +4,10 @@ import { LRC_LIMITS, MAX_RECORD_MS, MIN_RECORD_MS } from '../../../shared/types'
 import { api, trackMediaUrl, type TrackDetail } from '../api';
 import { LevelMeter } from '../components/LevelMeter';
 import { LyricsView } from '../components/LyricsView';
+import { PitchControl } from '../components/PitchControl';
 import { KtvEngine, isMicSupported } from '../audio/engine';
 import { useMicDevices } from '../hooks/useMicDevices';
+import { usePolling } from '../hooks/usePolling';
 import { errorMessage, formatDuration, formatTimer } from '../utils';
 
 type Phase = 'idle' | 'saving';
@@ -37,6 +39,13 @@ export default function SingPage() {
   const [micMonitoring, setMicMonitoring] = useState(true);
   /** 顶部耳机警告的「为什么？」是否展开（常驻会占掉小半屏，但说明不能删） */
   const [showWhy, setShowWhy] = useState(false);
+  /**
+   * 伴奏地址的版本号：升降调会在**同一个 URL** 背后换文件（移调伴奏生成好之后），
+   * 浏览器不会自己重新加载 `<audio>` —— 移调状态每变一次就涨一位。
+   * （必须放在所有提前 return 之前：hooks 的顺序不能变）
+   */
+  const [mediaVersion, setMediaVersion] = useState(0);
+  const bumpMediaVersion = useCallback(() => setMediaVersion((value) => value + 1), []);
 
   const mic = useMicDevices();
   const requestedMic = useRef(false);
@@ -50,24 +59,35 @@ export default function SingPage() {
 
   /* ------------------------------- 加载伴奏 ------------------------------- */
 
+  const loadTrack = useCallback(
+    (id: string) => {
+      let cancelled = false;
+      setLoadError(null);
+      api
+        .getTrack(id)
+        .then((result) => {
+          if (!cancelled) setTrack(result);
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) setLoadError(errorMessage(err, '加载伴奏失败'));
+        });
+      return () => {
+        cancelled = true;
+      };
+    },
+    [],
+  );
+
   useEffect(() => {
-    let cancelled = false;
     setTrack(null);
-    setLoadError(null);
+    return loadTrack(trackId);
+  }, [trackId, loadTrack]);
 
-    api
-      .getTrack(trackId)
-      .then((result) => {
-        if (!cancelled) setTrack(result);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setLoadError(errorMessage(err, '加载伴奏失败'));
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [trackId]);
+  /*
+   * 移调生成中要轮询：生成好之后 pitchStatus 会变成 ready，页面得知道
+   * （媒体地址要在那一刻涨版本号，浏览器才会重新拉移调后的那份伴奏）。
+   */
+  usePolling(() => loadTrack(trackId), 1200, track?.pitchStatus === 'processing');
 
   /* ------------------------------ 歌词对轴微调 ------------------------------ */
 
@@ -346,8 +366,18 @@ export default function SingPage() {
     );
   }
 
-  const canStart = Boolean(engine) && micReady && !recording && phase === 'idle';
-  const mediaUrl = trackMediaUrl(track.id);
+  // 只有「正在生成」才禁唱：那几秒播放/试听听到的还是原调，照这个调唱出来，
+  // 和成品里混的那一档对不上。
+  // failed 不禁 —— 生成失败时播放和混音都已安全回落原调（见 pitch.ts 的
+  // playableFileFor / mixAccompFileFor），照常唱不会串调；禁死只会把用户
+  // 摁在「按钮灰着、提示却说可以点」的死局里，解脱口只剩重试或拖回原调。
+  const canStart =
+    Boolean(engine) &&
+    micReady &&
+    !recording &&
+    phase === 'idle' &&
+    track?.pitchStatus !== 'processing';
+  const mediaUrl = trackMediaUrl(track.id, mediaVersion);
   /**
    * 录音中（含收尾合成）进入全屏歌词模式。
    * 只是把舞台用 CSS 提到视口大小 —— <video>/<audio> 元素原地不动：
@@ -518,15 +548,20 @@ export default function SingPage() {
                   开始演唱
                 </button>
                 <span className="muted small">
-                  {engine
-                    ? mic.permission !== 'granted'
-                      ? '等待麦克风授权…'
-                      : mic.devices.length === 0
-                        ? '没有可用的外置麦克风，插上麦克风后这里会自动出现。'
-                        : micReady
-                          ? '准备好了：戴好耳机，点「开始演唱」。'
-                          : '正在接入麦克风…'
-                    : '正在准备音频…'}
+                  {track.pitchStatus === 'processing'
+                    ? '正在生成新调的伴奏，生成好才能开始演唱…'
+                    : track.pitchStatus === 'failed'
+                      ? // 不禁唱，但要说明白：这一版混的是原调，和新调对不上
+                        `移调没成功（${track.pitchError ?? '原因未知'}），将按原调演唱。想用新调就重试，或拖回「原调」。`
+                      : engine
+                        ? mic.permission !== 'granted'
+                          ? '等待麦克风授权…'
+                          : mic.devices.length === 0
+                            ? '没有可用的外置麦克风，插上麦克风后这里会自动出现。'
+                            : micReady
+                              ? '准备好了：戴好耳机，点「开始演唱」。'
+                              : '正在接入麦克风…'
+                        : '正在准备音频…'}
                 </span>
               </div>
             </div>
@@ -640,6 +675,21 @@ export default function SingPage() {
                 在耳机里听到自己的声音
               </label>
             </div>
+          </div>
+
+          {/*
+             * 升降调：唱之前把伴奏的调定下来。服务端据此生成一份移调伴奏，
+             * 耳机里 / 试听里 / 成品里混的全是那一份（见 server/src/pitch.ts）。
+             * 放在「耳机监听」前面：它是开唱前要弄好的事，和选麦克风同一类。
+             */}
+          <div className="card">
+            <div className="panel-card-title">🎚 升降调</div>
+            <PitchControl
+              track={track}
+              disabled={recording || phase !== 'idle'}
+              onStatusChange={bumpMediaVersion}
+              onError={(message) => setActionError(message)}
+            />
           </div>
 
           {track.hasLyrics && (
