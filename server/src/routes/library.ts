@@ -17,6 +17,7 @@ import { trackToDetail } from '../dto.ts';
 import { ensureFreeSpace } from '../disk.ts';
 import { enqueue, getProgress, isQueued } from '../jobs.ts';
 import { createLogger } from '../logger.ts';
+import { fail } from '../httpError.ts';
 import { TMP_DIR } from '../paths.ts';
 import { ingestFile, discardTmp } from '../tracks/ingest.ts';
 import { downloadToFile, fetchText } from '../library/download.ts';
@@ -134,7 +135,9 @@ export function createLibraryRouter(registry: LibraryRegistry, deps: LibraryRout
     } catch (error) {
       // searchAll 内部已经逐源兜底了，走到这里基本是意料之外的问题
       log.error('曲库搜索失败', { error });
-      res.status(500).json({ error: '曲库搜索失败' });
+      fail(res, 500, 'library_search_failed', {
+        reason: error instanceof Error ? error.message : 'unknown',
+      });
     }
   });
 
@@ -149,13 +152,13 @@ export function createLibraryRouter(registry: LibraryRegistry, deps: LibraryRout
     const providerId = typeof body.providerId === 'string' ? body.providerId : '';
     const itemId = typeof body.itemId === 'string' ? body.itemId : '';
     if (!providerId || !itemId) {
-      res.status(400).json({ error: '缺少 providerId 或 itemId' });
+      fail(res, 400, 'library_download_params_missing');
       return;
     }
 
     const provider = registry.find(providerId);
     if (!provider) {
-      res.status(404).json({ error: '这个曲库源没有配置（可能改过 LIBRARY_SOURCES）' });
+      fail(res, 404, 'library_source_not_configured');
       return;
     }
 
@@ -171,19 +174,19 @@ export function createLibraryRouter(registry: LibraryRegistry, deps: LibraryRout
     try {
       item = await provider.resolve(itemId);
     } catch (error) {
-      res.status(502).json({
-        error: `曲库源不可用：${error instanceof Error ? error.message : '未知错误'}`,
+      fail(res, 502, 'library_source_unavailable', {
+        reason: error instanceof Error ? error.message : 'unknown',
       });
       return;
     }
     if (!item) {
-      res.status(404).json({ error: '曲库里找不到这个伴奏（源站清单可能变了，请重新搜索）' });
+      fail(res, 404, 'library_item_not_found');
       return;
     }
 
     const jobKey = downloadJobKey(providerId, itemId);
     if (isQueued(jobKey)) {
-      res.status(409).json({ error: '这个伴奏正在下载中，请稍候' });
+      fail(res, 409, 'library_download_in_progress');
       return;
     }
 
@@ -247,7 +250,7 @@ export function createLibraryRouter(registry: LibraryRegistry, deps: LibraryRout
     const taskId = Array.isArray(rawId) ? (rawId[0] ?? '') : (rawId ?? '');
     const task = getTask(taskId);
     if (!task) {
-      res.status(404).json({ error: '任务不存在（服务可能重启过），请重新点歌' });
+      fail(res, 404, 'library_task_not_found');
       return;
     }
 

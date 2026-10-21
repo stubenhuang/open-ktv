@@ -151,7 +151,13 @@ export function pitchActive(semitones: number): boolean {
   return Math.round(Number(semitones) || 0) !== 0;
 }
 
-/** 给人看的一行升降调摘要，如「+3 半音」/「原调」（作品库徽章 / 日志） */
+/**
+ * 一行升降调摘要，如「+3 半音」/「原调」。
+ *
+ * **只给服务端日志用**（见 server/src/routes/works.ts 的混音日志行）——
+ * 服务端不能说人话，日志的读者就是部署者本人。界面要用
+ * web/src/i18n/labels.ts 的 `pitchLabel(locale, semitones)`，词从文案目录取。
+ */
 export function describePitch(semitones: number): string {
   const value = Number.isFinite(semitones) ? Math.round(semitones) : 0;
   return value === 0 ? '原调' : `${value > 0 ? '+' : ''}${value} 半音`;
@@ -619,7 +625,12 @@ export function nearestReverbKind(space: number): ReverbKind {
   return best.kind;
 }
 
-/** 给人看的一行混响摘要（作品库徽章 / 服务端日志），如「大厅 65%」/「原声」 */
+/**
+ * 一行混响摘要，如「大厅 65%」/「原声」。
+ *
+ * **只给服务端日志用**。界面要用 web/src/i18n/labels.ts 的
+ * `reverbSummary(locale, space, wet)`。
+ */
 export function describeReverb(space: number, wet: number): string {
   const s = clamp01(Number.isFinite(space) ? space : 0);
   const w = clamp01(Number.isFinite(wet) ? wet : 0);

@@ -61,7 +61,7 @@ describe('开发模式（默认开 VITE_HTTPS）手机入口', () => {
       mobileUrls: string[];
       selfSigned: boolean;
       micBlocked: boolean;
-      reason: string | null;
+      reasonCode: string | null;
     };
 
     assert.deepEqual(info.mobileOrigin, { scheme: 'https', port: WEB_PORT });
@@ -69,7 +69,7 @@ describe('开发模式（默认开 VITE_HTTPS）手机入口', () => {
     assert.ok(info.mobileUrl?.startsWith('https://'));
     assert.equal(info.micBlocked, false, 'https 入口不该标记麦克风被禁用');
     assert.equal(info.selfSigned, true);
-    assert.equal(info.reason, null);
+    assert.equal(info.reasonCode, null);
     // 二维码能出图（dev 分支不起镜像，直接按 mobileUrl 生成）
     const qr = await fetch(`${baseUrl}/api/network/qr.svg`);
     assert.equal(qr.status, 200);

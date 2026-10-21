@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import { isTokenRequired, onTokenRequiredChange, saveAccessToken } from '../api';
+import { useI18n } from '../i18n';
 
 /**
  * 访问令牌输入闸门。
@@ -18,6 +19,7 @@ import { isTokenRequired, onTokenRequiredChange, saveAccessToken } from '../api'
 export function TokenGate() {
   const [required, setRequired] = useState(isTokenRequired);
   const [draft, setDraft] = useState('');
+  const { t } = useI18n();
 
   useEffect(() => onTokenRequiredChange(setRequired), []);
 
@@ -31,12 +33,11 @@ export function TokenGate() {
   };
 
   return (
-    <div className="token-gate" role="dialog" aria-modal="true" aria-label="需要访问令牌">
+    <div className="token-gate" role="dialog" aria-modal="true" aria-label={t('components.token.title')}>
       <div className="card token-gate-card">
-        <div className="panel-card-title">🔒 需要访问令牌</div>
+        <div className="panel-card-title">🔒 {t('components.token.title')}</div>
         <p className="page-sub" style={{ marginTop: 6 }}>
-          这台服务开启了访问保护。输入启动服务时设置的 <code>ACCESS_TOKEN</code> 即可继续。
-          手机扫码进入的页面会自动带上令牌，不用在这里输。
+          {t('components.token.hint')}
         </p>
         <div className="row" style={{ marginTop: 12, gap: 8 }}>
           <input
@@ -44,7 +45,7 @@ export function TokenGate() {
             style={{ flex: '1 1 auto' }}
             value={draft}
             autoFocus
-            placeholder="ACCESS_TOKEN"
+            placeholder={t('components.token.placeholder')}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter') submit();
@@ -56,7 +57,7 @@ export function TokenGate() {
             disabled={!draft.trim()}
             onClick={submit}
           >
-            进入
+            {t('components.token.submit')}
           </button>
         </div>
       </div>

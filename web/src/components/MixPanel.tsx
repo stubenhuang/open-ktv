@@ -7,13 +7,13 @@ import {
   DEFAULT_MIX_PARAMS,
   MIX_LIMITS,
   REVERB_KINDS,
-  REVERB_LABELS,
   VOCAL_PRESETS,
-  VOCAL_PRESET_LABELS,
   type MixParams,
 } from '../../../shared/types';
 import { matchPreset, nearestReverbKind, presetParams } from '../../../shared/mix';
 import { Hint } from './Hint';
+import { useI18n } from '../i18n';
+import { presetLabel, reverbKindLabel } from '../i18n/labels';
 
 interface Props {
   /** 作品当前的混音参数 */
@@ -25,19 +25,16 @@ interface Props {
   onParamsChange?: (params: MixParams) => void;
 }
 
-function gainLabel(value: number): string {
-  if (value <= 0.001) return '静音';
+function gainLabel(value: number, t: (key: string) => string): string {
+  if (value <= 0.001) return t('audio.gain.muted');
   const db = 20 * Math.log10(value);
-  return `${db >= 0 ? '+' : ''}${db.toFixed(1)} dB`;
+  return `${db >= 0 ? '+' : ''}${db.toFixed(1)} ${t('audio.unit.decibel')}`;
 }
 
-function dbLabel(value: number): string {
-  if (Math.abs(value) < 0.05) return '0 dB';
-  return `${value > 0 ? '+' : ''}${value.toFixed(1)} dB`;
+function dbLabel(value: number, t: (key: string) => string): string {
+  if (Math.abs(value) < 0.05) return `0 ${t('audio.unit.decibel')}`;
+  return `${value > 0 ? '+' : ''}${value.toFixed(1)} ${t('audio.unit.decibel')}`;
 }
-
-/** 空间滑块的刻度：8 个档位名（顺序 = 空间由小到大，与 REVERB_ANCHORS 同源） */
-const REVERB_TICKS: readonly string[] = REVERB_KINDS.map((kind) => REVERB_LABELS[kind]);
 
 /**
  * 全字段比较（不看键顺序）。
@@ -206,6 +203,7 @@ function Group({
 }
 
 export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
+  const { t, fmt, locale } = useI18n();
   const [params, setParams] = useState<MixParams>(value ?? DEFAULT_MIX_PARAMS);
   /** 最新参数的一份镜像：setParams 的函数式更新拿不到同步的 next，实时回调需要它 */
   const paramsRef = useRef(params);
@@ -235,12 +233,16 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
 
   const activePreset = matchPreset(params);
 
+  // 空间滑块的刻度：8 个档位名（顺序 = 空间由小到大，与 REVERB_ANCHORS 同源）。
+  // 档位名是界面文案，只能在组件里按当前语言取 —— 模块级常量拿不到 t。
+  const reverbTicks = REVERB_KINDS.map((kind) => reverbKindLabel(locale, kind));
+
   return (
     <div className="card mix-panel">
       <div className="mix-panel-head">
         <span className="mix-panel-title">
-          效果调整
-          <Hint text="每项改动都会实时送进上面的「实时试听」；点「合成」用干声重新出一版 MP3，然后返回作品库。" />
+          {t('components.mix.title')}
+          <Hint text={t('components.mix.hint')} />
         </span>
       </div>
 
@@ -250,15 +252,20 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
         */}
       <div className="mix-columns">
         <div className="mix-col">
-          <Group title="音效" hint={`${VOCAL_PRESETS.length} 种预设 · 空间/湿度连续可调`}>
+          <Group
+            title={t('components.mix.groupEffects')}
+            hint={t('components.mix.effectsHint', { count: fmt.integer(VOCAL_PRESETS.length) })}
+          >
             <div className="field">
               <div className="field-label">
                 <span className="label-with-hint">
-                  人声预设
-                  <Hint text="点一下把均衡和混响的起点写进下面的滑块，之后还能继续手调；修音（压缩/去齿音/降噪）不受预设影响，默认关闭。" />
+                  {t('audio.preset.title')}
+                  <Hint text={t('components.mix.presetHint')} />
                 </span>
                 <span className="faint small">
-                  {activePreset ? `当前：${VOCAL_PRESET_LABELS[activePreset]}` : '已手动调整'}
+                  {activePreset
+                    ? t('components.mix.presetCurrent', { preset: presetLabel(locale, activePreset) })
+                    : t('components.mix.presetManual')}
                 </span>
               </div>
               <div className="option-grid">
@@ -269,7 +276,7 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
                     className={`reverb-option${activePreset === preset ? ' active' : ''}`}
                     onClick={() => applyPreset(preset)}
                   >
-                    {VOCAL_PRESET_LABELS[preset]}
+                    {presetLabel(locale, preset)}
                   </button>
                 ))}
               </div>
@@ -284,29 +291,29 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
             <div className="field">
               <div className="field-label">
                 <span className="label-with-hint">
-                  人声混响
-                  <Hint text="「空间」在原声 → 峡谷之间连续过渡，滑块下方的 8 个刻度就是原来的档位名；「湿度」独立控制混响量，0% 就是干声。两个轴都可以微调，预设只是起点。" />
+                  {t('audio.reverb.title')}
+                  <Hint text={t('components.mix.reverbHint')} />
                 </span>
-                <span className="faint small">空间由小到大 · 湿度独立</span>
+                <span className="faint small">{t('components.mix.reverbAxes')}</span>
               </div>
               <div className="slider-stack">
                 <Slider
                   param="reverbSpace"
-                  label="空间"
+                  label={t('audio.reverb.space')}
                   value={params.reverbSpace}
-                  display={REVERB_LABELS[nearestReverbKind(params.reverbSpace)]}
+                  display={reverbKindLabel(locale, nearestReverbKind(params.reverbSpace))}
                   min={MIX_LIMITS.reverb.space.min}
                   max={MIX_LIMITS.reverb.space.max}
                   step={MIX_LIMITS.reverb.space.step}
-                  ticks={REVERB_TICKS}
+                  ticks={reverbTicks}
                   onChange={(reverbSpace) => update({ reverbSpace })}
                 />
                 <Slider
                   param="reverbWet"
-                  label="湿度"
+                  label={t('audio.reverb.wet')}
                   value={params.reverbWet}
                   display={
-                    params.reverbWet <= 0 ? '干声' : `${Math.round(params.reverbWet * 100)}%`
+                    params.reverbWet <= 0 ? t('audio.reverb.dry') : fmt.percent(params.reverbWet)
                   }
                   min={MIX_LIMITS.reverb.wet.min}
                   max={MIX_LIMITS.reverb.wet.max}
@@ -318,23 +325,23 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
 
             <div className="field">
               <div className="field-label">
-                <span>均衡</span>
-                <span className="faint small">低 200Hz · 中 1.2kHz · 高 4kHz</span>
+                <span>{t('audio.eq.title')}</span>
+                <span className="faint small">{t('audio.eq.bands')}</span>
               </div>
               <div className="slider-stack">
                 {(
                   [
-                    ['eqLowDb', '低音'],
-                    ['eqMidDb', '中音'],
-                    ['eqHighDb', '高音'],
+                    ['eqLowDb', 'audio.eq.low'],
+                    ['eqMidDb', 'audio.eq.mid'],
+                    ['eqHighDb', 'audio.eq.high'],
                   ] as const
-                ).map(([key, label]) => (
+                ).map(([key, labelKey]) => (
                   <Slider
                     key={key}
                     param={key}
-                    label={label}
+                    label={t(labelKey)}
                     value={params[key]}
-                    display={dbLabel(params[key])}
+                    display={dbLabel(params[key], t)}
                     min={MIX_LIMITS.eqDb.min}
                     max={MIX_LIMITS.eqDb.max}
                     step={MIX_LIMITS.eqDb.step}
@@ -347,13 +354,13 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
         </div>
 
         <div className="mix-col">
-          <Group title="音量">
+          <Group title={t('audio.gain.title')}>
             <div className="slider-stack">
               <Slider
                 param="vocalGain"
-                label="人声音量"
+                label={t('audio.gain.vocal')}
                 value={params.vocalGain}
-                display={gainLabel(params.vocalGain)}
+                display={gainLabel(params.vocalGain, t)}
                 min={MIX_LIMITS.gain.min}
                 max={MIX_LIMITS.gain.max}
                 step={MIX_LIMITS.gain.step}
@@ -361,9 +368,9 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
               />
               <Slider
                 param="accompGain"
-                label="伴奏音量"
+                label={t('audio.gain.accomp')}
                 value={params.accompGain}
-                display={gainLabel(params.accompGain)}
+                display={gainLabel(params.accompGain, t)}
                 min={MIX_LIMITS.gain.min}
                 max={MIX_LIMITS.gain.max}
                 step={MIX_LIMITS.gain.step}
@@ -373,28 +380,28 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
           </Group>
 
           {/* 修音：常驻展开，不提供折叠（用户要能一眼看到压缩/去齿音/降噪） */}
-          <Group title="修音" hint="压缩 · 去齿音 · 降噪 · 不受预设影响">
+          <Group title={t('audio.repair.title')} hint={t('audio.repair.summary')}>
             <div className="slider-stack">
               <Slider
                 param="compression"
-                label="压缩"
+                label={t('audio.repair.compression')}
                 value={params.compression}
-                display={`${Math.round(params.compression * 100)}%`}
+                display={fmt.percent(params.compression)}
                 min={MIX_LIMITS.amount.min}
                 max={MIX_LIMITS.amount.max}
                 step={MIX_LIMITS.amount.step}
-                hint="把大小声拉近，小声的句子不会被伴奏盖住。"
+                hint={t('audio.repair.compressionHint')}
                 onChange={(compression) => update({ compression })}
               />
               <Slider
                 param="deEss"
-                label="去齿音"
+                label={t('audio.repair.deEss')}
                 value={params.deEss}
-                display={params.deEss <= 0 ? '关闭' : `${Math.round(params.deEss * 100)}%`}
+                display={params.deEss <= 0 ? t('audio.repair.off') : fmt.percent(params.deEss)}
                 min={MIX_LIMITS.amount.min}
                 max={MIX_LIMITS.amount.max}
                 step={MIX_LIMITS.amount.step}
-                hint="压掉「嘶 / 次」这类刺耳的高频。试听里是近似效果，成品里才是真正的处理。"
+                hint={t('audio.repair.deEssHint')}
                 tone="warn"
                 placement="left"
                 flipNarrow
@@ -409,27 +416,21 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
                   checked={params.noiseReduction}
                   onChange={(event) => update({ noiseReduction: event.target.checked })}
                 />
-                降噪
+                {t('audio.repair.noiseReduction')}
               </label>
-              <Hint
-                tone="warn"
-                text="只该在录音有明显底噪时开。实时试听里不生效，只在「合成」后的成品里生效。"
-              />
+              <Hint tone="warn" text={t('audio.repair.noiseReductionHint')} />
             </div>
           </Group>
 
-          <Group title="人声对齐" hint="±1000ms">
+          <Group title={t('audio.offset.title')} hint={t('audio.offset.range')}>
             <div className="mix-offset-row">
               {/* 说明挂在行首：整行都是「这一个参数」，朝上展开（这是右列最底下一个控件） */}
-              <Hint
-                placement="top"
-                text="正值 = 人声更晚（抢拍），负值 = 更早（拖拍）。起录时那段静音已自动扣除。"
-              />
+              <Hint placement="top" text={t('audio.offset.hint')} />
               <OffsetMsInput
                 value={params.userOffsetMs}
                 onChange={(next) => update({ userOffsetMs: next })}
               />
-              <span className="field-value">ms</span>
+              <span className="field-value">{t('common.unit.millisecond')}</span>
               <input
                 type="range"
                 data-mix-param="userOffsetMs"
@@ -451,10 +452,10 @@ export function MixPanel({ value, busy, onApply, onParamsChange }: Props) {
             {busy ? (
               <>
                 <span className="spin" />
-                合成中…
+                {t('components.mix.applying')}
               </>
             ) : (
-              '合成'
+              t('components.mix.apply')
             )}
           </button>
         </div>

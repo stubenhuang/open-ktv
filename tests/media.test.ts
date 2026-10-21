@@ -89,7 +89,12 @@ describe('sendMedia', () => {
     sendMedia(res, path.join(workDir, 'missing.mp3'));
 
     assert.equal(state.statusCode, 404);
-    assert.deepEqual(state.body, { error: '文件不存在或已被删除' });
+    // 错误响应是「机器可读码 + 英文兜底文案」：界面文案由前端按语言拼，
+    // 服务端不说人话（见 server/src/httpError.ts）
+    assert.deepEqual(state.body, {
+      code: 'file_not_found',
+      message: 'File does not exist or has been deleted',
+    });
     assert.equal(state.sendFile, null);
   });
 
@@ -132,7 +137,11 @@ describe('sendMedia', () => {
     state.sendFile!.callback!(new Error('磁盘炸了'));
 
     assert.equal(state.statusCode, 500);
-    assert.deepEqual(state.body, { error: '读取文件失败：磁盘炸了' });
+    assert.deepEqual(state.body, {
+      code: 'file_read_failed',
+      message: 'Could not read the file: 磁盘炸了',
+      params: { reason: '磁盘炸了' },
+    });
   });
 
   it('没有错误时什么都不做', () => {

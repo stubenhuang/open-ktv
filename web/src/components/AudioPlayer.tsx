@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { formatDuration } from '../utils';
+import { useI18n } from '../i18n';
 
 /**
  * 主题统一的小播放器：播放/暂停 + 进度条 + 时间。
@@ -61,6 +62,7 @@ export function AudioPlayer({
   const currentRef = useRef<HTMLSpanElement>(null);
   const totalRef = useRef<HTMLSpanElement>(null);
   const [playing, setPlaying] = useState(false);
+  const { t } = useI18n();
   /** 拖动中：暂停 rAF 的位置刷新，避免和用户输入打架 */
   const draggingRef = useRef(false);
   const seekTimerRef = useRef<number | null>(null);
@@ -185,7 +187,7 @@ export function AudioPlayer({
       <button
         type="button"
         className={`audio-player-btn${playing ? ' playing' : ''}`}
-        aria-label={playing ? '暂停' : '播放'}
+        aria-label={playing ? t('common.pause') : t('common.play')}
         onClick={handleToggle}
       >
         <span aria-hidden="true">{playing ? '⏸' : '▶'}</span>
@@ -201,7 +203,7 @@ export function AudioPlayer({
           max={0}
           step={0.1}
           defaultValue={0}
-          aria-label="播放进度"
+          aria-label={t('components.player.seek')}
           onChange={(event) => {
             // 输入中：只让 UI 跟手，引擎那侧攒着，停手后合并成一次 seek
             draggingRef.current = true;

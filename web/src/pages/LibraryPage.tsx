@@ -14,6 +14,7 @@ import { TrackEditDialog } from '../components/TrackEditDialog';
 import { UploadDialog, type UploadDraft } from '../components/UploadDialog';
 import { usePolling } from '../hooks/usePolling';
 import { errorMessage, formatBytes, formatDuration, isAudioFile, isLyricsFileName } from '../utils';
+import { useI18n } from '../i18n';
 
 interface UploadItem {
   key: string;
@@ -30,6 +31,7 @@ let uploadKeySeed = 0;
 type SortBy = 'recent' | 'title' | 'duration';
 
 export default function LibraryPage() {
+  const { t, fmt, plural, locale } = useI18n();
   const [tracks, setTracks] = useState<TrackListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -53,11 +55,11 @@ export default function LibraryPage() {
       setTracks(list);
       setError(null);
     } catch (err) {
-      setError(errorMessage(err, '加载伴奏列表失败'));
+      setError(errorMessage(err, t('library.loadFailed')));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void load();
@@ -71,7 +73,7 @@ export default function LibraryPage() {
     setUploads((items) => items.map((item) => (item.key === key ? { ...item, ...patch } : item)));
   };
 
-  /** 关键字 + 排序后的可见列表。歌名按拼音排（localeCompare 的 zh 排序），中文用户找歌更直觉 */
+  /** 关键字 + 排序后的可见列表。歌名排序走 localeCompare 的当前语言规则，用户找歌的直觉跟界面语言一致 */
   const visibleTracks = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     const filtered = keyword
@@ -82,13 +84,13 @@ export default function LibraryPage() {
         )
       : tracks;
     if (sortBy === 'title') {
-      return [...filtered].sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'));
+      return [...filtered].sort((a, b) => a.title.localeCompare(b.title, locale));
     }
     if (sortBy === 'duration') {
       return [...filtered].sort((a, b) => (b.duration ?? 0) - (a.duration ?? 0));
     }
     return filtered;
-  }, [tracks, query, sortBy]);
+  }, [tracks, query, sortBy, locale]);
 
   /**
    * 上传一批伴奏（弹窗提交后调这里）。
@@ -132,12 +134,14 @@ export default function LibraryPage() {
             try {
               await api.uploadLyrics(uploaded.id, lyricsFile);
             } catch (err) {
-              patchUpload(item.key, { error: `伴奏已上传，但歌词没上去：${errorMessage(err)}` });
+              patchUpload(item.key, {
+                error: t('library.upload.lyricsFailed', { reason: errorMessage(err) }),
+              });
             }
           }
         } catch (err) {
           failed += 1;
-          patchUpload(item.key, { error: errorMessage(err, '上传失败') });
+          patchUpload(item.key, { error: errorMessage(err, t('library.upload.failed')) });
         }
         void load();
       }
@@ -153,12 +157,12 @@ export default function LibraryPage() {
       if (succeeded > 0) {
         toast.ok(
           failed > 0
-            ? `已上传 ${succeeded} 个伴奏，${failed} 个失败`
-            : `已上传 ${succeeded} 个伴奏，可以在下面试听 / 演唱了`,
+            ? plural('library.upload.summary.partial', succeeded, { failed: fmt.integer(failed) })
+            : plural('library.upload.summary.done', succeeded),
         );
       }
     },
-    [load],
+    [load, t, fmt, plural],
   );
 
   /** 拖到上传区的文件：音频进弹窗的音频列表，.lrc/.txt 进歌词，其它的只提示不拦 */
@@ -170,27 +174,27 @@ export default function LibraryPage() {
     const notes: string[] = [];
     if (ignored.length > 0) {
       notes.push(
-        `忽略了 ${ignored.length} 个文件：${ignored.map((file) => file.name).join('、')}` +
-          '（伴奏库只收音频和 .lrc 歌词）',
+        t('library.drop.ignored', {
+          count: fmt.integer(ignored.length),
+          files: fmt.list(ignored.map((file) => file.name)),
+        }),
       );
     }
     if (lyrics.length > 1) {
-      notes.push(`歌词只取了第一个：${lyrics[0]!.name}`);
+      notes.push(t('library.drop.lyricsOnlyFirst', { name: lyrics[0]!.name }));
     }
 
-    setDialog({ audio, lyrics: lyrics[0] ?? null, note: notes.join('；') || null });
+    setDialog({ audio, lyrics: lyrics[0] ?? null, note: notes.join(t('library.drop.noteSeparator')) || null });
   };
 
   const handleDelete = async (track: TrackListItem) => {
     // 作品与伴奏解耦：有作品也照删。确认框里说清作品会怎样，别让用户事后才发现。
     const worksNote =
-      track.workCount > 0
-        ? `\n它下面的 ${track.workCount} 个作品会保留（成品 MP3 仍可播放 / 下载），但不能再调整效果或重新合成。`
-        : '';
+      track.workCount > 0 ? plural('library.delete.worksNote', track.workCount) : '';
     const confirmed = await confirmAction({
-      title: '删除伴奏',
-      message: `确定删除伴奏「${track.title}」吗？原文件也会一起删掉。${worksNote}`,
-      confirmText: '删除',
+      title: t('library.delete.title'),
+      message: t('library.delete.message', { title: track.title, worksNote }),
+      confirmText: t('common.delete'),
       danger: true,
     });
     if (!confirmed) return;
@@ -200,13 +204,13 @@ export default function LibraryPage() {
       if (previewId === track.id) setPreviewId(null);
       setNotice(
         result.keptWorks > 0
-          ? `已删除伴奏「${track.title}」，保留 ${result.keptWorks} 个作品（成品仍可播放 / 下载，但不能重新合成）。`
+          ? plural('library.delete.notice', result.keptWorks, { title: track.title })
           : null,
       );
-      toast.ok(`已删除伴奏「${track.title}」`);
+      toast.ok(t('library.delete.done', { title: track.title }));
       await load();
     } catch (err) {
-      setError(errorMessage(err, '删除失败'));
+      setError(errorMessage(err, t('library.delete.failed')));
     } finally {
       setBusyId(null);
     }
@@ -219,7 +223,7 @@ export default function LibraryPage() {
       await api.retryTrack(track.id);
       await load();
     } catch (err) {
-      setError(errorMessage(err, '重试失败'));
+      setError(errorMessage(err, t('library.retry.failed')));
     } finally {
       setBusyId(null);
     }
@@ -230,16 +234,17 @@ export default function LibraryPage() {
       <div className="page-head">
         <div>
           <h1 className="page-title">
-            伴奏库 <span className="badge badge-kind">{tracks.length} 首</span>
+            {t('library.title')}{' '}
+            <span className="badge badge-kind">{plural('library.trackCount', tracks.length)}</span>
           </h1>
-          <p className="page-sub">上传伴奏、带上歌词，就能去演唱；没有想唱的，去点歌台搜一首。</p>
+          <p className="page-sub">{t('library.subtitle')}</p>
         </div>
         <button
           type="button"
           className="btn btn-primary"
           onClick={() => setDialog({ audio: [], lyrics: null, note: null })}
         >
-          上传伴奏
+          {t('library.upload')}
         </button>
       </div>
 
@@ -247,7 +252,7 @@ export default function LibraryPage() {
         <div className="alert alert-error" role="alert">
           {error}
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => void load()}>
-            重试
+            {t('common.retry')}
           </button>
         </div>
       )}
@@ -261,7 +266,7 @@ export default function LibraryPage() {
             style={{ marginLeft: 10 }}
             onClick={() => setNotice(null)}
           >
-            知道了
+            {t('common.ok')}
           </button>
         </div>
       )}
@@ -270,7 +275,7 @@ export default function LibraryPage() {
         className={`dropzone${dragging ? ' dragging' : ''}`}
         role="button"
         tabIndex={0}
-        aria-label="上传伴奏：点击选择文件，或把音频文件拖到这里"
+        aria-label={t('library.uploadAria')}
         onClick={() => setDialog({ audio: [], lyrics: null, note: null })}
         onKeyDown={(event) => {
           // 键盘也要能打开上传区（role=button 的约定：Enter / 空格触发）
@@ -293,10 +298,8 @@ export default function LibraryPage() {
         <div className="dropzone-icon" aria-hidden="true">
           🎧
         </div>
-        <div className="dropzone-title">把音频文件拖到这里，或点击选择</div>
-        <div className="small faint">
-          支持 mp3 / wav / flac / m4a 等常见音频，可一次多选；.lrc 歌词可以一起拖进来
-        </div>
+        <div className="dropzone-title">{t('library.dropzone.title')}</div>
+        <div className="small faint">{t('library.dropzone.hint')}</div>
       </div>
 
       {dialog && (
@@ -322,7 +325,7 @@ export default function LibraryPage() {
               <span className="upload-item-name">
                 {item.name}
               </span>
-              <span className="faint small mono">{formatBytes(item.size)}</span>
+              <span className="faint small mono">{formatBytes(item.size, locale)}</span>
               <div className="progress-track">
                 <div className="progress-fill" style={{ width: `${Math.round(item.progress * 100)}%` }} />
               </div>
@@ -330,15 +333,15 @@ export default function LibraryPage() {
                 {item.error ? (
                   <span style={{ color: 'var(--danger)' }}>{item.error}</span>
                 ) : item.done ? (
-                  <span style={{ color: 'var(--ok)' }}>✓ 已上传</span>
+                  <span style={{ color: 'var(--ok)' }}>{t('library.upload.itemDone')}</span>
                 ) : (
-                  `上传中 ${Math.round(item.progress * 100)}%`
+                  t('library.upload.itemProgress', { percent: fmt.percent(item.progress) })
                 )}
               </span>
               <button
                 type="button"
                 className="btn btn-ghost btn-sm"
-                aria-label={`收起 ${item.name} 的上传状态`}
+                aria-label={t('library.upload.dismissAria', { name: item.name })}
                 onClick={() => setUploads((items) => items.filter((one) => one.key !== item.key))}
               >
                 ✕
@@ -355,24 +358,27 @@ export default function LibraryPage() {
             className="text-input"
             type="search"
             value={query}
-            placeholder="按歌名 / 歌手过滤…"
-            aria-label="按歌名或歌手过滤伴奏"
+            placeholder={t('library.filter.placeholder')}
+            aria-label={t('library.filter.aria')}
             onChange={(event) => setQuery(event.target.value)}
           />
           <select
             className="select-input"
             value={sortBy}
-            aria-label="排序方式"
+            aria-label={t('library.sort.aria')}
             onChange={(event) => setSortBy(event.target.value as SortBy)}
           >
-            <option value="recent">最近上传</option>
-            <option value="title">按歌名</option>
-            <option value="duration">按时长</option>
+            <option value="recent">{t('library.sort.recent')}</option>
+            <option value="title">{t('library.sort.title')}</option>
+            <option value="duration">{t('library.sort.duration')}</option>
           </select>
           <span className="list-count">
             {visibleTracks.length === tracks.length
-              ? `共 ${tracks.length} 首`
-              : `${visibleTracks.length} / ${tracks.length} 首`}
+              ? plural('library.trackCount', tracks.length)
+              : t('library.filter.count', {
+                  shown: fmt.integer(visibleTracks.length),
+                  total: fmt.integer(tracks.length),
+                })}
           </span>
         </div>
       )}
@@ -382,8 +388,8 @@ export default function LibraryPage() {
       ) : tracks.length === 0 ? (
         <EmptyState
           icon="🎵"
-          title="还没有伴奏"
-          description="先上传一首，然后就能开唱了。也可以去点歌台看看有没有现成的。"
+          title={t('library.empty.title')}
+          description={t('library.empty.description')}
           action={
             <>
               <button
@@ -391,10 +397,10 @@ export default function LibraryPage() {
                 className="btn btn-primary"
                 onClick={() => setDialog({ audio: [], lyrics: null, note: null })}
               >
-                上传第一首
+                {t('library.empty.uploadFirst')}
               </button>
               <Link className="btn" to="/discover">
-                去点歌台
+                {t('library.empty.goDiscover')}
               </Link>
             </>
           }
@@ -402,11 +408,11 @@ export default function LibraryPage() {
       ) : visibleTracks.length === 0 ? (
         <EmptyState
           icon="🔍"
-          title="没有匹配的伴奏"
-          description={`曲库里没有和「${query.trim()}」相关的歌名或歌手。`}
+          title={t('library.filter.noMatch.title')}
+          description={t('library.filter.noMatch.description', { query: query.trim() })}
           action={
             <button type="button" className="btn" onClick={() => setQuery('')}>
-              清空过滤
+              {t('library.filter.clear')}
             </button>
           }
         />
@@ -417,7 +423,10 @@ export default function LibraryPage() {
 
             return (
               <div key={track.id} className={`track-item${isPreviewing ? ' selected' : ''}`}>
-                <div className="track-kind" title={track.kind === 'video' ? '视频伴奏' : '音频伴奏'}>
+                <div
+                  className="track-kind"
+                  title={t(track.kind === 'video' ? 'library.kind.video' : 'library.kind.audio')}
+                >
                   {track.kind === 'video' ? '🎬' : '🎵'}
                 </div>
 
@@ -431,27 +440,23 @@ export default function LibraryPage() {
                   <div className="track-meta">
                     {track.artist && <span>{track.artist}</span>}
                     <span className="mono">{formatDuration(track.duration)}</span>
-                    <span>{formatBytes(track.size)}</span>
-                    {track.hasLyrics && <span className="badge badge-ok">有歌词</span>}
+                    <span>{formatBytes(track.size, locale)}</span>
+                    {track.hasLyrics && <span className="badge badge-ok">{t('library.hasLyrics')}</span>}
                     {track.workCount > 0 && (
-                      <span
-                        className="badge badge-kind"
-                        title="删除伴奏时这些作品会保留，但不能重新合成"
-                      >
-                        {track.workCount} 个作品
+                      <span className="badge badge-kind" title={t('library.worksBadge.title')}>
+                        {plural('library.workCount', track.workCount)}
                       </span>
                     )}
                     {track.status === 'processing' && (
-                      <span
-                        className="badge badge-work"
-                        title="正在转码成浏览器能直接播放的格式"
-                      >
-                        处理中 {Math.round((track.progress ?? 0) * 100)}%
+                      <span className="badge badge-work" title={t('library.processing.title')}>
+                        {t('library.processing.progress', {
+                          percent: fmt.percent(track.progress ?? 0),
+                        })}
                       </span>
                     )}
                     {track.status === 'failed' && (
                       <span className="badge badge-fail" title={track.error ?? ''}>
-                        处理失败
+                        {t('library.status.failed')}
                       </span>
                     )}
                   </div>
@@ -469,21 +474,21 @@ export default function LibraryPage() {
                       disabled={track.status !== 'ready'}
                       onClick={() => setPreviewId(isPreviewing ? null : track.id)}
                     >
-                      {isPreviewing ? '停止试听' : '试听'}
+                      {isPreviewing ? t('library.stopPreview') : t('library.preview')}
                     </button>
                     <Link
                       className="btn btn-primary btn-sm"
                       to={`/sing/${track.id}`}
                       style={track.status !== 'ready' ? { pointerEvents: 'none', opacity: 0.5 } : undefined}
                     >
-                      去演唱
+                      {t('library.goSing')}
                     </Link>
                     <button
                       type="button"
                       className="btn btn-ghost btn-sm"
                       onClick={() => setEditingTrack(track)}
                     >
-                      编辑
+                      {t('common.edit')}
                     </button>
                     {track.status === 'failed' && (
                       <button
@@ -492,7 +497,7 @@ export default function LibraryPage() {
                         disabled={busyId === track.id}
                         onClick={() => void handleRetry(track)}
                       >
-                        重试处理
+                        {t('library.retry.button')}
                       </button>
                     )}
                     <button
@@ -501,7 +506,7 @@ export default function LibraryPage() {
                       disabled={busyId === track.id}
                       onClick={() => void handleDelete(track)}
                     >
-                      删除
+                      {t('common.delete')}
                     </button>
                 </div>
 

@@ -263,11 +263,3 @@ export function normalizeSemitones(value: unknown, fallback: number): number {
   if (value === null || value === undefined || value === '') return fallback;
   return clampInt(value, PITCH_LIMITS.semitones.min, PITCH_LIMITS.semitones.max, fallback);
 }
-
-/** ffmpeg 缺 rubberband 时的一体化报错文案（路由用） */
-export function rubberbandMissingMessage(): string {
-  return (
-    '当前 ffmpeg 不带 rubberband，升降调不可用（其余功能不受影响）。' +
-    '换一个带 --enable-librubberband 的 ffmpeg 构建即可启用。'
-  );
-}

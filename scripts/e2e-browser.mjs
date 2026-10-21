@@ -35,7 +35,18 @@ import process from 'node:process';
  */
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-const BASE_URL = process.env.BASE_URL ?? 'https://127.0.0.1:5173';
+/*
+ * 端到端脚本里有一批 `innerText.includes('伴奏库')` / `'开始演唱'` 这类断言。
+ * 界面语言可切（见 web/src/i18n），所以这里**显式把语言钉成简体中文** ——
+ * 否则有人用 `?lang=en` 打开过页面、localStorage 里留下了 en，
+ * 这一轮断言就会全部对不上。语言由 URL 参数决定，优先级高于 storage。
+ */
+const BASE_URL = withZhCn(process.env.BASE_URL ?? 'https://127.0.0.1:5173');
+
+/** 给地址加上 `?lang=zh-CN`（已有的 query 用 & 追加） */
+function withZhCn(url) {
+  return url.includes('?') ? `${url}&lang=zh-CN` : `${url}?lang=zh-CN`;
+}
 const HEADLESS = process.env.HEADLESS !== '0';
 const DEBUG_PORT = Number(process.env.CDP_PORT ?? 9333);
 const CHROME_BIN =

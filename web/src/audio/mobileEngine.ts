@@ -4,6 +4,8 @@
 
 import { concatFloat32, encodeWavBlob } from '../../../shared/wav';
 import { resolveRecordGapMs } from '../../../shared/mix';
+import { apiLocale } from '../api';
+import { translateWith } from '../i18n';
 import { ensureWorklet, getAudioContext, type CaptureStats } from './engine';
 import { log } from '../log';
 
@@ -181,7 +183,9 @@ export class MobileEngine {
    * @param element 播放伴奏的 `<audio>` / `<video>`（不在 Web Audio 图里）
    */
   async startRecording(element: HTMLMediaElement): Promise<void> {
-    if (!this.micSource) throw new Error('还没有可用的麦克风');
+    // 内部不变量（正常流程 setMic 成功后才进这里），但 message 会经 errorMessage(err)
+    // 显示给用户，所以照样走文案目录
+    if (!this.micSource) throw new Error(translateWith(apiLocale(), 'audio.micNotConnected'));
     await this.init();
     await this.resume();
 
@@ -203,7 +207,9 @@ export class MobileEngine {
       this.accepting = false;
       this.disarmAccompStartWatcher();
       throw new Error(
-        `伴奏播放被浏览器拦住了：${error instanceof Error ? error.message : String(error)}。请再点一次「开始演唱」。`,
+        translateWith(apiLocale(), 'audio.accompPlayBlockedRetry', {
+          reason: error instanceof Error ? error.message : String(error),
+        }),
       );
     }
   }
@@ -250,7 +256,8 @@ export class MobileEngine {
 
   /** 结束录音，返回可以直接上传的 WAV */
   async stopRecording(element: HTMLMediaElement): Promise<MobileRecordResult> {
-    if (!this.recording) throw new Error('当前没有在录音');
+    // 同上：不变量文案，但会经 errorMessage(err) 显示给用户（重复点「停止」就会看到）
+    if (!this.recording) throw new Error(translateWith(apiLocale(), 'audio.notRecording'));
 
     element.pause();
     this.lastStats = null;

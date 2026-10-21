@@ -10,6 +10,7 @@ import { PreviewEngine } from '../../audio/preview';
 import { MobileMixPanel } from '../../components/MobileMixPanel';
 import { toast } from '../../components/ToastStack';
 import { usePolling } from '../../hooks/usePolling';
+import { useI18n } from '../../i18n';
 import { errorMessage, formatDuration } from '../../utils';
 
 /**
@@ -23,6 +24,7 @@ import { errorMessage, formatDuration } from '../../utils';
 export default function MobileWorkEditPage() {
   const { workId = '' } = useParams();
   const navigate = useNavigate();
+  const { t } = useI18n();
 
   const [work, setWork] = useState<WorkListItem | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -63,7 +65,7 @@ export default function MobileWorkEditPage() {
       setWork(await api.getWork(workId));
       setLoadError(null);
     } catch (err) {
-      setLoadError(errorMessage(err, '加载作品失败'));
+      setLoadError(errorMessage(err, t('mobile.load_work_failed')));
     }
   }, [workId]);
 
@@ -150,10 +152,10 @@ export default function MobileWorkEditPage() {
     setActionError(null);
     try {
       await api.remixWork(work.id, params);
-      toast.ok('已提交合成，几秒后刷新就是新版');
+      toast.ok(t('mobile.mix_submitted'));
       await load();
     } catch (err) {
-      setActionError(errorMessage(err, '合成失败'));
+      setActionError(errorMessage(err, t('mobile.mix_failed_short')));
     } finally {
       setBusy(false);
     }
@@ -164,7 +166,7 @@ export default function MobileWorkEditPage() {
       <div className="m-page">
         <div className="m-topbar">
           <button type="button" className="m-back" onClick={() => navigate(-1)}>
-            ‹ 返回
+            {t('mobile.back')}
           </button>
         </div>
         <div className="m-alert m-alert-error">{loadError}</div>
@@ -172,23 +174,20 @@ export default function MobileWorkEditPage() {
     );
   }
 
-  if (!work) return <div className="m-page"><div className="m-empty">正在加载作品…</div></div>;
+  if (!work) return <div className="m-page"><div className="m-empty">{t('mobile.loading_work')}</div></div>;
 
   if (!work.trackId) {
     return (
       <div className="m-page">
         <div className="m-topbar">
           <button type="button" className="m-back" onClick={() => navigate(-1)}>
-            ‹ 返回
+            {t('mobile.back')}
           </button>
           <div className="m-topbar-title">
             <div className="m-topbar-name">{work.title}</div>
           </div>
         </div>
-        <div className="m-alert m-alert-warn">
-          这个作品用的伴奏已经被删除了。已生成的 MP3 还能播放 / 下载，
-          但实时试听和重新合成都需要伴奏文件，所以不能调整效果。
-        </div>
+        <div className="m-alert m-alert-warn">{t('mobile.track_deleted_cannot_edit')}</div>
       </div>
     );
   }
@@ -197,26 +196,30 @@ export default function MobileWorkEditPage() {
     <div className="m-page m-edit">
       <div className="m-topbar">
         <Link className="m-back" to={`/m/work/${work.id}`}>
-          ‹ 返回
+          {t('mobile.back')}
         </Link>
         <div className="m-topbar-title">
-          <div className="m-topbar-name">调整效果</div>
+          <div className="m-topbar-name">{t('mobile.adjust_effects')}</div>
           <div className="m-topbar-sub">
             {work.trackTitle ?? ''} · {formatDuration(work.vocalDuration)}
-            {work.status === 'mixing' ? ' · 合成中…' : ''}
+            {work.status === 'mixing' ? t('mobile.mixing_tag') : ''}
           </div>
         </div>
       </div>
 
       {actionError && <div className="m-alert m-alert-error">{actionError}</div>}
-      {previewError && <div className="m-alert m-alert-warn">试听失败：{previewError}</div>}
+      {previewError && (
+        <div className="m-alert m-alert-warn">
+          {t('mobile.preview_failed', { reason: previewError })}
+        </div>
+      )}
 
       {/* 试听传输条：干声 + 伴奏在浏览器里实时混音 */}
       <div className="m-preview">
         <button
           type="button"
           className="m-play-btn"
-          aria-label={playing ? '暂停' : '试听'}
+          aria-label={playing ? t('common.pause') : t('mobile.preview')}
           disabled={previewLoading}
           onClick={togglePlay}
         >
@@ -230,17 +233,14 @@ export default function MobileWorkEditPage() {
           step={0.1}
           value={Math.min(position, Math.max(duration, 0.1))}
           disabled={!previewEngine}
-          aria-label="试听进度"
+          aria-label={t('mobile.preview_progress')}
           onChange={(event) => seek(Number(event.target.value))}
         />
         <span className="m-time mono">
           {formatDuration(position)} / {formatDuration(duration)}
         </span>
       </div>
-      <p className="m-notes">
-        干声和伴奏在手机里实时混音：拖滑块、改毫秒都会立刻生效，不打断播放。这只是预览 ——
-        点「合成」服务端才真正出新版 MP3。
-      </p>
+      <p className="m-notes">{t('mobile.preview_notes')}</p>
 
       <MobileMixPanel value={work.mixParams} onParamsChange={handleParamsChange} />
 
@@ -254,7 +254,7 @@ export default function MobileWorkEditPage() {
           disabled={busy}
           onClick={() => void handleApply(latestParamsRef.current ?? work.mixParams)}
         >
-          {busy ? '合成中…' : '合成'}
+          {busy ? t('mobile.mixing') : t('mobile.mix')}
         </button>
       </div>
     </div>

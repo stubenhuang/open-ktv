@@ -5,6 +5,7 @@
 import type { ReactNode } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { ConfirmHost } from './components/ConfirmDialog';
+import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { PhoneConnectMenu } from './components/PhoneConnectMenu';
 import { ToastStack } from './components/ToastStack';
 import { TokenGate } from './components/TokenGate';
@@ -15,6 +16,7 @@ import RetakePage from './pages/RetakePage';
 import SingPage from './pages/SingPage';
 import WorkDetailPage from './pages/WorkDetailPage';
 import WorksPage from './pages/WorksPage';
+import { useI18n } from './i18n';
 
 /** 作品编辑页：/works/:workId（编辑页要求「一屏放完」，见 .app-main-fit） */
 const WORK_DETAIL_RE = /^\/works\/[^/]+$/;
@@ -24,6 +26,7 @@ const MOBILE_RE = /^\/m(?:\/|$)/;
 
 function Layout({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
+  const { t } = useI18n();
   // 编辑页自己管高度：不吃 .app-main 那 72px 的底部滚动余量，否则一屏放不下
   const fitOneScreen = WORK_DETAIL_RE.test(pathname);
   return (
@@ -35,28 +38,31 @@ function Layout({ children }: { children: ReactNode }) {
         </div>
         <div className="app-nav-links">
           <NavLink to="/" end className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`}>
-            伴奏库
+            {t('nav.library')}
           </NavLink>
           <NavLink
             to="/discover"
             className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`}
           >
-            点歌台
+            {t('nav.discover')}
           </NavLink>
           <NavLink
             to="/works"
             className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`}
           >
-            我的作品
+            {t('nav.works')}
           </NavLink>
         </div>
         {/*
           手机演唱入口：导航栏右上角的 hover 菜单。放在这是因为它是个全局能力 ——
           选歌时、准备开唱时都可能要递手机，而所有桌面页面共用这一根导航栏。
         */}
-        <PhoneConnectMenu />
+        <div className="app-nav-trailing">
+          <LanguageSwitcher />
+          <PhoneConnectMenu />
+        </div>
       </nav>
-      <main className={`app-main${fitOneScreen ? ' app-main-fit' : ''}`}>
+      <main className={`app-main${fitOneScreen ? ' app-main-fit' : ''}`} id="main">
         {/*
           按路径 keyed：换页面时整棵子树重挂，.page-fade 的入场动画才会重放。
           （不用 AnimatePresence 那套，一个 key + 一个 keyframes 就够，还零依赖）

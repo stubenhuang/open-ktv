@@ -6,6 +6,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 import { ACCESS_TOKEN } from './config.ts';
 import { createLogger } from './logger.ts';
+import { fail } from './httpError.ts';
 
 /**
  * 可选的局域网访问令牌闸门。
@@ -59,6 +60,6 @@ export function createTokenGate(): (req: Request, res: Response, next: NextFunct
     if (provided && tokenMatches(provided)) return next();
 
     log.debug('拒绝无令牌请求', { path: req.path, from: req.socket.remoteAddress });
-    res.status(401).json({ error: '需要访问令牌', code: TOKEN_REQUIRED_CODE });
+    fail(res, 401, 'token_required');
   };
 }

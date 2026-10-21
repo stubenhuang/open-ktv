@@ -5,7 +5,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type WorkListItem } from '../../api';
-import { VOCAL_PRESET_LABELS } from '../../../../shared/types';
+import { presetLabel } from '../../i18n/labels';
+import { useI18n } from '../../i18n';
 import { coverGradient, errorMessage, formatDuration, formatRelativeTime, selectVisibleWorks } from '../../utils';
 
 type StatusFilter = 'all' | WorkListItem['status'];
@@ -19,6 +20,7 @@ type SortBy = 'recent' | 'oldest' | 'title' | 'duration';
  * 封面色块 + 标题 + 伴奏 + 状态，点击进详情（试听 / 调效果 / 改名 / 删除）。
  */
 export default function MobileWorksPage() {
+  const { t, fmt, plural, locale } = useI18n();
   const [works, setWorks] = useState<WorkListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +36,7 @@ export default function MobileWorksPage() {
         if (!cancelled) setWorks(list);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(errorMessage(err, '加载作品失败'));
+        if (!cancelled) setError(errorMessage(err, t('mobile.load_works_failed')));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -53,8 +55,10 @@ export default function MobileWorksPage() {
     <div className="m-page">
       <header className="m-head">
         <div>
-          <h1 className="m-title">🎤 我的作品</h1>
-          <p className="m-sub">共 {works.length} 首 · 唱完的作品在这里调效果、下载</p>
+          <h1 className="m-title">{t('mobile.works.title')}</h1>
+          <p className="m-sub">
+            {plural('mobile.works.count_note', works.length, { count: fmt.integer(works.length) })}
+          </p>
         </div>
       </header>
 
@@ -62,7 +66,7 @@ export default function MobileWorksPage() {
         <div className="m-alert m-alert-error">
           {error}
           <button type="button" className="m-btn m-btn-ghost m-btn-sm" onClick={() => window.location.reload()}>
-            重试
+            {t('common.retry')}
           </button>
         </div>
       )}
@@ -72,7 +76,7 @@ export default function MobileWorksPage() {
           className="m-input"
           type="search"
           value={query}
-          placeholder="搜作品名 / 伴奏 / 歌手"
+          placeholder={t('mobile.works.search_placeholder')}
           onChange={(event) => setQuery(event.target.value)}
         />
       </div>
@@ -80,10 +84,10 @@ export default function MobileWorksPage() {
       <div className="m-chip-row">
         {(
           [
-            ['all', '全部'],
-            ['ready', '已就绪'],
-            ['mixing', '合成中'],
-            ['failed', '失败'],
+            ['all', t('common.all')],
+            ['ready', t('common.ready')],
+            ['mixing', t('mobile.status.mixing')],
+            ['failed', t('common.failed')],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -100,20 +104,20 @@ export default function MobileWorksPage() {
           className="m-select m-select-inline"
           value={sortBy}
           onChange={(event) => setSortBy(event.target.value as SortBy)}
-          aria-label="排序"
+          aria-label={t('mobile.works.sort_label')}
         >
-          <option value="recent">最近演唱</option>
-          <option value="oldest">最早演唱</option>
-          <option value="title">按歌名</option>
-          <option value="duration">按时长</option>
+          <option value="recent">{t('mobile.works.sort_recent')}</option>
+          <option value="oldest">{t('mobile.works.sort_oldest')}</option>
+          <option value="title">{t('mobile.works.sort_title')}</option>
+          <option value="duration">{t('mobile.works.sort_duration')}</option>
         </select>
       </div>
 
-      {loading && <div className="m-empty">正在加载作品…</div>}
+      {loading && <div className="m-empty">{t('mobile.works.loading')}</div>}
 
       {!loading && visible.length === 0 && (
         <div className="m-empty">
-          {works.length === 0 ? '还没有作品。去伴奏库选一首开唱吧。' : '没有匹配的作品。'}
+          {works.length === 0 ? t('mobile.works.empty') : t('mobile.works.no_match')}
         </div>
       )}
 
@@ -129,24 +133,30 @@ export default function MobileWorksPage() {
                 {work.status === 'mixing' ? (
                   <span className="spin" />
                 ) : (
-                  <span className="m-work-cover-char">{Array.from(work.title)[0] ?? '♪'}</span>
+                  <span className="m-work-cover-char">
+                    {Array.from(work.title)[0] ?? t('mobile.works.cover_fallback')}
+                  </span>
                 )}
               </span>
               <span className="m-track-main">
                 <span className="m-track-title">{work.title}</span>
                 {/* 元信息补齐成桌面那一套：伴奏 · 时长 · 效果 · 时间 */}
                 <span className="m-track-meta">
-                  {work.trackTitle ?? '伴奏已删除'}
+                  {work.trackTitle ?? t('mobile.works.track_deleted')}
                   {work.trackArtist ? ` · ${work.trackArtist}` : ''} ·{' '}
                   {formatDuration(work.vocalDuration)} ·{' '}
-                  {VOCAL_PRESET_LABELS[work.mixParams.vocalPreset]} ·{' '}
-                  {formatRelativeTime(work.createdAt)}
+                  {presetLabel(locale, work.mixParams.vocalPreset)} ·{' '}
+                  {formatRelativeTime(work.createdAt, Date.now(), locale)}
                 </span>
               </span>
               {/* 状态改「点 + 字」：原来右侧一个药丸徽章，和封条、标题三件套打架 */}
               <span className={`m-work-status is-${work.status}`}>
                 <span className="m-work-status-dot" aria-hidden="true" />
-                {work.status === 'ready' ? '已就绪' : work.status === 'mixing' ? '合成中' : '失败'}
+                {work.status === 'ready'
+                  ? t('common.ready')
+                  : work.status === 'mixing'
+                    ? t('mobile.status.mixing')
+                    : t('common.failed')}
               </span>
             </Link>
           </li>

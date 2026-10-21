@@ -202,7 +202,7 @@ describe('曲库点歌（本地源站 + 真实 Express）', () => {
       itemId: 'whatever',
     });
     assert.equal(response.status, 404);
-    assert.match(((await response.json()) as { error: string }).error, /没有配置/);
+    assert.equal(((await response.json()) as { code: string }).code, 'library_source_not_configured');
   });
 
   it('点歌：参数缺失 → 400，条目不存在 → 404', async () => {
@@ -216,7 +216,7 @@ describe('曲库点歌（本地源站 + 真实 Express）', () => {
 
     const noItem = await postJson('/api/library/download', { providerId: sourceId, itemId: '没这个' });
     assert.equal(noItem.status, 404);
-    assert.match(((await noItem.json()) as { error: string }).error, /找不到这个伴奏/);
+    assert.equal(((await noItem.json()) as { code: string }).code, 'library_item_not_found');
   });
 
   it('点歌：下载 → 入库 → 歌词自动带出', async () => {
@@ -304,6 +304,6 @@ describe('曲库点歌（本地源站 + 真实 Express）', () => {
   it('任务查询：未知 taskId → 404（重启后前端据此提示重试）', async () => {
     const response = await fetch(`${baseUrl}/api/library/tasks/不存在的任务`);
     assert.equal(response.status, 404);
-    assert.match(((await response.json()) as { error: string }).error, /任务不存在/);
+    assert.equal(((await response.json()) as { code: string }).code, 'library_task_not_found');
   });
 });

@@ -4,6 +4,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { listMicDevices, type MicDeviceInfo } from '../audio/engine';
+import { apiLocale } from '../api';
+import { translateWith } from '../i18n';
 import { errorMessage, isBuiltinMic } from '../utils';
 
 export type MicPermission = 'unknown' | 'requesting' | 'granted' | 'denied';
@@ -58,7 +60,7 @@ export function useMicDevices(): UseMicDevicesResult {
     try {
       setAllDevices(await listMicDevices());
     } catch (err) {
-      setError(errorMessage(err, '读取麦克风设备失败'));
+      setError(errorMessage(err, translateWith(apiLocale(), 'audio.micListFailed')));
     }
   }, []);
 
@@ -89,7 +91,7 @@ export function useMicDevices(): UseMicDevicesResult {
   const request = useCallback(async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
       setPermission('denied');
-      setError('这个浏览器不支持麦克风采集，请换 Chrome 或 Edge');
+      setError(translateWith(apiLocale(), 'audio.micUnsupported'));
       return;
     }
 
@@ -104,11 +106,11 @@ export function useMicDevices(): UseMicDevicesResult {
       setPermission('denied');
       const name = err instanceof Error ? err.name : '';
       if (name === 'NotAllowedError' || name === 'SecurityError') {
-        setError('麦克风权限被拒绝了。请点地址栏左侧的图标把麦克风权限改成「允许」，然后重试。');
+        setError(translateWith(apiLocale(), 'audio.micPermissionDenied'));
       } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
-        setError('没有检测到任何麦克风设备，请插上耳麦后重试。');
+        setError(translateWith(apiLocale(), 'audio.micNoneFound'));
       } else {
-        setError(`打开麦克风失败：${errorMessage(err)}`);
+        setError(translateWith(apiLocale(), 'audio.micOpenFailed', { reason: errorMessage(err) }));
       }
     }
   }, [refresh]);

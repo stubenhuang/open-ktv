@@ -11,6 +11,7 @@ import {
   type LibrarySourceStatus,
   type LibraryTaskDto,
 } from '../../api';
+import { useI18n } from '../../i18n';
 import { errorMessage, formatBytes, formatDuration } from '../../utils';
 
 /** 任务轮询间隔（与桌面点歌台一致） */
@@ -31,6 +32,7 @@ function itemKey(item: LibraryItemDto): string {
  * 同样**不做边打边搜** —— 每个字符都打一次接口既刷爆服务端，结果也噼里啪啦地闪。
  */
 export default function MobileDiscoverPage() {
+  const { t, fmt, locale } = useI18n();
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
   const [items, setItems] = useState<LibraryItemDto[]>([]);
@@ -55,7 +57,7 @@ export default function MobileDiscoverPage() {
         if (!cancelled) setSourceCount(result.sources.length);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(errorMessage(err, '读取曲库源失败'));
+        if (!cancelled) setError(errorMessage(err, t('mobile.discover.load_sources_failed')));
       });
     return () => {
       cancelled = true;
@@ -73,7 +75,7 @@ export default function MobileDiscoverPage() {
       setError(null);
     } catch (err) {
       setItems([]);
-      setError(errorMessage(err, '搜索失败'));
+      setError(errorMessage(err, t('mobile.discover.search_failed')));
     } finally {
       setSearching(false);
       setSearched(true);
@@ -163,7 +165,7 @@ export default function MobileDiscoverPage() {
         },
       }));
     } catch (err) {
-      setError(errorMessage(err, '点歌失败'));
+      setError(errorMessage(err, t('mobile.discover.download_failed')));
     }
   };
 
@@ -175,14 +177,11 @@ export default function MobileDiscoverPage() {
       <div className="m-page">
         <header className="m-head">
           <div>
-            <h1 className="m-title">🔍 点歌台</h1>
-            <p className="m-sub">搜歌名或歌手，点「点歌」自动下载进伴奏库；有歌词会一起带上。</p>
+            <h1 className="m-title">{t('mobile.discover.title')}</h1>
+            <p className="m-sub">{t('mobile.discover.subtitle_full')}</p>
           </div>
         </header>
-        <div className="m-alert m-alert-warn">
-          还没有配置任何曲库源。内置 5sing 伴奏源默认是开的（被 FIVESING_ENABLED=0 关掉了？），
-          也可以用 LIBRARY_SOURCES 配上自己的源。伴奏照样能手动上传，不受影响。
-        </div>
+        <div className="m-alert m-alert-warn">{t('mobile.discover.no_sources')}</div>
       </div>
     );
   }
@@ -191,8 +190,8 @@ export default function MobileDiscoverPage() {
     <div className="m-page">
       <header className="m-head">
         <div>
-          <h1 className="m-title">🔍 点歌台</h1>
-          <p className="m-sub">搜歌名或歌手，点「点歌」自动下载进伴奏库。</p>
+          <h1 className="m-title">{t('mobile.discover.title')}</h1>
+          <p className="m-sub">{t('mobile.discover.subtitle')}</p>
         </div>
       </header>
 
@@ -200,7 +199,7 @@ export default function MobileDiscoverPage() {
         <div className="m-alert m-alert-error">
           {error}
           <button type="button" className="m-btn m-btn-ghost m-btn-sm" onClick={submitSearch}>
-            重试
+            {t('common.retry')}
           </button>
         </div>
       )}
@@ -210,7 +209,7 @@ export default function MobileDiscoverPage() {
           className="m-input"
           type="search"
           value={query}
-          placeholder="歌名 / 歌手"
+          placeholder={t('mobile.discover.search_placeholder')}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') submitSearch();
@@ -222,7 +221,7 @@ export default function MobileDiscoverPage() {
           disabled={searching}
           onClick={submitSearch}
         >
-          {searching ? '搜索中…' : '搜索'}
+          {searching ? t('mobile.discover.searching') : t('common.search')}
         </button>
       </div>
 
@@ -230,9 +229,9 @@ export default function MobileDiscoverPage() {
       <div className="m-chip-row">
         {(
           [
-            ['all', '全部'],
-            ['audio', '音频'],
-            ['video', '视频'],
+            ['all', t('common.all')],
+            ['audio', t('mobile.kind.audio')],
+            ['video', t('mobile.kind.video')],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -254,16 +253,23 @@ export default function MobileDiscoverPage() {
         <div className="m-chip-row">
           {sourceStatuses.map((source) => (
             <span key={source.id} className={`m-badge${source.ok ? '' : ' m-badge-warn'}`}>
-              {source.ok ? `${source.label} ${source.count}` : `${source.label} 不可用`}
+              {source.ok
+                ? t('mobile.discover.source_ok', {
+                    label: source.label,
+                    count: fmt.integer(source.count),
+                  })
+                : t('mobile.discover.source_unavailable', { label: source.label })}
             </span>
           ))}
         </div>
       )}
 
-      {searching && <div className="m-empty">正在搜索…</div>}
+      {searching && <div className="m-empty">{t('mobile.discover.searching_list')}</div>}
 
       {!searching && searched && items.length === 0 && (
-        <div className="m-empty">{query ? `没搜到「${query}」相关的伴奏。` : '曲库里还没有伴奏。'}</div>
+        <div className="m-empty">
+          {query ? t('mobile.discover.no_results', { query }) : t('mobile.discover.empty_library')}
+        </div>
       )}
 
       <ul className="m-track-list">
@@ -284,22 +290,26 @@ export default function MobileDiscoverPage() {
                   <span className="m-track-meta">
                     {item.artist ? `${item.artist} · ` : ''}
                     {item.durationSec !== null ? formatDuration(item.durationSec) : '--:--'}
-                    {item.sizeBytes !== null ? ` · ${formatBytes(item.sizeBytes)}` : ''}
-                    {item.hasLyrics ? ' · 带歌词' : ''}
+                    {item.sizeBytes !== null ? ` · ${formatBytes(item.sizeBytes, locale)}` : ''}
+                    {item.hasLyrics ? t('mobile.track.with_lyrics') : ''}
                   </span>
                   {task?.state === 'failed' && (
-                    <span className="m-track-error">{task.error ?? '下载失败'}</span>
+                    <span className="m-track-error">
+                      {task.error ?? t('mobile.discover.download_failed_short')}
+                    </span>
                   )}
                 </span>
                 {running ? (
                   <span className="m-track-go m-track-progress">
-                    {Math.round((task?.progress ?? 0) * 100)}%
+                    {fmt.percent(task?.progress ?? 0)}
                     <br />
-                    <span className="m-faint">{task?.state === 'queued' ? '排队中' : '下载中'}</span>
+                    <span className="m-faint">
+                      {task?.state === 'queued' ? t('common.pending') : t('mobile.discover.downloading')}
+                    </span>
                   </span>
                 ) : importedTrackId || task?.trackId ? (
                   <Link className="m-btn m-btn-primary m-btn-sm" to={`/m/sing/${importedTrackId ?? task?.trackId}`}>
-                    去演唱
+                    {t('mobile.discover.go_sing')}
                   </Link>
                 ) : (
                   <button
@@ -307,7 +317,7 @@ export default function MobileDiscoverPage() {
                     className="m-btn m-btn-primary m-btn-sm"
                     onClick={() => void handleDownload(item)}
                   >
-                    {task?.state === 'failed' ? '重试' : '点歌'}
+                    {task?.state === 'failed' ? t('common.retry') : t('mobile.discover.download')}
                   </button>
                 )}
               </div>

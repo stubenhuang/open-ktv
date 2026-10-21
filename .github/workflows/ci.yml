@@ -39,7 +39,20 @@ jobs:
       - name: 单元测试
         run: npm test
 
+      # 文案目录的一致性：键集、占位符、服务端错误码、源码里的键引用。
+      # 动过界面文案时这里必须过（详见 CONTRIBUTING.md 的 i18n 一节）。
+      - name: i18n 目录检查
+        run: npm run check:i18n
+
       # 每个源文件都带 SPDX 许可头（MIT）。新增文件别忘了加 ——
       # 见 scripts/check-license-headers.mjs。
       - name: 许可头检查
         run: npm run check:license
+
+      # 浏览器级的语言切换烟测：headless Chrome 打开 build 产物，验首屏语言、
+      # 切换、localStorage 记忆、?lang= 覆盖与 <html lang> 同步。
+      # ubuntu-latest 镜像自带 Chrome；脚本自己会找可执行文件，找不到就说清楚。
+      - name: 界面语言烟测
+        run: |
+          npm run build
+          npm run smoke:i18n

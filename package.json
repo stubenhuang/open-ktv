@@ -56,14 +56,16 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite",
-    "dev:server": "node --watch --disable-warning=ExperimentalWarning server/src/index.ts",
+    "dev:server": "node --disable-warning=ExperimentalWarning server/src/index.ts",
     "build": "vite build",
     "start": "node --disable-warning=ExperimentalWarning server/src/index.ts",
     "serve": "npm run build && npm start",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json",
     "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts",
     "test:e2e": "node scripts/e2e-browser.mjs",
-    "check:license": "node scripts/check-license-headers.mjs"
+    "check:i18n": "node scripts/check-i18n.mjs",
+    "check:license": "node scripts/check-license-headers.mjs",
+    "smoke:i18n": "node scripts/smoke-i18n.mjs"
   },
   "dependencies": {
     "express": "^5.2.1",

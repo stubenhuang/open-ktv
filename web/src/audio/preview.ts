@@ -17,6 +17,8 @@ import {
   toPreviewParams,
 } from '../../../shared/mix';
 import { getAudioContext } from './engine';
+import { apiLocale } from '../api';
+import { translateWith } from '../i18n';
 import { errorMessage } from '../utils';
 
 /**
@@ -76,7 +78,9 @@ export interface PreviewEngineOptions {
 async function fetchDecode(url: string, label: string): Promise<AudioBuffer> {
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`${label}加载失败（HTTP ${response.status}）`);
+    throw new Error(
+      translateWith(apiLocale(), 'audio.preview.loadFailed', { label, status: response.status }),
+    );
   }
   const bytes = await response.arrayBuffer();
   // decodeAudioData 基于回调的老形态在 Safari 上才需要，Chrome/Edge 直接返回 Promise
@@ -233,12 +237,25 @@ export class PreviewEngine {
 
   /** 并行下载并解码干声 + 伴奏；任何一路失败整体失败（由调用方展示错误） */
   static async create(options: PreviewEngineOptions): Promise<PreviewEngine> {
+    // 两轨在各语言里的叫法：下载 / 解码失败时要能说清是哪一轨
+    const vocalLabel = translateWith(apiLocale(), 'audio.preview.vocal');
+    const accompLabel = translateWith(apiLocale(), 'audio.preview.accomp');
     const [vocalBuffer, accompBuffer] = await Promise.all([
-      fetchDecode(options.vocalUrl, '干声').catch((error: unknown) => {
-        throw new Error(`干声解码失败：${errorMessage(error)}`);
+      fetchDecode(options.vocalUrl, vocalLabel).catch((error: unknown) => {
+        throw new Error(
+          translateWith(apiLocale(), 'audio.preview.decodeFailed', {
+            label: vocalLabel,
+            reason: errorMessage(error),
+          }),
+        );
       }),
-      fetchDecode(options.accompUrl, '伴奏').catch((error: unknown) => {
-        throw new Error(`伴奏解码失败：${errorMessage(error)}`);
+      fetchDecode(options.accompUrl, accompLabel).catch((error: unknown) => {
+        throw new Error(
+          translateWith(apiLocale(), 'audio.preview.decodeFailed', {
+            label: accompLabel,
+            reason: errorMessage(error),
+          }),
+        );
       }),
     ]);
     return new PreviewEngine(vocalBuffer, accompBuffer);

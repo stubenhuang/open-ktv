@@ -956,3 +956,17 @@
   font-size: var(--fs-md);
   font-family: inherit;
 }
+
+/*
+ * 手机端外壳顶栏里的语言切换器（MobileLayout 渲染的那根 .m-topbar）。
+ * 手机端没有桌面那根导航栏，语言切换就靠这一根 —— 容器复用 .m-topbar 的
+ * 弹性布局，这里只把切换器推到右侧并留出刘海安全区。
+ */
+.m-topbar > .lang-switcher {
+  margin-left: auto;
+  padding-right: max(16px, env(safe-area-inset-right));
+}
+
+.m-topbar > .lang-switcher .lang-switcher-select {
+  min-height: 34px;
+}

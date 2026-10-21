@@ -3,6 +3,7 @@
 // Copyright (c) 2026 stubenhuang
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useI18n } from '../i18n';
 
 /**
  * 确认弹窗：Promise 化的 window.confirm 替代品。
@@ -54,6 +55,7 @@ export function confirmAction(options: ConfirmOptions): Promise<boolean> {
 export function ConfirmHost() {
   const [state, setState] = useState<PendingConfirm | null>(snapshot);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const { t } = useI18n();
 
   useEffect(() => {
     const listener = () => setState(snapshot());
@@ -104,14 +106,14 @@ export function ConfirmHost() {
         <div className="confirm-message">{options.message}</div>
         <div className="confirm-actions">
           <button ref={cancelRef} type="button" className="btn btn-ghost" onClick={() => settle(false)}>
-            {options.cancelText ?? '取消'}
+            {options.cancelText ?? t('components.confirm.cancel')}
           </button>
           <button
             type="button"
             className={`btn ${options.danger ? 'btn-danger' : 'btn-primary'}`}
             onClick={() => settle(true)}
           >
-            {options.confirmText ?? '确定'}
+            {options.confirmText ?? t('components.confirm.ok')}
           </button>
         </div>
       </div>

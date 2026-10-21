@@ -8,6 +8,7 @@ import type { Request, Response } from 'express';
 import multer from 'multer';
 import { createLogger } from './logger.ts';
 import { TMP_DIR } from './paths.ts';
+import { fail, readHttpError, type ApiErrorCode } from './httpError.ts';
 
 const log = createLogger('upload');
 
@@ -18,16 +19,21 @@ export interface UploadEndpointOptions {
   maxBytes: number;
   /** 临时文件名前缀，便于排障 */
   tmpPrefix: string;
-  /** 超过大小上限时返回的文案（413） */
-  sizeLimitMessage: string;
-  /** 没有收到文件时返回的文案（400） */
-  missingFileMessage: string;
-  /** 其他 multer 错误的提示前缀，例如「上传失败」 */
-  errorLabel: string;
+  /** 超过大小上限时的机器可读码（413），params.limit 带上「1 GB」这样的可读值 */
+  sizeLimitCode: ApiErrorCode;
+  /** 没有收到文件时的机器可读码（400） */
+  missingFileCode: ApiErrorCode;
+  /** 其他 multer 错误 / 业务异常的兜底码 */
+  errorCode: ApiErrorCode;
   /** 业务处理抛错时的日志文案 */
   logMessage: string;
   /** 业务处理；此时文件已落在 TMP_DIR，处理完（无论成败）都会被清理 */
   handle: (req: Request, res: Response, file: Express.Multer.File) => Promise<void>;
+}
+
+/** 大小上限的可读值（GB 一位小数）—— 给错误 params 用 */
+export function sizeLimitGb(maxBytes: number): string {
+  return `${Math.round((maxBytes / 1024 / 1024 / 1024) * 10) / 10} GB`;
 }
 
 /**
@@ -66,16 +72,16 @@ export function uploadEndpoint(options: UploadEndpointOptions): (req: Request, r
         void discardUpload(req.file);
         const err = uploadError as { code?: string; message?: string };
         if (err.code === 'LIMIT_FILE_SIZE') {
-          res.status(413).json({ error: options.sizeLimitMessage });
+          fail(res, 413, options.sizeLimitCode, { limit: sizeLimitGb(options.maxBytes) });
           return;
         }
-        res.status(400).json({ error: `${options.errorLabel}：${err.message ?? '未知错误'}` });
+        fail(res, 400, options.errorCode, { reason: err.message ?? 'unknown error' });
         return;
       }
 
       const file = req.file;
       if (!file) {
-        res.status(400).json({ error: options.missingFileMessage });
+        fail(res, 400, options.missingFileCode);
         return;
       }
 
@@ -86,12 +92,11 @@ export function uploadEndpoint(options: UploadEndpointOptions): (req: Request, r
           // 先把临时文件清干净再回错，避免 tmp 里留下一份半成品
           await discardUpload(file);
           log.error(options.logMessage, { error });
-          // 业务层可以用 status 指定状态码（例如入库时的 400 / 404）；
-          // 没有就按 400 —— 上传路径上的失败基本都是「你给的文件有问题」
-          const status = (error as { status?: number } | null)?.status ?? 400;
-          res
-            .status(status)
-            .json({ error: error instanceof Error ? error.message : '未知错误' });
+          // 业务层抛 HttpError（带 status / code / params）时原样回给客户端；
+          // 普通异常按 options.errorCode 兜底 —— 上传路径上的失败基本都是
+          // 「你给的文件有问题」
+          const { status, code, params } = readHttpError(error, options.errorCode, 400);
+          fail(res, status, code, params);
           return;
         }
         await discardUpload(file);

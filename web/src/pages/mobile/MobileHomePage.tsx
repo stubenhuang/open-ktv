@@ -7,6 +7,7 @@ import { Link } from 'react-router-dom';
 import type { TrackListItem } from '../../api';
 import { api } from '../../api';
 import { useEffect } from 'react';
+import { useI18n } from '../../i18n';
 import { errorMessage, formatDuration } from '../../utils';
 
 /**
@@ -16,6 +17,7 @@ import { errorMessage, formatDuration } from '../../utils';
  * （自己家几十首，不值得为它打接口，和桌面端口径一致）。
  */
 export default function MobileHomePage() {
+  const { t, fmt, plural } = useI18n();
   const [tracks, setTracks] = useState<TrackListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +31,7 @@ export default function MobileHomePage() {
         if (!cancelled) setTracks(list);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(errorMessage(err, '加载伴奏失败'));
+        if (!cancelled) setError(errorMessage(err, t('mobile.load_tracks_failed')));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -56,9 +58,11 @@ export default function MobileHomePage() {
     <div className="m-page">
       <header className="m-head">
         <div>
-          <h1 className="m-title">🎤 选首歌开唱</h1>
+          <h1 className="m-title">{t('mobile.home.title')}</h1>
           <p className="m-sub">
-            已连接 {typeof location !== 'undefined' ? location.host : ''}
+            {t('mobile.home.connected', {
+              host: typeof location !== 'undefined' ? location.host : '',
+            })}
           </p>
         </div>
       </header>
@@ -67,7 +71,7 @@ export default function MobileHomePage() {
         <div className="m-alert m-alert-error">
           {error}
           <button type="button" className="m-btn m-btn-ghost m-btn-sm" onClick={() => window.location.reload()}>
-            重试
+            {t('common.retry')}
           </button>
         </div>
       )}
@@ -77,30 +81,30 @@ export default function MobileHomePage() {
           className="m-input"
           type="search"
           value={query}
-          placeholder="搜歌名 / 歌手"
+          placeholder={t('mobile.home.search_placeholder')}
           onChange={(event) => setQuery(event.target.value)}
         />
       </div>
 
-      {loading && <div className="m-empty">正在加载伴奏…</div>}
+      {loading && <div className="m-empty">{t('mobile.home.loading')}</div>}
 
       {!loading && !error && visible.length === 0 && (
         <div className="m-empty">
           {tracks.length === 0 ? (
             <>
-              <p>曲库还是空的。</p>
-              <p>去电脑端上传伴奏，或在「点歌」里搜一首直接入库。</p>
+              <p>{t('mobile.home.empty_library')}</p>
+              <p>{t('mobile.home.empty_library_hint')}</p>
               <div className="m-rec-actions" style={{ marginTop: 12 }}>
                 <Link className="m-btn m-btn-primary m-btn-record" to="/m/discover">
-                  去点歌台
+                  {t('mobile.home.go_discover')}
                 </Link>
                 <Link className="m-btn m-btn-ghost m-btn-record" to="/m/works">
-                  看作品
+                  {t('mobile.home.go_works')}
                 </Link>
               </div>
             </>
           ) : (
-            `没有匹配「${query}」的伴奏。`
+            t('mobile.home.no_match', { query })
           )}
         </div>
       )}
@@ -117,7 +121,7 @@ export default function MobileHomePage() {
                 <span className="m-track-meta">
                   {track.artist ? `${track.artist} · ` : ''}
                   {formatDuration(track.duration)}
-                  {track.hasLyrics ? ' · 有歌词' : ''}
+                  {track.hasLyrics ? t('mobile.track.has_lyrics') : ''}
                 </span>
               </span>
               <span className="m-track-go" aria-hidden="true">
@@ -129,9 +133,11 @@ export default function MobileHomePage() {
       </ul>
 
       {pendingCount > 0 && (
-        <p className="m-foot-note">另有 {pendingCount} 首正在转码或处理失败，手机上先不列。</p>
+        <p className="m-foot-note">
+          {plural('mobile.home.pending_note', pendingCount, { count: fmt.integer(pendingCount) })}
+        </p>
       )}
-      <p className="m-foot-note">唱完的作品会进「我的作品」，电脑端可以调效果、下载 MP3。</p>
+      <p className="m-foot-note">{t('mobile.home.foot_note')}</p>
     </div>
   );
 }

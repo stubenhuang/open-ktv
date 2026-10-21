@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Response } from 'express';
 import { createLogger } from './logger.ts';
+import { fail } from './httpError.ts';
 
 const log = createLogger('media');
 
@@ -41,7 +42,7 @@ function contentDisposition(fileName: string): string {
 export function sendMedia(res: Response, filePath: string, downloadName?: string): void {
   if (!fs.existsSync(filePath)) {
     log.warn('媒体文件不存在', { filePath });
-    res.status(404).json({ error: '文件不存在或已被删除' });
+    fail(res, 404, 'file_not_found');
     return;
   }
 
@@ -64,6 +65,6 @@ export function sendMedia(res: Response, filePath: string, downloadName?: string
       res.end();
       return;
     }
-    res.status(500).json({ error: `读取文件失败：${error.message}` });
+    fail(res, 500, 'file_read_failed', { reason: error.message });
   });
 }

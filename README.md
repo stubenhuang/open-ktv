@@ -1,10 +1,17 @@
 # Open KTV
 
 [![CI](https://github.com/stubenhuang/open-ktv/actions/workflows/ci.yml/badge.svg)](https://github.com/stubenhuang/open-ktv/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![i18n](https://img.shields.io/badge/i18n-zh--CN%20%7C%20en-blue.svg)](docs/i18n.md)
+[![Node](https://img.shields.io/badge/node-%3E%3D22.6-brightgreen.svg)](package.json)
+[![Dependencies](https://img.shields.io/badge/runtime%20deps-7-informational.svg)](package.json)
 
 简易版全民K歌（Web）：**点歌或上传伴奏 → 跟唱歌词 → 戴耳机带耳返演唱 → 服务端合成 192kbps MP3 → 试听 / 调整效果与音效 / 下载**。
 
 单机自用，无需登录。伴奏库上传**只收音频**（弹窗里选音频 + 可选 .lrc 歌词）；点歌台**内置 5sing 伴奏搜索/下载**（默认开箱即用），也可以再配自建曲库源。
+
+界面语言**简体中文 / English** 随时切换（导航栏右侧的语言选择器，手机端在顶栏），记住在浏览器里，也可以直接用
+`?lang=en` 打开一个指定语言的链接 —— 详见[界面语言与国际化](#界面语言与国际化)。
 
 ## 功能
 
@@ -215,7 +222,7 @@ sudo chown -R $(id -u):$(id -g) ~/.npm   # 修好后可删掉 .npmrc 里那一�
 
 手机连**同一个 WiFi**，扫**桌面端页面右上角 📱 菜单里**的二维码，就能打开移动端演唱页 —— 不用装 App、
 不用输地址。手机端底部三个 tab：**伴奏 / 点歌 / 作品**，覆盖「选歌 → 放伴奏 + 录干声 → 上传自动混音 → 调效果下载」整条链路，作品和桌面端完全打通
-（电脑端「我的作品」里能调效果、下载 MP3）。
+（电脑端「我的作品」里能调效果、下载 MP3）。手机端顶栏也有语言选择器，与桌面端同一套语言设置。
 
 1. 桌面端打开 <http://127.0.0.1:8787>，**导航栏右上角的 📱 图标**（悬停即展开）就是二维码 + 局域网地址。
    所有桌面页面（伴奏库 / 点歌台 / 我的作品 / 演唱页 / 作品编辑页）右上角都有这个入口。
@@ -320,6 +327,36 @@ JSON**，不需要实现任何服务端逻辑 —— NAS、对象存储、局域
 
 **关掉内置源**：`FIVESING_ENABLED=0` / `KUGOU_LYRICS_ENABLED=0`（见下面「配置」）。
 
+## 界面语言与国际化
+
+界面文案全部走翻译目录，**没有任何一处写死在组件里**：
+
+- **两种语言开箱即用**：简体中文（`zh-CN`，参考语言）与 English（`en`）。
+- **切换**：桌面端导航栏右侧的语言选择器；手机端在顶栏。选择记在浏览器
+  `localStorage` 里，刷新、重启都不丢。
+- **链接带语言**：`http://127.0.0.1:8787/?lang=en` 直接以英文打开（二维码地址也可以带上）。
+- **自动探测**：没选过时按浏览器偏好（`navigator.languages`）取，`en-GB` 这类带地区的
+  标签按主语言归到 `en`；都没有才回落简体中文。
+- **`<html lang>` 跟着实际语言走** —— 读屏软件、搜索引擎和浏览器自带的翻译按钮都看它。
+- **数字 / 日期 / 文件大小 / 时长 / 列表全部走 `Intl`**，不手拼：中文「1,024.0 GB」、
+  「2025/01/02 03:04」、`a、b和c`，英文 "1,024.0 GB"、"01/02/2025, 03:04"、"a, b, and c"。
+- **接口不说人话**：错误响应只给机器可读码（`{ "code": "track_not_found" }`）加结构化参数，
+  句子由前端按用户的语言拼。所以加一种界面语言不用改后端，改一句文案也不用重新部署服务。
+
+翻译目录在 `web/src/i18n/locales/<语言>/<分区>.ts`，一个分区一个文件
+（`common` / `library` / `discover` / `sing` / `works` / `detail` / `retake` /
+`mobile` / `components` / `audio` / `errors` / `app` / `nav`），键是语义化的
+（`library.upload`，不是「上传伴奏」）。改文案只改目录，不用碰代码。
+
+加一种语言的完整步骤、`plural()` 复数怎么写、哪些字符串**故意不翻译**（代码注释、
+运维日志、用户数据），见 [docs/i18n.md](docs/i18n.md)。
+
+```bash
+npm run check:i18n    # 目录一致性：键集 / 占位符 / 服务端错误码 / 源码里的键引用
+```
+
+CI 里每次 push 和 PR 都会跑它 —— 缺一条翻译就红。
+
 ## 数据存放
 
 全部在项目下的 `data/`（已加进 `.gitignore`）：
@@ -394,6 +431,48 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" FIVESING_ENAB
 
 多个源用逗号分隔；名字可以省略（省略时用清单里的 `name`，再不行用主机名）。
 
+## 开发与测试
+
+```bash
+npm install
+npm run dev             # 开发模式（Vite HMR + 后端 --watch），前台跑
+npm run typecheck       # tsc：前端 + 服务端两份 tsconfig
+npm test                # 单元测试（node:test，全程不碰外网）
+npm run check:i18n      # 文案目录一致性（键集 / 占位符 / 错误码 / 源码引用）
+npm run check:license   # SPDX 许可头
+npm run smoke:i18n      # headless Chrome 里验一遍语言切换（要装 Chrome）
+npm run build           # 生产前端产物
+npm start               # 生产服务，前台跑
+```
+
+完整规范（提交信息格式、写范围划分、i18n 约定）见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+测试全部走本地桩：5sing / 酷狗都有本地 HTTP 桩（`tests/*.test.ts`），不依赖外网，
+也不需要真实 Chrome（`npm run test:e2e` 才要）。
+
 ## 许可
 
-[MIT](LICENSE)
+[MIT](LICENSE) —— 可以用、可以改、可以拿去卖，只需要在副本里保留版权声明与许可声明。
+仓库里每个源文件第一行都带 `SPDX-License-Identifier: MIT`（单个文件被拷走时声明不会丢），
+CI 会检查漏掉的：
+
+```bash
+npm run check:license           # 查
+npm run check:license -- --fix  # 补
+```
+
+### 社区与治理
+
+| 文件 | 内容 |
+|---|---|
+| [LICENSE](LICENSE) | MIT 许可全文 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 怎么跑起来、怎么提 PR、提交信息与 i18n 规范 |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 行为准则（Contributor Covenant 2.1，中英双语） |
+| [SECURITY.md](SECURITY.md) | 漏洞报告渠道、威胁模型、已内建的加固与不在范围内的项 |
+| [CHANGELOG.md](CHANGELOG.md) | Keep a Changelog 格式的变更记录 |
+| [docs/i18n.md](docs/i18n.md) | 国际化设计与新增语言指南 |
+| [.github/ISSUE_TEMPLATE](.github/ISSUE_TEMPLATE) | Bug 报告 / 功能建议表单 |
+| [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md) | PR 模板 |
+
+报告安全问题请**不要**开公开 issue，走
+[GitHub Security Advisories](https://github.com/stubenhuang/open-ktv/security/advisories/new)
+（见 [SECURITY.md](SECURITY.md)）。

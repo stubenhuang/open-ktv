@@ -2,19 +2,22 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 stubenhuang
 
-import type { WorkListItem } from '../../shared/types.js';
+import type { Locale, WorkListItem } from '../../shared/types.js';
 
 /**
  * 从 catch 到的任意值里取出可展示的文案。
- * 后端返回的 ApiError（继承 Error）会带上服务端的中文提示，直接透出即可。
+ *
+ * `ApiError` 在构造时就把服务端错误码翻成了当前界面语言的句子
+ * （见 api.ts），所以这里只看 `message`。调用方传进来的 fallback 应该已经是
+ * 翻译好的文案，例如 `errorMessage(err, t('library.loadFailed'))`。
  */
-export function errorMessage(error: unknown, fallback = '未知错误'): string {
+export function errorMessage(error: unknown, fallback = ''): string {
   if (error instanceof Error) return error.message || fallback;
   const text = String(error ?? '').trim();
   return text || fallback;
 }
 
-/** 秒 → mm:ss（超过一小时给 h:mm:ss） */
+/** 秒 → mm:ss（超过一小时给 h:mm:ss）。数字时钟式，与语言无关 */
 export function formatDuration(seconds: number | null | undefined): string {
   if (!seconds || !Number.isFinite(seconds) || seconds < 0) return '--:--';
   const total = Math.round(seconds);
@@ -25,7 +28,7 @@ export function formatDuration(seconds: number | null | undefined): string {
   return hours > 0 ? `${hours}:${pad(minutes)}:${pad(secs)}` : `${pad(minutes)}:${pad(secs)}`;
 }
 
-/** 毫秒 → mm:ss.mmm，录音计时用 */
+/** 毫秒 → mm:ss.mmm，录音计时用（纯数字，与语言无关） */
 export function formatTimer(ms: number): string {
   const total = Math.max(0, ms);
   const minutes = Math.floor(total / 60_000);
@@ -34,18 +37,39 @@ export function formatTimer(ms: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
 }
 
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
-  const value = bytes / 1024 ** index;
-  return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+/* ------------------------------ 本地化格式化 ------------------------------ */
+
+/**
+ * 本地化格式化的出口。
+ *
+ * 这些函数只是 `web/src/i18n/format.ts` 的薄封装：那边是唯一的实现
+ * （`useI18n().fmt` 用的是同一份），这里保留旧的调用方式，让不拿 React
+ * context 的纯函数也能按语言格式化。
+ *
+ * 规则：**不许在别处手拼数字 / 单位 / 日期** —— 一律走这里或 `fmt.*`。
+ */
+
+import { createFormatters } from './i18n/format.ts';
+
+const formatterCache = new Map<Locale, ReturnType<typeof createFormatters>>();
+
+function formattersFor(locale: Locale): ReturnType<typeof createFormatters> {
+  let formatters = formatterCache.get(locale);
+  if (!formatters) {
+    formatters = createFormatters(locale);
+    formatterCache.set(locale, formatters);
+  }
+  return formatters;
 }
 
-export function formatDateTime(timestamp: number): string {
-  const date = new Date(timestamp);
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+/** 文件大小 → 「4.2 MB」。1024 进制，单位词与小数分隔符由语言决定 */
+export function formatBytes(bytes: number, locale: Locale = 'zh-CN'): string {
+  return formattersFor(locale).bytes(bytes);
+}
+
+/** 时间戳 → 「2025/01/02 21:12」，顺序与补零交给 `Intl` */
+export function formatDateTime(timestamp: number, locale: Locale = 'zh-CN'): string {
+  return formattersFor(locale).dateTime(timestamp);
 }
 
 /* ------------------------------ 麦克风设备筛选 ------------------------------ */
@@ -269,11 +293,23 @@ export function coverGradient(text: string): string {
 
 /* ------------------------------ 相对时间 ------------------------------ */
 
-/** 一天之内的「短间隔」阈值：超过它就按日历口径说「今天 / 昨天」 */
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 /** 60 秒：混音完成到用户回到列表页，常常就差这几秒 */
 const JUST_NOW_MS = 60_000;
+
+const relativeFormatters = new Map<Locale, Intl.RelativeTimeFormat>();
+const timeOnlyFormatters = new Map<Locale, Intl.DateTimeFormat>();
+const monthDayFormatters = new Map<Locale, Intl.DateTimeFormat>();
+
+function relativeFormatter(locale: Locale): Intl.RelativeTimeFormat {
+  let formatter = relativeFormatters.get(locale);
+  if (!formatter) {
+    formatter = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+    relativeFormatters.set(locale, formatter);
+  }
+  return formatter;
+}
 
 /**
  * 时间戳 → 友好的相对时间（本地时区，纯函数，`now` 可注入便于测试）。
@@ -282,38 +318,56 @@ const JUST_NOW_MS = 60_000;
  * 更好用 —— 用户记得自己是今晚唱的还是昨天下午唱的，绝对时刻直接告诉
  * 他，不用自己换算。规则：
  *
- *  - 未来或 1 分钟内（时钟偏斜 / 刚发生）→「刚刚」
+ *  - 未来或 1 分钟内（时钟偏斜 / 刚发生）→ `Intl.RelativeTimeFormat` 的「现在」
  *  - 1 小时内                            →「N 分钟前」
- *  - 同一天（自然日）                    →「今天 HH:mm」
- *  - 前一天                              →「昨天 HH:mm」
- *  - 同一年                              →「MM-DD」
- *  - 更早                                →「YYYY-MM-DD」
+ *  - 同一天（自然日）                    →「HH:mm」
+ *  - 前一天                              →「昨天」
+ *  - 同一年                              →「1月2日」
+ *  - 更早                                →「2026年1月2日」
+ *
+ * 文案全部来自 `Intl.RelativeTimeFormat` / `Intl.DateTimeFormat`，
+ * 不在这里放任何中文 —— 加一种语言不用改这个文件。
  */
-export function formatRelativeTime(timestamp: number, now: number = Date.now()): string {
+export function formatRelativeTime(
+  timestamp: number,
+  now: number = Date.now(),
+  locale: Locale = 'zh-CN',
+): string {
   if (!Number.isFinite(timestamp) || timestamp <= 0) return '--';
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return '--';
 
   const reference = new Date(Number.isFinite(now) ? now : Date.now());
   const diff = reference.getTime() - date.getTime();
-  if (diff < JUST_NOW_MS) return '刚刚';
-  if (diff < HOUR_MS) return `${Math.floor(diff / MINUTE_MS)} 分钟前`;
+  const relative = relativeFormatter(locale);
 
-  const pad = (value: number) => String(value).padStart(2, '0');
+  if (diff < JUST_NOW_MS) return relative.format(0, 'second');
+  if (diff < HOUR_MS) return relative.format(-Math.floor(diff / MINUTE_MS), 'minute');
+
   const sameDay = (a: Date, b: Date) =>
     a.getFullYear() === b.getFullYear() &&
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate();
-  const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
 
-  if (sameDay(date, reference)) return `今天 ${clock}`;
+  if (sameDay(date, reference)) {
+    let timeOnly = timeOnlyFormatters.get(locale);
+    if (!timeOnly) {
+      timeOnly = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+      timeOnlyFormatters.set(locale, timeOnly);
+    }
+    return timeOnly.format(date);
+  }
   const yesterday = new Date(reference);
   yesterday.setDate(reference.getDate() - 1);
-  if (sameDay(date, yesterday)) return `昨天 ${clock}`;
-  if (date.getFullYear() === reference.getFullYear()) {
-    return `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  if (sameDay(date, yesterday)) return relative.format(-1, 'day');
+
+  let monthDay = monthDayFormatters.get(locale);
+  if (!monthDay) {
+    monthDay = new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' });
+    monthDayFormatters.set(locale, monthDay);
   }
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  if (date.getFullYear() === reference.getFullYear()) return monthDay.format(date);
+  return new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'long', day: 'numeric' }).format(date);
 }
 
 /* ------------------------------ 作品列表筛选 ------------------------------ */
@@ -335,10 +389,14 @@ export interface WorksQuery {
  * 关键字 + 状态 + 排序后的可见作品（纯函数，单测见 tests/web-utils.test.ts）。
  *
  * 与伴奏库的筛选同构：作品就自己家几十首，全量已经在内存里，客户端过滤
- * 不值得为它打接口。歌名按拼音排（localeCompare 的 zh 排序），和
+ * 不值得为它打接口。歌名排序走 `localeCompare` 的当前语言规则，和
  * LibraryPage 一个口径。
  */
-export function selectVisibleWorks(works: WorkListItem[], filter: WorksQuery): WorkListItem[] {
+export function selectVisibleWorks(
+  works: WorkListItem[],
+  filter: WorksQuery,
+  locale: Locale = 'zh-CN',
+): WorkListItem[] {
   const keyword = filter.query.trim().toLowerCase();
   const filtered = keyword
     ? works.filter((work) => {
@@ -357,7 +415,9 @@ export function selectVisibleWorks(works: WorkListItem[], filter: WorksQuery): W
       : filtered.filter((work) => work.status === filter.status);
 
   if (filter.sortBy === 'title') {
-    return [...byStatus].sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'));
+    // 歌名排序跟着界面语言走：中文用拼音序（localeCompare 的 zh 规则），
+    // 英文界面用拉丁序 —— 用户找歌的直觉跟界面语言一致
+    return [...byStatus].sort((a, b) => a.title.localeCompare(b.title, locale));
   }
   if (filter.sortBy === 'duration') {
     return [...byStatus].sort((a, b) => (b.vocalDuration ?? 0) - (a.vocalDuration ?? 0));

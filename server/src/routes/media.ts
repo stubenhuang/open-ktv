@@ -6,6 +6,7 @@ import { Router } from 'express';
 import { getTrack } from '../db.ts';
 import { sendMedia } from '../media.ts';
 import { playableFileFor } from '../pitch.ts';
+import { fail } from '../httpError.ts';
 
 const router = Router();
 
@@ -19,11 +20,16 @@ const router = Router();
 router.get('/track/:id', (req, res) => {
   const track = getTrack(req.params.id);
   if (!track) {
-    res.status(404).json({ error: '伴奏不存在' });
+    fail(res, 404, 'track_not_found');
     return;
   }
   if (track.status !== 'ready') {
-    res.status(409).json({ error: track.error ?? '伴奏还在转码中，请稍候' });
+    // track.error 是服务端记下来的转码失败原因；还在转码中则用固定码
+    if (track.error) {
+      fail(res, 409, 'track_transcode_failed', { reason: track.error });
+    } else {
+      fail(res, 409, 'track_processing');
+    }
     return;
   }
   sendMedia(res, playableFileFor(track));

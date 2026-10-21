@@ -19,6 +19,7 @@ import {
 import { LevelMeter } from '../components/LevelMeter';
 import { LyricsView } from '../components/LyricsView';
 import { KtvEngine, isMicSupported } from '../audio/engine';
+import { useI18n } from '../i18n';
 import { useMicDevices } from '../hooks/useMicDevices';
 import { usePolling } from '../hooks/usePolling';
 import { errorMessage, formatDuration, formatTimer } from '../utils';
@@ -49,6 +50,7 @@ const MIN_SEGMENT_SEC = RETAKE_LIMITS.minSegmentSec;
 export default function RetakePage() {
   const { workId = '' } = useParams();
   const navigate = useNavigate();
+  const { t, fmt } = useI18n();
 
   const [work, setWork] = useState<WorkListItem | null>(null);
   const [track, setTrack] = useState<TrackDetail | null>(null);
@@ -104,7 +106,7 @@ export default function RetakePage() {
           if (!cancelled) setTrack(loadedTrack);
         }
       } catch (err) {
-        if (!cancelled) setLoadError(errorMessage(err, '加载作品失败'));
+        if (!cancelled) setLoadError(errorMessage(err, t('retake.load_failed')));
       }
     })();
 
@@ -186,7 +188,7 @@ export default function RetakePage() {
       .catch((err: unknown) => {
         if (cancelled) return;
         setMicReady(false);
-        setActionError(`接入麦克风失败：${errorMessage(err)}`);
+        setActionError(t('retake.mic_connect_failed', { reason: errorMessage(err) }));
       });
 
     return () => {
@@ -337,19 +339,13 @@ export default function RetakePage() {
       // 采集告警与整首录音同一套判据（丢拍 / 驱动硬开处理）
       if (result.droppedRatio > 0.005) {
         setCaptureWarning(
-          `这次录音有 ${(result.droppedRatio * 100).toFixed(1)}% 的时间片没采到，` +
-            '声音可能会断断续续。多半是音频设备/驱动或系统负载的问题，' +
-            '可以关掉别的占资源的程序、换一个麦克风接口再试。',
+          t('retake.capture.dropped_frames', { percent: fmt.percent(result.droppedRatio, 1) }),
         );
       } else if (
         result.captureSettings.echoCancellation ||
         result.captureSettings.noiseSuppression
       ) {
-        setCaptureWarning(
-          '这个麦克风的驱动强制开启了「回声消除/降噪」，浏览器关不掉。' +
-            '它们会把歌声当成噪声处理，录出来可能发闷或断断续续。' +
-            '如果设备支持，去系统声音设置里把「环境降噪」之类的选项关掉。',
-        );
+        setCaptureWarning(t('retake.capture.forced_processing'));
       }
 
       // 裁窗口：目标干声区间 [startSec, endSec) 在新录音里的位置。
@@ -368,21 +364,22 @@ export default function RetakePage() {
       // 起播间隔测出异常值（远大于原录音的 G）时，窗口起点会跑到录音之前
       if (windowStartSec < -0.05) {
         setPhase('pick');
-        setActionError('这次重录的起播没测准，对齐会错位。请把开始时间往后挪一点再录一遍。');
+        setActionError(t('retake.offset_not_measured'));
         return;
       }
       // 录音在片段结束前就停了（手动早点 / 设备中途挂掉）：补静音不如明说
       if (to > result.samples.length) {
         setPhase('pick');
         setActionError(
-          `这次录音在片段结束前就停了（共 ${formatDuration(result.durationSec)}，` +
-            '没能覆盖整段）。重新录一遍，或把结束时间往前提。',
+          t('retake.recording_too_short_for_range', {
+            duration: formatDuration(result.durationSec),
+          }),
         );
         return;
       }
       if (to - Math.max(0, from) < sampleRate * MIN_SEGMENT_SEC) {
         setPhase('pick');
-        setActionError('裁出来的重录片段太短，请重新录制。');
+        setActionError(t('retake.segment_too_short'));
         return;
       }
 
@@ -395,7 +392,7 @@ export default function RetakePage() {
       navigate(`/works/${work.id}`);
     } catch (err) {
       setPhase('pick');
-      setActionError(errorMessage(err, '重录失败'));
+      setActionError(errorMessage(err, t('retake.failed')));
     } finally {
       // 失败时放行，让用户改完再来一次；成功时已经导航走，无所谓
       stoppingRef.current = false;
@@ -422,7 +419,7 @@ export default function RetakePage() {
       setElapsedMs(0);
       setPhase('recording');
     } catch (err) {
-      setActionError(errorMessage(err, '开始重录失败'));
+      setActionError(errorMessage(err, t('retake.start_failed')));
     }
   }, [engine, seekPlan]);
 
@@ -473,12 +470,9 @@ export default function RetakePage() {
   if (!isMicSupported()) {
     return (
       <div>
-        <div className="alert alert-error">
-          这个浏览器缺少录音所需的 Web Audio 能力（AudioWorklet / getUserMedia）。
-          请用桌面版 Chrome 或 Edge 打开。
-        </div>
+        <div className="alert alert-error">{t('retake.unsupported_browser')}</div>
         <Link className="btn" to={workId ? `/works/${workId}` : '/works'}>
-          返回作品
+          {t('retake.back_to_work')}
         </Link>
       </div>
     );
@@ -489,24 +483,21 @@ export default function RetakePage() {
       <div>
         <div className="alert alert-error">{loadError}</div>
         <Link className="btn" to={workId ? `/works/${workId}` : '/works'}>
-          返回作品
+          {t('retake.back_to_work')}
         </Link>
       </div>
     );
   }
 
-  if (!work) return <div className="empty-state">正在加载作品…</div>;
+  if (!work) return <div className="empty-state">{t('retake.loading')}</div>;
 
   // 伴奏被删：重录要跟着重新混音，没有伴奏就无从混音
   if (!work.trackId || !track) {
     return (
       <div>
-        <div className="alert alert-warn">
-          这个作品用的伴奏已经被删除了。分段重录需要伴奏文件（重录完要重新混音），
-          所以不能再重录；已生成的 MP3 还能在作品库里播放 / 下载。
-        </div>
+        <div className="alert alert-warn">{t('retake.track_deleted')}</div>
         <Link className="btn" to={`/works/${work.id}`}>
-          返回作品
+          {t('retake.back_to_work')}
         </Link>
       </div>
     );
@@ -517,11 +508,11 @@ export default function RetakePage() {
       <div>
         <div className="alert alert-warn">
           {track.status === 'processing'
-            ? '这个伴奏还在转码中，转好之后才能重录。'
-            : `这个伴奏处理失败了：${track.error ?? '未知原因'}`}
+            ? t('retake.track_processing')
+            : t('retake.track_failed', { reason: track.error ?? t('components.unknown_reason') })}
         </div>
         <Link className="btn" to={`/works/${work.id}`}>
-          返回作品
+          {t('retake.back_to_work')}
         </Link>
       </div>
     );
@@ -536,46 +527,61 @@ export default function RetakePage() {
 
   const startHint =
     track.pitchStatus === 'processing'
-      ? '伴奏正在按新调生成，生成好才能重录…'
+      ? t('retake.hint.pitch_processing')
       : track.pitchStatus === 'failed'
         ? // 不挡重录（这版混的已经是原调），但要说清楚：重录片段会和旧片段同在原调上
-          `移调没成功（${track.pitchError ?? '原因未知'}），将按原调重录。想用新调就重试，或拖回「原调」。`
+          t('retake.hint.pitch_failed', {
+            reason: track.pitchError ?? t('components.unknown_reason'),
+          })
         : engine
           ? mic.permission !== 'granted'
-            ? '等待麦克风授权…'
+            ? t('retake.hint.mic_permission')
             : mic.devices.length === 0
-              ? '没有可用的外置麦克风，插上麦克风后这里会自动出现。'
+              ? t('retake.hint.no_mic')
               : micReady
                 ? seekPlan
-                  ? `准备好了：戴好耳机点「开始重录」。伴奏会从 ${formatDuration(seekPlan.seekPos)} 响起（片段开始前 ${RETAKE_LIMITS.leadInSec} 秒），唱到片段结束自动停。`
-                  : '正在准备音频…'
-                : '正在接入麦克风…'
-          : '正在准备音频…';
+                  ? t('retake.hint.ready', {
+                      start: formatDuration(seekPlan.seekPos),
+                      lead_in: fmt.integer(RETAKE_LIMITS.leadInSec),
+                    })
+                  : t('retake.hint.preparing_audio')
+                : t('retake.hint.connecting_mic')
+          : t('retake.hint.preparing_audio');
 
   return (
     <div>
       <div className="page-head">
         <div>
-          <h1 className="page-title">分段重录</h1>
+          <h1 className="page-title">{t('retake.title')}</h1>
           <p className="page-sub">
-            {work.title} · 干声 {formatDuration(work.vocalDuration)}
-            {track.artist ? ` · ${track.artist}` : ''}
+            {track.artist
+              ? t('retake.subtitle_with_artist', {
+                  title: work.title,
+                  duration: formatDuration(work.vocalDuration),
+                  artist: track.artist,
+                })
+              : t('retake.subtitle', {
+                  title: work.title,
+                  duration: formatDuration(work.vocalDuration),
+                })}
           </p>
         </div>
         <Link className="btn btn-ghost" to={`/works/${work.id}`}>
-          返回作品
+          {t('retake.back_to_work')}
         </Link>
       </div>
 
       {actionError && <div className="alert alert-error" role="alert">{actionError}</div>}
       {captureWarning && <div className="alert alert-warn" role="alert">⚠️ {captureWarning}</div>}
       {work.status === 'mixing' && (
-        <div className="alert alert-warn">作品正在合成中，稍等几秒再重录（避免两次合成互相覆盖）。</div>
+        <div className="alert alert-warn">{t('retake.mixing_warning')}</div>
       )}
       {beyondTrack && (
         <div className="alert alert-warn">
-          所选片段的结束位置超出了伴奏长度（{(seekPlan!.songEnd).toFixed(1)}s /{' '}
-          {formatDuration(track.duration)}），那段没有伴奏可跟。把结束时间往前提一点。
+          {t('retake.beyond_track', {
+            end: fmt.seconds(seekPlan!.songEnd),
+            duration: formatDuration(track.duration),
+          })}
         </div>
       )}
 
@@ -588,7 +594,7 @@ export default function RetakePage() {
             style={{ marginLeft: 10 }}
             onClick={() => void mic.request()}
           >
-            重试授权
+            {t('retake.retry_permission')}
           </button>
         </div>
       )}
@@ -632,7 +638,7 @@ export default function RetakePage() {
                   </span>
                 </div>
                 <div className="stage-audio-title">{track.title}</div>
-                <div className="small faint">音频伴奏（无画面）</div>
+                <div className="small faint">{t('retake.audio_only')}</div>
               </div>
             ) : null}
 
@@ -646,12 +652,12 @@ export default function RetakePage() {
                       {phase === 'splicing' ? (
                         <>
                           <span className="spin" />
-                          正在拼接…
+                          {t('retake.splicing')}
                         </>
                       ) : (
                         <>
                           <span className="rec-dot" />
-                          <span>重录中</span>
+                          <span>{t('retake.recording')}</span>
                           <span className="mono">{formatTimer(elapsedMs)}</span>
                         </>
                       )}
@@ -667,10 +673,10 @@ export default function RetakePage() {
                       {phase === 'splicing' ? (
                         <>
                           <span className="spin" />
-                          正在拼接…
+                          {t('retake.splicing')}
                         </>
                       ) : (
-                        '完成重录'
+                        t('retake.finish')
                       )}
                     </button>
                     <button
@@ -679,7 +685,7 @@ export default function RetakePage() {
                       disabled={phase !== 'recording'}
                       onClick={handleAbandon}
                     >
-                      取消重录
+                      {t('retake.cancel')}
                     </button>
                   </div>
                 </div>
@@ -696,7 +702,7 @@ export default function RetakePage() {
                   disabled={!canRecord}
                   onClick={() => void handleStart()}
                 >
-                  开始重录
+                  {t('retake.start')}
                 </button>
                 <span className="muted small">{startHint}</span>
               </div>
@@ -709,27 +715,31 @@ export default function RetakePage() {
             两列高度也就齐了 —— 它本来就跟「开始重录」是一件事的注脚。
           */}
           <div className="card small muted" style={{ marginTop: 16 }}>
-            <div className="panel-card-title">📋 重录说明</div>
+            <div className="panel-card-title">{t('retake.notes.title')}</div>
             <ul className="record-notes">
-              <li>只替换 [{formatTimer(startSec * 1000)}, {formatTimer(endSec * 1000)}) 之间的干声，其余原样保留。</li>
               <li>
-                伴奏从片段开始前 {RETAKE_LIMITS.leadInSec} 秒响起（给你找拍），
-                到片段结束自动停录；起录时也会先留 0.15 秒静音，用来自动对齐，唱进去就行。
+                {t('retake.notes.replace_only', {
+                  start: formatTimer(startSec * 1000),
+                  end: formatTimer(endSec * 1000),
+                })}
               </li>
-              <li>拼接边界有 20ms 交叉淡化，不会咔哒；干声总时长不变。</li>
-              <li>重录前的干声会留一份备份，作品页可以「撤销重录」（只回退一级）。</li>
-              <li>拼接完成后自动重新混音，回作品页等「已就绪」即可。</li>
+              <li>
+                {t('retake.notes.lead_in', { lead_in: fmt.integer(RETAKE_LIMITS.leadInSec) })}
+              </li>
+              <li>{t('retake.notes.crossfade')}</li>
+              <li>{t('retake.notes.backup')}</li>
+              <li>{t('retake.notes.remix')}</li>
             </ul>
           </div>
         </div>
 
         <div className="control-panel">
           <div className="card">
-            <div className="panel-card-title">✂️ 重录哪一段</div>
+            <div className="panel-card-title">{t('retake.range.title')}</div>
 
             <div className="field">
               <div className="field-label">
-                <span>开始（干声时间）</span>
+                <span>{t('retake.range.start')}</span>
                 <span className="field-value">{formatTimer(startSec * 1000)}</span>
               </div>
               <input
@@ -744,7 +754,7 @@ export default function RetakePage() {
 
             <div className="field">
               <div className="field-label">
-                <span>结束（干声时间）</span>
+                <span>{t('retake.range.end')}</span>
                 <span className="field-value">{formatTimer(endSec * 1000)}</span>
               </div>
               <input
@@ -759,7 +769,7 @@ export default function RetakePage() {
 
             <div className="retake-range-row">
               <label className="small faint">
-                起（秒）
+                {t('retake.range.from')}
                 <input
                   className="text-input"
                   type="number"
@@ -771,7 +781,7 @@ export default function RetakePage() {
                 />
               </label>
               <label className="small faint">
-                止（秒）
+                {t('retake.range.to')}
                 <input
                   className="text-input"
                   type="number"
@@ -783,27 +793,27 @@ export default function RetakePage() {
                 />
               </label>
               <span className="small faint">
-                片段时长 {formatDuration(endSec - startSec)}
+                {t('retake.range.segment_duration', {
+                  duration: formatDuration(endSec - startSec),
+                })}
               </span>
               <button type="button" className="btn btn-ghost btn-sm" onClick={togglePreview}>
-                {previewing ? '停止试听' : '试听这一段'}
+                {previewing ? t('retake.preview.stop') : t('retake.preview.start')}
               </button>
             </div>
             <div className="small faint" style={{ marginTop: 6 }}>
               {work.status === 'ready'
-                ? '试听播放的是当前成品（混音后）。'
-                : '作品还没合成好，试听播放的是干声。'}
+                ? t('retake.preview.note_mix')
+                : t('retake.preview.note_vocal')}
             </div>
 
             {lyricRanges.length > 0 && (
               <div className="field" style={{ marginTop: 16 }}>
                 <div className="field-label">
-                  <span>按歌词行选</span>
+                  <span>{t('retake.lyrics.title')}</span>
                 </div>
                 {/* 说明单独一行：塞在标题右边会在窄列里折成两半，读着像排版错误 */}
-                <div className="small faint">
-                  「起」= 从这句开始替换，「止」= 到这句唱完
-                </div>
+                <div className="small faint">{t('retake.lyrics.hint')}</div>
                 <div className="retake-lyrics">
                   {lyricRanges.map((line, index) => {
                     const inRange =
@@ -822,14 +832,14 @@ export default function RetakePage() {
                           className="btn btn-ghost btn-sm"
                           onClick={() => setRangeStart(line.startSec)}
                         >
-                          起
+                          {t('retake.lyrics.from')}
                         </button>
                         <button
                           type="button"
                           className="btn btn-ghost btn-sm"
                           onClick={() => setRangeEnd(line.endSec)}
                         >
-                          止
+                          {t('retake.lyrics.to')}
                         </button>
                       </div>
                     );
@@ -840,11 +850,13 @@ export default function RetakePage() {
           </div>
 
           <div className="card">
-            <div className="panel-card-title">🎙 麦克风</div>
+            <div className="panel-card-title">{t('retake.mic.title')}</div>
             <div className="field">
               <div className="field-label">
-                <span>输入设备</span>
-                {mic.permission !== 'granted' && <span className="faint small">未授权</span>}
+                <span>{t('retake.mic.device')}</span>
+                {mic.permission !== 'granted' && (
+                  <span className="faint small">{t('retake.mic.not_granted')}</span>
+                )}
               </div>
               <select
                 className="select-input"
@@ -854,7 +866,9 @@ export default function RetakePage() {
               >
                 {mic.devices.length === 0 && (
                   <option value="">
-                    {mic.permission === 'granted' ? '（没有可用的外置输入）' : '（等待麦克风授权）'}
+                    {mic.permission === 'granted'
+                      ? t('retake.mic.no_external')
+                      : t('retake.mic.awaiting_permission')}
                   </option>
                 )}
                 {mic.devices.map((device) => (
@@ -867,30 +881,35 @@ export default function RetakePage() {
               {mic.hiddenBuiltinLabels.length > 0 &&
                 (mic.showBuiltin ? (
                   <div className="small faint">
-                    已显示全部输入设备（含内置麦克风）。
+                    {t('retake.mic.all_shown')}
                     <button type="button" className="link-btn" onClick={mic.toggleBuiltin}>
-                      只看外置
+                      {t('retake.mic.external_only')}
                     </button>
                   </div>
                 ) : mic.devices.length === 0 ? (
                   <div className="alert alert-warn" style={{ marginTop: 8 }}>
-                    没检测到外置麦克风，已隐藏：{mic.hiddenBuiltinLabels.join('、')}。
-                    插上 USB / 3.5mm 麦克风后会自动出现在这里。
+                    {t('retake.mic.no_external_found', {
+                      devices: fmt.list(mic.hiddenBuiltinLabels),
+                    })}
                     <button type="button" className="link-btn" onClick={mic.toggleBuiltin}>
-                      显示全部设备
+                      {t('retake.mic.show_all')}
                     </button>
                   </div>
                 ) : (
                   <div className="small faint">
-                    只列外置输入（已隐藏：{mic.hiddenBuiltinLabels.join('、')}）。
+                    {t('retake.mic.external_only_note', {
+                      devices: fmt.list(mic.hiddenBuiltinLabels),
+                    })}
                     <button type="button" className="link-btn" onClick={mic.toggleBuiltin}>
-                      显示全部设备
+                      {t('retake.mic.show_all')}
                     </button>
                   </div>
                 ))}
               <div className="field-label" style={{ marginTop: 6 }}>
-                <span>输入电平</span>
-                <span className="faint small">{micReady ? '对着麦克风说话试试' : '未接入'}</span>
+                <span>{t('retake.mic.level')}</span>
+                <span className="faint small">
+                  {micReady ? t('retake.mic.try_speaking') : t('retake.mic.not_connected')}
+                </span>
               </div>
               <LevelMeter engine={engine} active={micReady} />
             </div>

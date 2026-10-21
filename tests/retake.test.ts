@@ -229,11 +229,11 @@ describe('分段重录（/api/works/:id/retake）', () => {
     const segment = await makeSegment(1, 880);
     const same = await postRetake(WORK_ID, segment, 2, 2);
     assert.equal(same.status, 400);
-    assert.match(((await same.json()) as { error: string }).error, /结束时间/);
+    assert.equal(((await same.json()) as { code: string }).code, 'work_retake_range_order');
 
     const tiny = await postRetake(WORK_ID, segment, 1, 1.1);
     assert.equal(tiny.status, 400);
-    assert.match(((await tiny.json()) as { error: string }).error, /太短/);
+    assert.equal(((await tiny.json()) as { code: string }).code, 'work_retake_segment_too_short');
 
     const form = new FormData();
     form.append('segment', new Blob([segment]), 'segment.wav');
@@ -296,14 +296,14 @@ describe('分段重录（/api/works/:id/retake）', () => {
 
     const noTrack = await postRetake('retake-no-track', segment, 1, 2);
     assert.equal(noTrack.status, 409);
-    assert.match(((await noTrack.json()) as { error: string }).error, /伴奏已删除/);
+    assert.equal(((await noTrack.json()) as { code: string }).code, 'work_retake_track_deleted');
   });
 
   it('片段文件与所选区间差得太远 → 400', async () => {
     // 目标 3 秒，只上传 0.2 秒
     const response = await postRetake(WORK_ID, await makeSegment(0.2, 880), 1, 4);
     assert.equal(response.status, 400);
-    assert.match(((await response.json()) as { error: string }).error, /差得太远/);
+    assert.equal(((await response.json()) as { code: string }).code, 'work_retake_segment_mismatch');
   });
 
   it('删除作品连备份一起清掉', async () => {

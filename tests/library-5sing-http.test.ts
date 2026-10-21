@@ -397,8 +397,9 @@ describe('内置 5sing 源 + 酷狗歌词（生产默认装配，全链路）', 
     });
     // resolve 阶段 getSongUrl 就报错 → 502（任务还没排上）
     assert.equal(response.status, 502);
-    const body = (await response.json()) as { error: string };
-    assert.match(body.error, /5sing/);
+    const body = (await response.json()) as { code: string; message: string };
+    assert.equal(body.code, 'library_source_unavailable');
+    assert.match(body.message, /5sing|unavailable/i);
   });
 
   it('点歌：非数字 itemId → 404', async () => {
@@ -424,8 +425,7 @@ describe('内置 5sing 源 + 酷狗歌词（生产默认装配，全链路）', 
     // 桩的候选只有「晴天」，稻香匹配不上 → 404 语义
     const miss = await postJson(`/api/tracks/${created.id}/lyrics/auto`, {});
     assert.equal(miss.status, 404);
-    const missBody = (await miss.json()) as { error?: string };
-    assert.match(missBody.error ?? '', /没找到/);
+    assert.equal(((await miss.json()) as { code: string }).code, 'lyrics_not_found');
 
     // 把歌名改成桩能命中的「晴天」，再自动获取
     await fetch(`${baseUrl}/api/tracks/${created.id}`, {

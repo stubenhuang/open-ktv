@@ -4,6 +4,7 @@
 
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { ConfirmHost } from '../../components/ConfirmDialog';
+import { LanguageSwitcher } from '../../components/LanguageSwitcher';
 import { ToastStack } from '../../components/ToastStack';
 import { TokenGate } from '../../components/TokenGate';
 import MobileDiscoverPage from './MobileDiscoverPage';
@@ -36,9 +37,17 @@ export default function MobileLayout() {
   const { pathname } = useLocation();
   const showTabBar =
     pathname === '/m' || pathname === '/m/discover' || pathname === '/m/works';
+  // 演唱页吃满一屏（.m-sing 的 100dvh）：外壳顶栏会把它顶出视口，那一页不挂
+  const showLangBar = !pathname.startsWith('/m/sing');
 
   return (
     <div className={`m-app${showTabBar ? ' m-app-tabbed' : ''}`}>
+      {/* 手机端没有桌面那根导航栏：语言切换器单独占一根外壳顶栏（见 mobile.css） */}
+      {showLangBar && (
+        <header className="m-topbar">
+          <LanguageSwitcher />
+        </header>
+      )}
       <Routes>
         <Route path="/m" element={<MobileHomePage />} />
         <Route path="/m/discover" element={<MobileDiscoverPage />} />

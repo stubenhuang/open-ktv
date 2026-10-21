@@ -3,6 +3,8 @@
 // Copyright (c) 2026 stubenhuang
 
 import { concatFloat32, encodeWavBlob } from '../../../shared/wav';
+import { apiLocale } from '../api';
+import { translateWith } from '../i18n';
 import { log } from '../log';
 import { errorMessage } from '../utils';
 
@@ -90,7 +92,9 @@ export function ensureWorklet(context: AudioContext): Promise<void> {
       .catch((error: unknown) => {
         // 允许下次重试，避免一次失败就把整个会话卡死
         workletModulePromise = null;
-        throw new Error(`录音模块加载失败：${errorMessage(error)}`);
+        throw new Error(
+          translateWith(apiLocale(), 'audio.workletLoadFailed', { reason: errorMessage(error) }),
+        );
       });
   }
   return workletModulePromise;
@@ -410,7 +414,9 @@ export class KtvEngine {
    *   「片段结束 + 尾量」就收工 —— 之后唱得再好也不会被拼进干声，没必要一直录。
    */
   async startRecording(options: StartRecordingOptions = {}): Promise<void> {
-    if (!this.micSource) throw new Error('还没有可用的麦克风');
+    // 内部不变量（正常流程 setMicDevice 成功后才进这里），但抛出的 message 会经
+    // errorMessage(err) 显示给用户，所以照样走文案目录
+    if (!this.micSource) throw new Error(translateWith(apiLocale(), 'audio.micNotConnected'));
     await this.init();
     await this.resume();
 
@@ -445,7 +451,7 @@ export class KtvEngine {
       this.disarmAccompStartWatcher();
       this.disarmSegmentStopWatcher();
       throw new Error(
-        `伴奏播放被浏览器拦住了：${errorMessage(error)}`,
+        translateWith(apiLocale(), 'audio.accompPlayBlocked', { reason: errorMessage(error) }),
       );
     }
   }
@@ -574,7 +580,8 @@ export class KtvEngine {
 
   /** 结束录音，返回可以直接上传的 WAV */
   async stopRecording(): Promise<RecordResult> {
-    if (!this.recording) throw new Error('当前没有在录音');
+    // 同上：不变量文案，但会经 errorMessage(err) 显示给用户（重复点「停止」就会看到）
+    if (!this.recording) throw new Error(translateWith(apiLocale(), 'audio.notRecording'));
 
     this.element.pause();
     this.disarmSegmentStopWatcher();
@@ -671,7 +678,7 @@ export async function listMicDevices(): Promise<MicDeviceInfo[]> {
     .filter((device) => device.kind === 'audioinput')
     .map((device, index) => ({
       deviceId: device.deviceId,
-      label: device.label || `麦克风 ${index + 1}`,
+      label: device.label || translateWith(apiLocale(), 'audio.micFallbackName', { index: index + 1 }),
     }));
 }
 

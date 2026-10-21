@@ -7,6 +7,7 @@ import type { PreviewEngine } from '../audio/preview';
 import { Hint } from './Hint';
 import { log } from '../log';
 import { formatDuration } from '../utils';
+import { useI18n } from '../i18n';
 
 export type PreviewStatus = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -40,6 +41,7 @@ const SEEK_COMMIT_MS = 120;
  * onParamsChange 接到 PreviewEngine.setParams 上完成。
  */
 export function LivePreview({ engine, status, error, onRequestPlay }: Props) {
+  const { t } = useI18n();
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -126,7 +128,7 @@ export function LivePreview({ engine, status, error, onRequestPlay }: Props) {
       (err: unknown) => {
         setPlaying(false);
         // play() 只在浏览器拦截等极端情况失败，直接把原因抛给控制台排障
-        log.error('preview', '播放失败', err);
+        log.error('preview', t('components.preview.playFailed'), err);
       },
     );
   };
@@ -146,8 +148,8 @@ export function LivePreview({ engine, status, error, onRequestPlay }: Props) {
     <div className="card preview-card">
       <div className="preview-transport">
         <strong className="preview-title">
-          实时试听
-          <Hint text="干声 + 伴奏在浏览器里实时混音：拖滑块、改毫秒都会立刻生效，不打断播放。这只是预览 —— 点「合成」服务端才真正出新版 MP3。" />
+          {t('components.preview.title')}
+          <Hint text={t('components.preview.hint')} />
         </strong>
         <button
           type="button"
@@ -161,12 +163,12 @@ export function LivePreview({ engine, status, error, onRequestPlay }: Props) {
           {status === 'loading' ? (
             <>
               <span className="spin" style={{ borderTopColor: '#fff' }} />
-              加载中…
+              {t('common.loading')}
             </>
           ) : playing ? (
-            '⏸ 暂停'
+            t('components.preview.pause')
           ) : (
-            '▶ 试听'
+            t('components.preview.play')
           )}
         </button>
         <input
@@ -187,12 +189,12 @@ export function LivePreview({ engine, status, error, onRequestPlay }: Props) {
         <span className="preview-time">
           {formatDuration(position)} / {formatDuration(duration)}
         </span>
-        <span className="badge badge-accent">改动立即生效</span>
+        <span className="badge badge-accent">{t('components.preview.liveBadge')}</span>
       </div>
 
       {error ? (
         <div className="small preview-hint" style={{ color: 'var(--danger)' }}>
-          预览失败：{error}（可以回作品库听已生成的 MP3，或再点一次「试听」重试）
+          {t('components.preview.failed', { reason: error })}
         </div>
       ) : null}
     </div>

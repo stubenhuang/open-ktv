@@ -42,6 +42,7 @@ import { VOCALS_DIR } from '../paths.ts';
 import { probeFile } from '../probe.ts';
 import { uploadEndpoint } from '../upload.ts';
 import { spliceRetakeIntoVocal, undoRetake, backupVocalPath } from '../vocalSplice.ts';
+import { fail } from '../httpError.ts';
 import { withRecord } from './guard.ts';
 
 const log = createLogger('work');
@@ -53,7 +54,7 @@ const MAX_VOCAL_BYTES = 256 * 1024 * 1024;
 
 /** 「取作品 → 404 → 业务处理」；404 文案只在这里写一份 */
 const withWork = (handler: (req: Request, res: Response, work: WorkRecord) => void) =>
-  withRecord({ load: getWork, notFound: '作品不存在', handler });
+  withRecord({ load: getWork, notFound: 'work_not_found', handler });
 
 export function sanitizeMixParams(input: unknown, base: MixParams): MixParams {
   const raw = (input ?? {}) as Record<string, unknown>;
@@ -183,9 +184,9 @@ router.post(
     field: 'vocal',
     maxBytes: MAX_VOCAL_BYTES,
     tmpPrefix: 'vocal',
-    sizeLimitMessage: '录音文件超过 256MB，可能是录制时间过长',
-    missingFileMessage: '没有收到录音文件（表单字段名应为 vocal）',
-    errorLabel: '上传录音失败',
+    sizeLimitCode: 'upload_too_large',
+    missingFileCode: 'upload_missing_file',
+    errorCode: 'upload_failed',
     logMessage: '创建作品失败',
     handle: async (req, res, file) => {
       const body = req.body as Record<string, string | undefined>;
@@ -193,11 +194,11 @@ router.post(
       const track = trackId ? getTrack(trackId) : undefined;
 
       if (!track) {
-        res.status(400).json({ error: '请指定一个有效的伴奏' });
+        fail(res, 400, 'work_track_required');
         return;
       }
       if (track.status !== 'ready') {
-        res.status(409).json({ error: '这个伴奏还在转码中，暂时不能演唱' });
+        fail(res, 409, 'work_track_processing');
         return;
       }
 
@@ -212,11 +213,11 @@ router.post(
           : 0;
 
       if (durationSec * 1000 < MIN_RECORD_MS) {
-        res.status(400).json({ error: '录音太短了，请完整唱一段再结束' });
+        fail(res, 400, 'work_recording_too_short');
         return;
       }
       if (durationSec * 1000 > MAX_RECORD_MS + 5000) {
-        res.status(400).json({ error: '录音超过 15 分钟上限，已拒绝' });
+        fail(res, 400, 'work_recording_too_long', { limit: Math.round(MAX_RECORD_MS / 60000) });
         return;
       }
 
@@ -280,11 +281,11 @@ router.patch(
     if (body.title !== undefined) {
       const title = String(body.title).trim();
       if (!title) {
-        res.status(400).json({ error: '作品名不能为空' });
+        fail(res, 400, 'work_title_empty');
         return;
       }
       if (title.length > 120) {
-        res.status(400).json({ error: '作品名太长（最多 120 字）' });
+        fail(res, 400, 'work_title_too_long', { limit: 120 });
         return;
       }
       updateWork(work.id, { title });
@@ -298,7 +299,7 @@ router.post(
   '/:id/mix',
   withWork((req, res, work) => {
     if (isQueued(mixKey(work.id))) {
-      res.status(409).json({ error: '上一次合成还没结束，请稍等几秒' });
+      fail(res, 409, 'work_mix_in_progress');
       return;
     }
 
@@ -314,7 +315,7 @@ router.get(
   '/:id/audio',
   withWork((req, res, work) => {
     if (work.status !== 'ready' || !work.mp3Path) {
-      res.status(409).json({ error: work.error ?? '作品还在生成中，请稍候' });
+      fail(res, 409, work.error ? 'work_mix_failed' : 'work_not_ready', work.error ? { reason: work.error } : undefined);
       return;
     }
     const download = req.query.download === '1';
@@ -335,9 +336,9 @@ router.post(
     field: 'segment',
     maxBytes: MAX_VOCAL_BYTES,
     tmpPrefix: 'retake',
-    sizeLimitMessage: '重录片段超过 256MB，可能是录制时间过长',
-    missingFileMessage: '没有收到重录片段（表单字段名应为 segment）',
-    errorLabel: '上传重录片段失败',
+    sizeLimitCode: 'upload_too_large',
+    missingFileCode: 'upload_missing_file',
+    errorCode: 'upload_failed',
     logMessage: '分段重录失败',
     handle: async (req, res, file) => {
       // params.id 在通配路由下可能是数组，取第一段（与 withRecord 同口径）
@@ -345,11 +346,11 @@ router.post(
       const workId = Array.isArray(rawId) ? (rawId[0] ?? '') : rawId;
       const work = getWork(workId);
       if (!work) {
-        res.status(404).json({ error: '作品不存在' });
+        fail(res, 404, 'work_not_found');
         return;
       }
       if (!work.trackId) {
-        res.status(409).json({ error: '伴奏已删除，这个作品不能再重录（重录后需要重新混音）' });
+        fail(res, 409, 'work_retake_track_deleted');
         return;
       }
       // 正在合成时拼接会读到「半截状态」：混音任务自己会重新读库，但 startMix 又排一次
@@ -365,15 +366,17 @@ router.post(
       const startSec = clampNumber(body.startSec, 0, duration, Number.NaN);
       const endSec = clampNumber(body.endSec, 0, duration, Number.NaN);
       if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) {
-        res.status(400).json({ error: '重录区间的起止时间不正确' });
+        fail(res, 400, 'work_retake_range_invalid');
         return;
       }
       if (!(endSec > startSec)) {
-        res.status(400).json({ error: '重录区间的结束时间要晚于开始时间' });
+        fail(res, 400, 'work_retake_range_order');
         return;
       }
       if (endSec - startSec < RETAKE_LIMITS.minSegmentSec) {
-        res.status(400).json({ error: `重录区间太短（至少 ${RETAKE_LIMITS.minSegmentSec} 秒）` });
+        fail(res, 400, 'work_retake_segment_too_short', {
+          limit: RETAKE_LIMITS.minSegmentSec,
+        });
         return;
       }
 
@@ -382,11 +385,11 @@ router.post(
       const probed = await probeFile(file.path);
       const segmentDuration = Number(probed.format?.duration);
       if (!Number.isFinite(segmentDuration) || segmentDuration <= 0) {
-        res.status(400).json({ error: '重录文件解析失败，请重新录制这一段' });
+        fail(res, 400, 'work_retake_parse_failed');
         return;
       }
       if (segmentDuration < (endSec - startSec) * 0.3) {
-        res.status(400).json({ error: '上传的重录片段和所选区间差得太远，请重新录制' });
+        fail(res, 400, 'work_retake_segment_mismatch');
         return;
       }
 
@@ -411,7 +414,9 @@ router.post(
       undoRetake(work);
     } catch (error) {
       // 典型是「没有可撤销的重录备份」——备份被上一次撤销消费掉了
-      res.status(409).json({ error: error instanceof Error ? error.message : '撤销失败' });
+      fail(res, 409, 'work_retake_undo_failed', {
+        reason: error instanceof Error ? error.message : 'unknown',
+      });
       return;
     }
     updateWork(work.id, { status: 'mixing', error: null });

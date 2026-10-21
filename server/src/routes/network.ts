@@ -4,7 +4,7 @@
 
 import { Router } from 'express';
 import QRCode from 'qrcode';
-import type { NetworkInfo } from '../../../shared/types.ts';
+import type { NetworkInfo, NetworkReasonCode } from '../../../shared/types.ts';
 import {
   ACCESS_TOKEN,
   DEV_MODE,
@@ -15,6 +15,7 @@ import {
   WEB_PORT,
 } from '../config.ts';
 import { createLogger } from '../logger.ts';
+import { fail } from '../httpError.ts';
 import { buildLanUrl, lanAddresses } from '../lan.ts';
 import { lanCertFile } from '../lanCert.ts';
 import { isLoopbackHost, lanHttpsState } from '../lanHttps.ts';
@@ -79,19 +80,16 @@ export function networkInfo(): NetworkInfo {
   const withToken = (url: string): string =>
     ACCESS_TOKEN ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(ACCESS_TOKEN)}` : url;
 
-  let reason: string | null = null;
+  // 只给机器可读码，句子由前端按语言拼（见 locales/*/mobile.ts 的 mobile.reason.*）
+  let reasonCode: NetworkReasonCode | null = null;
   if (isLoopbackHost()) {
-    reason =
-      '服务只绑了本机回环（HOST=127.0.0.1），手机连不进来。把 HOST 留空（默认 0.0.0.0）重启即可。';
+    reasonCode = 'loopback_only';
   } else if (lanAddresses_.length === 0) {
-    reason = '没找到局域网网卡：确认这台机器连了 WiFi / 网线，然后刷新。';
+    reasonCode = 'no_lan_address';
   } else if (!origin) {
-    reason =
-      'HTTPS 镜像没起来（多半是没装 openssl，或端口被占用）。手机端需要 HTTPS 才能用麦克风，详见日志。';
+    reasonCode = 'https_mirror_down';
   } else if (origin.scheme === 'http') {
-    reason = DEV_MODE
-      ? '开发模式默认只开 HTTP，手机浏览器会禁用麦克风。只想看页面可以用这个地址；要能录音，加 VITE_HTTPS=1 重启。'
-      : 'http 入口：手机浏览器会禁用麦克风。设 LAN_HTTPS=1（默认就是开）并装好 openssl 后重启可恢复。';
+    reasonCode = 'http_entry';
   }
 
   const selfSigned = origin?.scheme === 'https';
@@ -104,7 +102,7 @@ export function networkInfo(): NetworkInfo {
     selfSigned,
     micBlocked: origin?.scheme === 'http',
     tokenRequired: Boolean(ACCESS_TOKEN),
-    reason,
+    reasonCode,
   };
 }
 
@@ -118,7 +116,7 @@ export function createNetworkRouter(): Router {
   router.get('/qr.svg', async (_req, res) => {
     const info = networkInfo();
     if (!info.mobileUrl) {
-      res.status(404).json({ error: info.reason ?? '没有可用的手机入口' });
+      fail(res, 404, 'mobile_entry_unavailable');
       return;
     }
     try {
@@ -126,7 +124,7 @@ export function createNetworkRouter(): Router {
       res.type('image/svg+xml').set('Cache-Control', 'no-store').send(svg);
     } catch (error) {
       log.error('生成二维码失败', { error });
-      res.status(500).json({ error: '生成二维码失败' });
+      fail(res, 500, 'qr_generation_failed');
     }
   });
 
@@ -134,7 +132,7 @@ export function createNetworkRouter(): Router {
   router.get('/cert.crt', (_req, res) => {
     const file = lanCertFile();
     if (!file) {
-      res.status(404).json({ error: '证书还没生成（装好 openssl 后重启服务）' });
+      fail(res, 404, 'certificate_unavailable');
       return;
     }
     res.type('application/x-x509-ca-cert').sendFile(file);

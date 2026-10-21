@@ -22,12 +22,7 @@ import { ensureFreeSpace } from '../disk.ts';
 import { isQueued } from '../jobs.ts';
 import { createLogger } from '../logger.ts';
 import { detectFfmpegCapabilities } from '../ffmpegCapabilities.ts';
-import {
-  forgetTrackPitch,
-  normalizeSemitones,
-  rubberbandMissingMessage,
-  startPitchShift,
-} from '../pitch.ts';
+import { forgetTrackPitch, normalizeSemitones, startPitchShift } from '../pitch.ts';
 import { forgetTrackLoudness } from '../mixJob.ts';
 import { decodeOriginalName } from '../naming.ts';
 import { PROXIES_DIR } from '../paths.ts';
@@ -35,6 +30,13 @@ import { probeAndClassify } from '../probe.ts';
 import type { ProxyTarget } from '../transcode.ts';
 import { ingestFile, startTranscode } from '../tracks/ingest.ts';
 import { uploadEndpoint } from '../upload.ts';
+import {
+  fail,
+  formatErrorMessage,
+  readHttpError,
+  type ApiErrorCode,
+  type ApiErrorParams,
+} from '../httpError.ts';
 import { withRecord } from './guard.ts';
 import type { LyricsLookup } from '../library/lyrics/types.ts';
 
@@ -56,7 +58,7 @@ export function createTracksRouter(deps: TracksRouterDeps = {}): Router {
 
 /** 「取伴奏 → 404 → 业务处理」；404 文案只在这里写一份 */
 const withTrack = (handler: (req: Request, res: Response, track: TrackRecord) => void) =>
-  withRecord({ load: getTrack, notFound: '伴奏不存在', handler });
+  withRecord({ load: getTrack, notFound: 'track_not_found', handler });
 
 router.post(
   '/',
@@ -64,9 +66,9 @@ router.post(
     field: 'file',
     maxBytes: MAX_UPLOAD_BYTES,
     tmpPrefix: 'upload',
-    sizeLimitMessage: `文件超过 ${(MAX_UPLOAD_BYTES / 1024 / 1024 / 1024).toFixed(0)}GB 上限，请先压缩或裁剪后再上传`,
-    missingFileMessage: '没有收到文件（表单字段名应为 file）',
-    errorLabel: '上传失败',
+    sizeLimitCode: 'upload_too_large',
+    missingFileCode: 'upload_missing_file',
+    errorCode: 'upload_failed',
     logMessage: '上传处理失败',
     handle: async (req, res, file) => {
       const body = req.body as Record<string, string | undefined>;
@@ -116,15 +118,15 @@ router.post(
   '/:id/retry',
   withTrack((_req, res, record) => {
     if (record.status === 'ready') {
-      res.status(409).json({ error: '这个伴奏已经是可用状态了' });
+      fail(res, 409, 'track_already_ready');
       return;
     }
     if (isQueued(transcodeKey(record.id))) {
-      res.status(409).json({ error: '这个伴奏正在处理中，请稍候' });
+      fail(res, 409, 'track_processing');
       return;
     }
     if (!fs.existsSync(record.originalPath)) {
-      res.status(410).json({ error: '原始文件已经不在了，只能删除后重新上传' });
+      fail(res, 410, 'track_original_missing');
       return;
     }
 
@@ -157,10 +159,10 @@ router.post(
         log.info(`重试伴奏 ${record.id}（${record.title}）→ 转码 ${target}`);
         res.status(202).json(trackToDetail(getTrack(record.id)!));
       } catch (error) {
-        const message = error instanceof Error ? error.message : '未知错误';
-        updateTrack(record.id, { status: 'failed', error: message });
+        const { code, params } = readHttpError(error, 'track_update_failed', 400);
+        updateTrack(record.id, { status: 'failed', error: formatErrorMessage(code, params) });
         log.error(`重试伴奏 ${record.id} 失败`, { error });
-        res.status(400).json({ error: message });
+        fail(res, 400, code, params);
       }
     })();
   }),
@@ -174,28 +176,23 @@ router.post(
  */
 function parseLyricsInput(
   raw: unknown,
-): { ok: true; lyrics: string | null } | { ok: false; error: string } {
+): { ok: true; lyrics: string | null } | { ok: false; code: ApiErrorCode; params?: ApiErrorParams } {
   // 显式清空：null 或空串
   if (raw === null || (typeof raw === 'string' && raw.trim() === '')) {
     return { ok: true, lyrics: null };
   }
   if (typeof raw !== 'string') {
-    return { ok: false, error: '歌词必须是文本' };
+    return { ok: false, code: 'lyrics_not_text' };
   }
   if (raw.length > LRC_LIMITS.maxChars) {
-    return { ok: false, error: `歌词太长了（最多 ${LRC_LIMITS.maxChars} 字）` };
+    return { ok: false, code: 'lyrics_too_long', params: { limit: LRC_LIMITS.maxChars } };
   }
 
   const normalized = normalizeLrc(raw);
   // 规范化后一行时间戳都不剩 → 这不是 LRC，是纯文本歌词。
   // 不静默降级成「静态歌词」：演唱页要按时间轴滚动，存进去也放不出来。
   if (!hasLrcTimeline(normalized)) {
-    return {
-      ok: false,
-      error:
-        '这看起来不是 LRC 歌词：至少要有一行 [mm:ss] 或 [mm:ss.xx] 时间戳。' +
-        '纯文本歌词无法跟唱，请先给每行加上时间戳。',
-    };
+    return { ok: false, code: 'lyrics_not_lrc' };
   }
   return { ok: true, lyrics: normalized };
 }
@@ -208,7 +205,8 @@ router.patch(
       await patchTrack(req, res, record);
     } catch (error) {
       log.error('更新伴奏失败', { id: record.id, error });
-      res.status(500).json({ error: error instanceof Error ? error.message : '更新失败' });
+      const { status, code, params } = readHttpError(error, 'track_update_failed', 500);
+      fail(res, status, code, params);
     }
   }),
 );
@@ -235,11 +233,11 @@ async function patchTrack(req: Request, res: Response, record: TrackRecord): Pro
   if (body.title !== undefined) {
     const title = String(body.title).trim();
     if (!title) {
-      res.status(400).json({ error: '歌名不能为空' });
+      fail(res, 400, 'track_title_empty');
       return;
     }
     if (title.length > 120) {
-      res.status(400).json({ error: '歌名太长（最多 120 字）' });
+      fail(res, 400, 'track_title_too_long', { limit: 120 });
       return;
     }
     patch.title = title;
@@ -253,7 +251,7 @@ async function patchTrack(req: Request, res: Response, record: TrackRecord): Pro
   if (body.lyrics !== undefined) {
     const parsed = parseLyricsInput(body.lyrics);
     if (!parsed.ok) {
-      res.status(400).json({ error: parsed.error });
+      fail(res, 400, parsed.code, parsed.params);
       return;
     }
     patch.lyrics = parsed.lyrics;
@@ -276,11 +274,11 @@ async function patchTrack(req: Request, res: Response, record: TrackRecord): Pro
 
     if (semitones !== record.pitchSemitones || wantsRetry) {
       if (record.status !== 'ready') {
-        res.status(409).json({ error: '这个伴奏还在处理中，转好之后才能调升降调' });
+        fail(res, 409, 'pitch_not_allowed_while_processing');
         return;
       }
       if (semitones !== 0 && !(await detectFfmpegCapabilities()).rubberband) {
-        res.status(400).json({ error: rubberbandMissingMessage() });
+        fail(res, 400, 'pitch_rubberband_missing');
         return;
       }
 
@@ -329,21 +327,21 @@ const receiveLyrics = uploadEndpoint({
   field: 'lyrics',
   maxBytes: LRC_LIMITS.maxBytes,
   tmpPrefix: 'lrc',
-  sizeLimitMessage: `歌词文件超过 ${Math.round(LRC_LIMITS.maxBytes / 1024)}KB 上限`,
-  missingFileMessage: '没有收到歌词文件（表单字段名应为 lyrics）',
-  errorLabel: '上传歌词失败',
+  sizeLimitCode: 'upload_too_large',
+  missingFileCode: 'upload_missing_file',
+  errorCode: 'upload_failed',
   logMessage: '上传歌词失败',
   handle: async (uploadReq, uploadRes, file) => {
     // 上传期间伴奏可能被删掉，这里重新取一次
     const record = getTrack(readId(uploadReq));
     if (!record) {
-      uploadRes.status(404).json({ error: '伴奏不存在' });
+      fail(uploadRes, 404, 'track_not_found');
       return;
     }
 
     const extension = path.extname(decodeOriginalName(file.originalname)).toLowerCase();
     if (extension && extension !== '.lrc' && extension !== '.txt') {
-      uploadRes.status(400).json({ error: '只支持 .lrc / .txt 歌词文件' });
+      fail(uploadRes, 400, 'lyrics_file_type');
       return;
     }
 
@@ -351,7 +349,7 @@ const receiveLyrics = uploadEndpoint({
     const text = await fs.promises.readFile(file.path, 'utf8');
     const parsed = parseLyricsInput(text);
     if (!parsed.ok) {
-      uploadRes.status(400).json({ error: parsed.error });
+      fail(uploadRes, 400, parsed.code, parsed.params);
       return;
     }
 
@@ -367,7 +365,7 @@ const receiveLyrics = uploadEndpoint({
 router.post('/:id/lyrics', (req, res) => {
   // 先判 404 再收文件：给不存在的伴奏传几十 KB 上去纯属浪费
   if (!getTrack(readId(req))) {
-    res.status(404).json({ error: '伴奏不存在' });
+    fail(res, 404, 'track_not_found');
     return;
   }
   receiveLyrics(req, res);
@@ -383,7 +381,7 @@ router.post(
   '/:id/lyrics/auto',
   withTrack(async (_req, res, record) => {
     if (!deps.lyrics) {
-      res.status(400).json({ error: '歌词源没有启用（KUGOU_LYRICS_ENABLED=0？）' });
+      fail(res, 400, 'lyrics_source_disabled');
       return;
     }
 
@@ -393,16 +391,14 @@ router.post(
       durationSec: record.duration,
     });
     if (!found) {
-      res.status(404).json({
-        error: '没找到带时间轴的 LRC 歌词，可以手动上传 .lrc 文件',
-      });
+      fail(res, 404, 'lyrics_not_found');
       return;
     }
 
     const parsed = parseLyricsInput(found);
     if (!parsed.ok) {
       // find 返回的理论上都是规范化过的；真出事按「没找到」处理，别把 500 抛给用户
-      res.status(404).json({ error: '匹配到的歌词不可用，可以手动上传 .lrc 文件' });
+      fail(res, 404, 'lyrics_not_found');
       return;
     }
 

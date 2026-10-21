@@ -166,7 +166,7 @@ describe('GET /api/network', () => {
       mobileUrls: string[];
       selfSigned: boolean;
       micBlocked: boolean;
-      reason: string | null;
+      reasonCode: string | null;
     };
 
     assert.ok(Array.isArray(info.lanAddresses));
@@ -178,7 +178,8 @@ describe('GET /api/network', () => {
       assert.equal(info.mobileUrl, info.mobileUrls[0]);
       assert.equal(info.micBlocked, info.mobileOrigin.scheme === 'http');
       assert.equal(info.selfSigned, info.mobileOrigin.scheme === 'https');
-      assert.equal(info.reason, null, '入口正常时不该有告警');
+      // 只给机器可读码，句子由前端按语言拼（见 locales/*/mobile.ts 的 mobile.reason.*）
+      assert.equal(info.reasonCode, null, '入口正常时不该有告警');
     }
   });
 
@@ -188,8 +189,9 @@ describe('GET /api/network', () => {
     assert.equal(lanHttpsState().running, false);
     const response = await fetch(`${baseUrl}/api/network/qr.svg`);
     assert.equal(response.status, 404);
-    const body = (await response.json()) as { error: string };
-    assert.ok(body.error.length > 0, '404 也要说清楚为什么');
+    const body = (await response.json()) as { code: string; message: string };
+    assert.equal(body.code, 'mobile_entry_unavailable');
+    assert.ok(body.message.length > 0, '404 也要说清楚为什么');
   });
 });
 
@@ -229,13 +231,13 @@ describe('手机 HTTPS 镜像', () => {
       mobileOrigin: { scheme: string; port: number } | null;
       micBlocked: boolean;
       selfSigned: boolean;
-      reason: string | null;
+      reasonCode: string | null;
     };
     assert.equal(info.mobileOrigin?.scheme, 'https');
     assert.equal(info.mobileOrigin?.port, state.port);
     assert.equal(info.micBlocked, false);
     assert.equal(info.selfSigned, true);
-    assert.equal(info.reason, null);
+    assert.equal(info.reasonCode, null);
 
     // 二维码：SVG，且 viewBox 在（页面里要自适应缩放）
     const qr = await fetch(`${baseUrl}/api/network/qr.svg`);

@@ -3,6 +3,8 @@
 // Copyright (c) 2026 stubenhuang
 
 import type {
+  ApiErrorParams,
+  ApiErrorCode,
   LibraryItemDto,
   LibraryItemKind,
   LibrarySearchResult,
@@ -18,18 +20,73 @@ import type {
   WorkListItem,
 } from '../../shared/types';
 import { log } from './log';
+import { translateWith, type Locale } from './i18n';
 
+/**
+ * 服务端错误：`{ code, message, params }`（见 server/src/httpError.ts）。
+ *
+ * 服务端不说人话 —— 它只给一个稳定的机器可读码。**句子在构造时就翻成当前
+ * 界面语言**，所以界面组件直接读 `error.message` 就行，不用各自去查表；
+ * 加一种界面语言不用动后端，改一句文案也不用重新部署服务。
+ *
+ * `serverMessage` 是服务端的英文兜底，只在「这个码没有翻译」时才会被用户看见。
+ */
 export class ApiError extends Error {
   status: number;
-  /** 服务端给的机器可读码（如 token_required）；普通错误没有 */
-  code: string | null;
+  /** 服务端给的机器可读码（如 track_not_found）；普通错误没有 */
+  code: ApiErrorCode | null;
+  /** 服务端随错误给的插值参数 */
+  params: ApiErrorParams;
+  /** 服务端给的英文兜底文案 */
+  serverMessage: string;
 
-  constructor(message: string, status: number, code: string | null = null) {
-    super(message);
+  constructor(
+    serverMessage: string,
+    status: number,
+    code: ApiErrorCode | null = null,
+    params: ApiErrorParams = {},
+  ) {
+    super(localizeError(code, params, serverMessage));
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.params = params;
+    this.serverMessage = serverMessage;
   }
+
+  /** 换成另一种语言重翻（语言切换后重放同一条错误时用） */
+  localized(locale: Locale): string {
+    if (!this.code) return this.serverMessage;
+    return localizeError(this.code, this.params, this.serverMessage, locale);
+  }
+}
+
+/** 码 → 当前语言文案；没有码或没翻译时回落服务端的英文说明 */
+function localizeError(
+  code: ApiErrorCode | null,
+  params: ApiErrorParams,
+  serverMessage: string,
+  locale: Locale = currentLocale,
+): string {
+  if (!code) return serverMessage;
+  const translated = translateWith(locale, `error.${code}`, params);
+  return translated === `error.${code}` ? serverMessage : translated;
+}
+
+/**
+ * 当前界面语言（api.ts 不在 React 树里，拿不到 context）。
+ *
+ * 由 I18nProvider 在语言变化时写进来。默认简体中文 —— 与探测顺序的兜底一致。
+ */
+let currentLocale: Locale = 'zh-CN';
+
+export function setApiLocale(locale: Locale): void {
+  currentLocale = locale;
+}
+
+/** 当前界面语言（api.ts 之外想知道「界面现在是哪种语言」时用） */
+export function apiLocale(): Locale {
+  return currentLocale;
 }
 
 /* --------------------------------- 访问令牌 --------------------------------- */
@@ -134,9 +191,25 @@ async function readBody(response: Response): Promise<unknown> {
   }
 }
 
-function errorMessage(data: unknown, fallback: string): string {
-  const message = (data as { error?: unknown } | null)?.error;
-  return typeof message === 'string' && message ? message : fallback;
+/** 从响应体里取出错误码与插值参数（老接口只有 `error` 文本） */
+function readErrorPayload(data: unknown): {
+  code: ApiErrorCode | null;
+  params: ApiErrorParams;
+  message: string | null;
+} {
+  const body = data as { code?: unknown; params?: unknown; error?: unknown } | null;
+  const code = typeof body?.code === 'string' ? (body.code as ApiErrorCode) : null;
+  const params =
+    body?.params && typeof body.params === 'object'
+      ? (body.params as ApiErrorParams)
+      : {};
+  const message = typeof body?.error === 'string' && body.error ? body.error : null;
+  return { code, params, message };
+}
+
+/** 网络层 / 解析层失败的本地化文案（没有服务端错误码可依） */
+function localFallback(key: string): string {
+  return translateWith(currentLocale, key);
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -151,21 +224,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     });
   } catch (error) {
     log.debug('api', '网络请求失败', path, error);
-    throw new ApiError('连不上后端服务，请确认 npm run dev 已经在跑', 0);
+    throw new ApiError(localFallback('app.error.network'), 0);
   }
 
   const data = await readBody(response);
   if (!response.ok) {
-    log.debug('api', '接口返回错误', path, response.status, errorMessage(data, ''));
-    const code = (data as { code?: unknown } | null)?.code;
+    const { code, params, message } = readErrorPayload(data);
+    log.debug('api', '接口返回错误', path, response.status, code ?? message ?? '');
     if (response.status === 401 && code === 'token_required') {
       // 服务端要令牌而我们没有（或给错了）：广播出去，让 TokenGate 弹输入框
       markTokenRequired();
     }
     throw new ApiError(
-      errorMessage(data, `请求失败（HTTP ${response.status}）`),
+      message ?? translateWith(currentLocale, 'app.error.http', { status: response.status }),
       response.status,
-      typeof code === 'string' ? code : null,
+      code,
+      params,
     );
   }
   return data as T;
@@ -204,18 +278,19 @@ function upload<T>(path: string, form: FormData, onProgress?: (ratio: number) =>
         resolve(data as T);
         return;
       }
-      const code = (data as { code?: unknown } | null)?.code;
+      const { code, params, message } = readErrorPayload(data);
       reject(
         new ApiError(
-          errorMessage(data, `上传失败（HTTP ${xhr.status}）`),
+          message ?? translateWith(currentLocale, 'app.error.http', { status: xhr.status }),
           xhr.status,
-          typeof code === 'string' ? code : null,
+          code,
+          params,
         ),
       );
     };
 
-    xhr.onerror = () => reject(new ApiError('上传失败：网络中断', 0));
-    xhr.ontimeout = () => reject(new ApiError('上传超时，文件可能过大', 0));
+    xhr.onerror = () => reject(new ApiError(localFallback('app.error.upload.network'), 0));
+    xhr.ontimeout = () => reject(new ApiError(localFallback('app.error.upload.timeout'), 0));
 
     xhr.send(form);
   });

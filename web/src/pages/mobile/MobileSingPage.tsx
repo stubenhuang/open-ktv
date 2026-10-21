@@ -13,6 +13,7 @@ import { isMicSupported } from '../../audio/engine';
 import { MobileEngine } from '../../audio/mobileEngine';
 import { useMicDevices } from '../../hooks/useMicDevices';
 import { usePolling } from '../../hooks/usePolling';
+import { useI18n } from '../../i18n';
 import { errorMessage, formatDuration, formatTimer } from '../../utils';
 
 /** 录音阶段：idle = 待唱 / 收尾中；saving = 正在上传合成 */
@@ -33,6 +34,7 @@ function MobileTransport({
   mediaEl: HTMLMediaElement | null;
   disabled: boolean;
 }) {
+  const { t } = useI18n();
   const rangeRef = useRef<HTMLInputElement>(null);
   const currentRef = useRef<HTMLSpanElement>(null);
   const totalRef = useRef<HTMLSpanElement>(null);
@@ -90,7 +92,7 @@ function MobileTransport({
       <button
         type="button"
         className="m-play-btn"
-        aria-label={playing ? '暂停' : '播放'}
+        aria-label={playing ? t('common.pause') : t('common.play')}
         disabled={disabled || !mediaEl}
         onClick={toggle}
       >
@@ -105,7 +107,7 @@ function MobileTransport({
         step={0.1}
         defaultValue={0}
         disabled={disabled || !mediaEl}
-        aria-label="播放进度"
+        aria-label={t('mobile.playback_progress')}
         onChange={(event) => {
           draggingRef.current = true;
           if (currentRef.current) currentRef.current.textContent = formatDuration(Number(event.target.value));
@@ -129,6 +131,7 @@ function MobileTransport({
 export default function MobileSingPage() {
   const { trackId = '' } = useParams();
   const navigate = useNavigate();
+  const { t, fmt } = useI18n();
 
   const [track, setTrack] = useState<TrackDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -170,7 +173,7 @@ export default function MobileSingPage() {
         if (!cancelled) setTrack(result);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setLoadError(errorMessage(err, '加载伴奏失败'));
+        if (!cancelled) setLoadError(errorMessage(err, t('mobile.load_tracks_failed')));
       });
     return () => {
       cancelled = true;
@@ -237,7 +240,7 @@ export default function MobileSingPage() {
       .catch((err: unknown) => {
         if (cancelled) return;
         setMicReady(false);
-        setMicError(`接入麦克风失败：${errorMessage(err)}`);
+        setMicError(t('mobile.mic_connect_failed', { reason: errorMessage(err) }));
       });
     return () => {
       cancelled = true;
@@ -255,8 +258,7 @@ export default function MobileSingPage() {
 
       if (result.droppedRatio > 0.005) {
         setCaptureWarning(
-          `这次录音有 ${(result.droppedRatio * 100).toFixed(1)}% 的时间片没采到，声音可能断断续续。` +
-            '换个麦克风接口、或关掉别的占资源的程序再试。',
+          t('mobile.capture.dropped_frames', { percent: fmt.percent(result.droppedRatio, 1) }),
         );
       }
 
@@ -264,15 +266,19 @@ export default function MobileSingPage() {
       if (expectedSec > 1.5 && result.durationSec < expectedSec * 0.6) {
         setPhase('idle');
         setActionError(
-          `只采集到 ${result.durationSec.toFixed(1)} 秒音频，但录音持续了约 ${expectedSec.toFixed(1)} 秒。` +
-            '多半是系统把后台音频收了，锁屏/切应用会这样。',
+          t('mobile.capture.short_capture', {
+            captured: fmt.seconds(result.durationSec),
+            expected: fmt.seconds(expectedSec),
+          }),
         );
         return;
       }
 
       if (result.durationSec * 1000 < MIN_RECORD_MS) {
         setPhase('idle');
-        setActionError('录音太短了，至少唱满 1 秒再结束。');
+        setActionError(
+          t('mobile.recording_too_short', { seconds: fmt.seconds(MIN_RECORD_MS / 1000) }),
+        );
         return;
       }
 
@@ -287,7 +293,7 @@ export default function MobileSingPage() {
     } catch (err) {
       setRecording(false);
       setPhase('idle');
-      setActionError(`结束录音失败：${errorMessage(err)}`);
+      setActionError(t('mobile.stop_failed', { reason: errorMessage(err) }));
     }
   }, [engine, track, mediaEl, navigate]);
 
@@ -305,7 +311,7 @@ export default function MobileSingPage() {
       setElapsedMs(0);
       setRecording(true);
     } catch (err) {
-      setActionError(errorMessage(err, '开始演唱失败'));
+      setActionError(errorMessage(err, t('mobile.start_sing_failed')));
     }
   }, [engine, mediaEl, track]);
 
@@ -347,7 +353,7 @@ export default function MobileSingPage() {
     if (!recording) return;
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') {
-        setActionError('录音中离开了这个页面，系统可能已经停止采集。建议重唱这一遍。');
+        setActionError(t('mobile.backgrounded'));
       }
     };
     const onUnload = (event: BeforeUnloadEvent) => {
@@ -374,14 +380,11 @@ export default function MobileSingPage() {
       <div className="m-page">
         <div className="m-topbar">
           <Link className="m-back" to="/m">
-            ‹ 返回
+            {t('mobile.back')}
           </Link>
         </div>
         <div className="m-alert m-alert-error">
-          {!secureContext
-            ? '这个页面不是「安全上下文」（http + 局域网 IP），浏览器把麦克风禁用了。' +
-              '请用桌面端二维码里的 https 地址重新打开；看到证书警告时点「高级 → 继续访问」。'
-            : '这个浏览器缺少录音所需的能力（AudioWorklet / getUserMedia），请换新版 Chrome 或 Safari。'}
+          {!secureContext ? t('mobile.insecure_context') : t('mobile.unsupported_browser')}
         </div>
       </div>
     );
@@ -392,7 +395,7 @@ export default function MobileSingPage() {
       <div className="m-page">
         <div className="m-topbar">
           <Link className="m-back" to="/m">
-            ‹ 返回
+            {t('mobile.back')}
           </Link>
         </div>
         <div className="m-alert m-alert-error">{loadError}</div>
@@ -400,20 +403,20 @@ export default function MobileSingPage() {
     );
   }
 
-  if (!track) return <div className="m-page"><div className="m-empty">正在加载伴奏…</div></div>;
+  if (!track) return <div className="m-page"><div className="m-empty">{t('mobile.loading_track')}</div></div>;
 
   if (track.status !== 'ready') {
     return (
       <div className="m-page">
         <div className="m-topbar">
           <Link className="m-back" to="/m">
-            ‹ 返回
+            {t('mobile.back')}
           </Link>
         </div>
         <div className="m-alert m-alert-warn">
           {track.status === 'processing'
-            ? `这个伴奏还在转码中（${Math.round((track.progress ?? 0) * 100)}%），转好之后才能唱。`
-            : `这个伴奏处理失败了：${track.error ?? '未知原因'}`}
+            ? t('mobile.track_processing', { percent: fmt.percent(track.progress ?? 0) })
+            : t('mobile.track_failed', { reason: track.error ?? t('components.unknown_reason') })}
         </div>
       </div>
     );
@@ -439,14 +442,14 @@ export default function MobileSingPage() {
     <div className={`m-page m-sing${recording ? ' m-sing-recording' : ''}`}>
       <div className="m-topbar">
         <Link className="m-back" to="/m">
-          ‹ 返回
+          {t('mobile.back')}
         </Link>
         <div className="m-topbar-title">
           <div className="m-topbar-name">{track.title}</div>
           <div className="m-topbar-sub">
             {track.artist ? `${track.artist} · ` : ''}
             {formatDuration(track.duration)}
-            {track.kind === 'video' ? ' · 视频伴奏' : ''}
+            {track.kind === 'video' ? t('mobile.video_track') : ''}
           </div>
         </div>
       </div>
@@ -462,7 +465,7 @@ export default function MobileSingPage() {
             style={{ marginLeft: 10 }}
             onClick={() => void mic.request()}
           >
-            重试授权
+            {t('mobile.retry_permission')}
           </button>
         </div>
       )}
@@ -475,7 +478,7 @@ export default function MobileSingPage() {
             style={{ marginLeft: 10 }}
             onClick={() => setMicAttempt((value) => value + 1)}
           >
-            重试
+            {t('common.retry')}
           </button>
         </div>
       )}
@@ -503,14 +506,14 @@ export default function MobileSingPage() {
               <span>🎵</span>
             </div>
             <div className="m-stage-title">{track.title}</div>
-            <div className="m-stage-sub">音频伴奏（无歌词）</div>
+            <div className="m-stage-sub">{t('mobile.audio_only_no_lyrics')}</div>
           </div>
         )}
 
         {recording && (
           <div className="m-rec-badge">
             <span className="m-rec-dot" />
-            <span>录音中</span>
+            <span>{t('mobile.recording')}</span>
             <span className="mono">{formatTimer(elapsedMs)}</span>
           </div>
         )}
@@ -540,8 +543,10 @@ export default function MobileSingPage() {
             */}
             <div className="m-field">
               <div className="m-field-label">
-                <span>输入设备</span>
-                {mic.permission !== 'granted' && <span className="m-faint">未授权</span>}
+                <span>{t('mobile.mic.device')}</span>
+                {mic.permission !== 'granted' && (
+                  <span className="m-faint">{t('mobile.mic.not_granted')}</span>
+                )}
               </div>
               <select
                 className="m-select"
@@ -551,7 +556,9 @@ export default function MobileSingPage() {
               >
                 {mic.devices.length === 0 && (
                   <option value="">
-                    {mic.permission === 'granted' ? '（没有可用的外置输入）' : '（等待麦克风授权）'}
+                    {mic.permission === 'granted'
+                      ? t('mobile.mic.no_external')
+                      : t('mobile.mic.awaiting_permission')}
                   </option>
                 )}
                 {mic.devices.map((device) => (
@@ -563,40 +570,45 @@ export default function MobileSingPage() {
               {mic.hiddenBuiltinLabels.length > 0 &&
                 (mic.showBuiltin ? (
                   <div className="m-notes">
-                    已显示全部输入设备（含机身麦克风）。
+                    {t('mobile.mic.all_shown')}
                     <button type="button" className="link-btn" onClick={mic.toggleBuiltin}>
-                      只看外置
+                      {t('mobile.mic.external_only')}
                     </button>
                   </div>
                 ) : mic.devices.length === 0 ? (
                   <div className="m-alert m-alert-warn" style={{ marginTop: 8 }}>
-                    没检测到外置麦克风，已隐藏：{mic.hiddenBuiltinLabels.join('、')}。
-                    插上 USB / Type-C / 3.5mm 麦克风或耳机麦后会出现在这里。
+                    {t('mobile.mic.no_external_found', {
+                      devices: fmt.list(mic.hiddenBuiltinLabels),
+                    })}
                     <button type="button" className="link-btn" onClick={mic.toggleBuiltin}>
-                      显示全部设备
+                      {t('mobile.mic.show_all')}
                     </button>
                   </div>
                 ) : (
                   <div className="m-notes">
-                    只列外置输入（已隐藏：{mic.hiddenBuiltinLabels.join('、')}）。
+                    {t('mobile.mic.external_only_note', {
+                      devices: fmt.list(mic.hiddenBuiltinLabels),
+                    })}
                     <button type="button" className="link-btn" onClick={mic.toggleBuiltin}>
-                      显示全部设备
+                      {t('mobile.mic.show_all')}
                     </button>
                   </div>
                 ))}
             </div>
 
             <div className="m-mic-row">
-              <span className="m-mic-label">输入电平</span>
+              <span className="m-mic-label">{t('mobile.mic.level')}</span>
               <LevelMeter engine={engine} active={micReady} />
-              <span className="m-mic-hint">{micReady ? '对着麦克风说话试试' : '未接入'}</span>
+              <span className="m-mic-hint">
+                {micReady ? t('mobile.mic.try_speaking') : t('mobile.mic.not_connected')}
+              </span>
             </div>
           </>
         )}
 
         {recording && (
           <div className="m-mic-row">
-            <span className="m-mic-label">输入电平</span>
+            <span className="m-mic-label">{t('mobile.mic.level')}</span>
             <LevelMeter engine={engine} active />
             <span className="m-mic-hint mono">{formatTimer(elapsedMs)}</span>
           </div>
@@ -605,15 +617,15 @@ export default function MobileSingPage() {
         {phase === 'saving' ? (
           <div className="m-saving">
             <span className="spin" />
-            正在上传干声并合成…
+            {t('mobile.uploading_mixing')}
           </div>
         ) : recording ? (
           <div className="m-rec-actions">
             <button type="button" className="m-btn m-btn-primary m-btn-record" onClick={() => void handleStop()}>
-              完成录制
+              {t('mobile.finish_recording')}
             </button>
             <button type="button" className="m-btn m-btn-ghost m-btn-record" onClick={handleAbandon}>
-              取消录制
+              {t('mobile.cancel_recording')}
             </button>
           </div>
         ) : (
@@ -623,23 +635,21 @@ export default function MobileSingPage() {
             disabled={!canStart}
             onClick={() => void handleStart()}
           >
-            开始演唱
+            {t('mobile.start_singing')}
           </button>
         )}
 
         {/* 移调失败：不禁唱（这一版混的已经是原调），但得让人知道为什么没上新调 */}
         {!recording && phase === 'idle' && track.pitchStatus === 'failed' && (
           <p className="m-notes">
-            ⚠️ 移调没成功（{track.pitchError ?? '原因未知'}），将按原调演唱。
-            想用新调就在上面的「升降调」里重试，或拖回「原调」。
+            {t('mobile.pitch_failed', {
+              reason: track.pitchError ?? t('components.unknown_reason'),
+            })}
           </p>
         )}
 
         {!recording && phase === 'idle' && (
-          <p className="m-notes">
-            🎧 建议戴耳机：手机外放伴奏会被麦克风收进去，混音里就是一串伴奏声。
-            只录你的干声，伴奏不进录音文件；起唱前会自动留 0.15 秒静音用来对齐，不用手动调。
-          </p>
+          <p className="m-notes">{t('mobile.headphones_hint')}</p>
         )}
       </div>
     </div>

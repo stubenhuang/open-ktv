@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, networkCertUrl, networkQrUrl, type NetworkInfo } from '../api';
+import { useI18n } from '../i18n';
 import { buildMobileUrls } from '../utils';
 
 /**
@@ -23,6 +24,7 @@ import { buildMobileUrls } from '../utils';
  * 否则每次切页面都白打一次接口。
  */
 export function PhoneConnectMenu() {
+  const { t } = useI18n();
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -36,7 +38,9 @@ export function PhoneConnectMenu() {
     api
       .getNetwork()
       .then(setInfo)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : '读取网络信息失败'));
+      .catch((err: unknown) =>
+        setError(err instanceof Error ? err.message : t('components.phone.readFailed')),
+      );
   }, []);
 
   // 悬停 / 聚焦时按需拉一次
@@ -84,7 +88,7 @@ export function PhoneConnectMenu() {
         ref={triggerRef}
         type="button"
         className="app-nav-phone-btn"
-        aria-label="手机演唱：扫码用手机唱歌"
+        aria-label={t('components.phone.aria')}
         aria-expanded={open}
         onClick={() => {
           ensureLoaded();
@@ -94,9 +98,9 @@ export function PhoneConnectMenu() {
         <span aria-hidden="true">📱</span>
       </button>
 
-      <div className="phone-menu" role="dialog" aria-label="手机演唱">
+      <div className="phone-menu" role="dialog" aria-label={t('components.phone.title')}>
         <div className="phone-menu-head">
-          <span className="phone-menu-title">📱 手机演唱</span>
+          <span className="phone-menu-title">📱 {t('components.phone.title')}</span>
           <button
             type="button"
             className="link-btn"
@@ -105,39 +109,38 @@ export function PhoneConnectMenu() {
               load();
             }}
           >
-            刷新
+            {t('common.retry')}
           </button>
         </div>
 
         {error && <div className="phone-menu-error">{error}</div>}
-        {!info && !error && <div className="phone-menu-hint">正在读取局域网地址…</div>}
+        {!info && !error && <div className="phone-menu-hint">{t('components.phone.loading')}</div>}
 
         {info && !hasEntry && (
           <div className="phone-menu-error">
-            {info.reason ?? '现在没有可用的手机入口。'}
+            {info.reasonCode ? t(`mobile.reason.${info.reasonCode}`) : t('components.phone.noEntry')}
           </div>
         )}
 
         {info && hasEntry && (
           <>
             <div className="phone-menu-qr">
-              <img src={networkQrUrl()} alt="扫码用手机演唱" width={148} height={148} />
+              <img src={networkQrUrl()} alt={t('components.phone.qrAlt')} width={148} height={148} />
             </div>
-            <p className="phone-menu-hint">手机连同一个 WiFi，扫码即开移动端演唱页。</p>
+            <p className="phone-menu-hint">{t('components.phone.hint')}</p>
             {info.tokenRequired && (
-              <p className="phone-menu-hint">
-                服务开启了访问保护，二维码地址里已带上令牌，手机扫码即用、无需手输。
-              </p>
+              <p className="phone-menu-hint">{t('components.phone.tokenHint')}</p>
             )}
             {info.micBlocked && (
-              <div className="phone-menu-error">⚠️ {info.reason ?? 'http 入口下手机浏览器会禁用麦克风。'}</div>
+              <div className="phone-menu-error">
+                ⚠️ {info.reasonCode ? t(`mobile.reason.${info.reasonCode}`) : t('components.phone.micBlocked')}
+              </div>
             )}
             {info.selfSigned && !info.micBlocked && (
               <p className="phone-menu-hint">
-                首次打开提示「证书不受信任」：点<strong>高级 → 继续访问</strong>
-                （iPhone：显示详细信息 → 访问网站）。
+                {t('components.phone.certHint')}
                 <a className="link-btn" href={networkCertUrl()} target="_blank" rel="noreferrer">
-                  下载证书
+                  {t('components.phone.downloadCert')}
                 </a>
               </p>
             )}
@@ -148,7 +151,7 @@ export function PhoneConnectMenu() {
                 </li>
               ))}
             </ul>
-            <p className="phone-menu-hint">建议戴耳机唱：外放伴奏会被麦克风收进去。</p>
+            <p className="phone-menu-hint">{t('components.phone.headphones')}</p>
           </>
         )}
       </div>

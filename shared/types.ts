@@ -158,6 +158,11 @@ export const VOCAL_PRESETS = [
 
 export type VocalPreset = (typeof VOCAL_PRESETS)[number];
 
+/*
+ * 人声预设的**中文显示名**。界面不要用它 —— 一律走
+ * web/src/i18n/locales/<语言>/audio.ts 的 `audio.preset.<id>`（见
+ * web/src/i18n/labels.ts 的 presetLabel）。这里只服务服务端日志的读者。
+ */
 export const VOCAL_PRESET_LABELS: Record<VocalPreset, string> = {
   natural: '自然',
   warm: '温暖',
@@ -406,6 +411,12 @@ export const DEFAULT_MIX_PARAMS: MixParams = {
   noiseReduction: false,
 };
 
+/*
+ * 混响档位的**中文显示名**，服务端日志用（见 shared/mix.ts 的 describeReverb）。
+ * 界面一律走 web/src/i18n/locales/<语言>/audio.ts 的 `audio.reverb.kind.<kind>`
+ * （见 web/src/i18n/labels.ts 的 reverbKindLabel）—— 服务端不能说人话，
+ * 但界面必须说用户的语言。
+ */
 export const REVERB_LABELS: Record<ReverbKind, string> = {
   dry: '原声',
   room: '小房间',
@@ -530,6 +541,110 @@ export interface NetworkInfo {
    * 桌面端页面据此在需要时提示输入令牌。
    */
   tokenRequired: boolean;
-  /** 说明 / 告警；一切正常时为 null */
-  reason: string | null;
+  /**
+   * 手机入口不可用 / 降级的原因，机器可读码。
+   *
+   * 服务端不说人话（见 server/src/httpError.ts）：只给码，句子由前端按用户的
+   * 语言拼（`mobile.reason.*`）。一切正常时为 null。
+   */
+  reasonCode: NetworkReasonCode | null;
 }
+
+/**
+ * 手机入口的异常 / 降级原因。
+ *
+ * 与 `NetworkInfo.reasonCode` 对应，两边都不能单独改名。
+ */
+export type NetworkReasonCode =
+  | 'loopback_only'
+  | 'no_lan_address'
+  | 'https_mirror_down'
+  | 'http_entry';
+
+/**
+ * API 错误的机器可读码。
+ *
+ * 这是国际化（i18n）在服务端的落点：**接口不说人话**。错误响应只带稳定的
+ * `code` 与结构化的 `params`，句子由前端按用户的语言拼
+ * （见 web/src/i18n/locales 下各语言的 errors.ts）。
+ *
+ * 放在 shared/ 是因为前后端都要用它：服务端在 `httpError.ts` 里按码查英文兜底
+ * 文案，前端按码查本地化文案。两边共用一份清单，才不会出现「服务端能返、
+ * 前端译不了」的码。
+ *
+ * 命名约定：`<主体>_<问题>`，全小写 snake_case。**一旦发布就不改名** ——
+ * 前端按它查表，改名等于把所有客户端翻译全打翻。
+ */
+export type ApiErrorCode =
+  /* 通用 */
+  | 'endpoint_not_found'
+  | 'internal_error'
+  | 'validation_failed'
+  | 'token_required'
+  /* 上传 */
+  | 'upload_too_large'
+  | 'upload_missing_file'
+  | 'upload_failed'
+  /* 文件 */
+  | 'file_not_found'
+  | 'file_read_failed'
+  /* 伴奏 */
+  | 'track_not_found'
+  | 'track_already_ready'
+  | 'track_processing'
+  | 'track_transcode_failed'
+  | 'track_original_missing'
+  | 'track_update_failed'
+  | 'track_title_empty'
+  | 'track_title_too_long'
+  | 'pitch_not_allowed_while_processing'
+  | 'pitch_rubberband_missing'
+  /* 歌词 */
+  | 'lyrics_not_text'
+  | 'lyrics_too_long'
+  | 'lyrics_not_lrc'
+  | 'lyrics_file_type'
+  | 'lyrics_source_disabled'
+  | 'lyrics_not_found'
+  /* 作品 */
+  | 'work_track_required'
+  | 'work_track_processing'
+  | 'work_recording_too_short'
+  | 'work_recording_too_long'
+  | 'work_title_empty'
+  | 'work_title_too_long'
+  | 'work_mix_in_progress'
+  | 'work_mix_failed'
+  | 'work_not_ready'
+  | 'work_not_found'
+  | 'work_retake_track_deleted'
+  | 'work_retake_range_invalid'
+  | 'work_retake_range_order'
+  | 'work_retake_segment_too_short'
+  | 'work_retake_parse_failed'
+  | 'work_retake_segment_mismatch'
+  | 'work_retake_undo_failed'
+  /* 曲库点歌 */
+  | 'library_search_failed'
+  | 'library_download_params_missing'
+  | 'library_source_not_configured'
+  | 'library_source_unavailable'
+  | 'library_item_not_found'
+  | 'library_download_in_progress'
+  | 'library_task_not_found'
+  /* 手机入口 */
+  | 'mobile_entry_unavailable'
+  | 'qr_generation_failed'
+  | 'certificate_unavailable';
+
+/** 错误码附带的插值参数。键与各语言文案里的 `{name}` 占位符一一对应 */
+export type ApiErrorParams = Record<string, string | number>;
+
+/**
+ * 界面语言（BCP-47 标签）。
+ *
+ * 放在 shared/ 是因为前后端都要提它：前端是 React 界面语言，服务端是
+ * 错误兜底文案的语言（见 server/src/httpError.ts）。清单以
+ * web/src/i18n/catalog.ts 的 LOCALES 为准。
+ */
+export type Locale = 'zh-CN' | 'en';

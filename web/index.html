@@ -9,11 +9,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light" />
     <meta name="theme-color" content="#f4ede0" />
+    <!--
+      lang 的初始值是简体中文（参考语言）。真正的语言由 I18nProvider 在启动时定下来，
+      并同步写到 <html lang> 上 —— 读屏软件、搜索引擎和浏览器自带的翻译按钮都看它。
+      顺序：?lang= → localStorage → navigator.languages → zh-CN。
+    -->
     <!-- 手机端（/m）从桌面二维码进来：允许加到主屏幕，全屏打开时没有浏览器地址栏 -->
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- 描述与标题同理：静态兜底 + 启动后由 i18n 覆写（见 I18nProvider 的 useEffect） -->
+    <meta name="description" content="Open KTV：上传伴奏、带耳返演唱、服务端合成 MP3 的开源卡拉 OK。" />
+    <meta property="og:title" content="Open KTV" />
+    <meta property="og:description" content="上传伴奏、带耳返演唱、服务端合成 MP3 的开源卡拉 OK。" />
     <title>Open KTV</title>
   </head>
   <body>

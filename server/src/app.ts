@@ -15,6 +15,7 @@ import { detectFfmpegCapabilities } from './ffmpegCapabilities.ts';
 import { freeBytes } from './disk.ts';
 import { createTokenGate } from './auth.ts';
 import { createLogger, type LogLevel } from './logger.ts';
+import { fail, readHttpError } from './httpError.ts';
 import { createLibraryRouter } from './routes/library.ts';
 import { createNetworkRouter } from './routes/network.ts';
 import { createTracksRouter } from './routes/tracks.ts';
@@ -103,7 +104,7 @@ export function createApp(options: CreateAppOptions = {}): express.Express {
   app.use('/api/network', createNetworkRouter());
 
   app.use('/api', (_req, res) => {
-    res.status(404).json({ error: '接口不存在' });
+    fail(res, 404, 'endpoint_not_found');
   });
 
   // 生产模式：直接托管 vite build 出来的前端；没有 dist 时同一个兜底路由给出提示
@@ -117,7 +118,11 @@ export function createApp(options: CreateAppOptions = {}): express.Express {
         res
           .status(503)
           .type('text/plain; charset=utf-8')
-          .send('前端还没构建。开发时请用 npm run dev（Vite 在 5173）；生产请先 npm run build。');
+          .send(
+            '前端还没构建。开发时请用 npm run dev（Vite 在 5173）；生产请先 npm run build。\n' +
+              'The front end has not been built. Use `npm run dev` for development, ' +
+              'or run `npm run build` before starting in production mode.',
+          );
       };
 
   if (hasBuiltWeb) {
@@ -130,16 +135,13 @@ export function createApp(options: CreateAppOptions = {}): express.Express {
 
   // 统一错误出口：JSON 解析失败、multer 之外漏出的异常都在这里收口
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    const message = error instanceof Error ? error.message : '服务内部错误';
     httpLog.error('请求处理出错', { error });
     if (res.headersSent) {
       res.end();
       return;
     }
-    const status = (error as { status?: number; statusCode?: number }).status
-      ?? (error as { statusCode?: number }).statusCode
-      ?? 500;
-    res.status(status).json({ error: message });
+    const { status, code, params } = readHttpError(error, 'internal_error', 500);
+    fail(res, status, code, params);
   });
 
   return app;

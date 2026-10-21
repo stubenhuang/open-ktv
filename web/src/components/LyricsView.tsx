@@ -24,6 +24,7 @@ import {
   lyricLineSizeClass,
   lyricTrackOffsetY,
 } from '../utils';
+import { useI18n } from '../i18n';
 
 interface Props {
   /** 规范化后的 LRC 文本；null / 空串 / 纯文本都表示「没有可跟唱的歌词」 */
@@ -97,6 +98,7 @@ export function LyricsView({
   mobile = false,
   fit = false,
 }: Props) {
+  const { t } = useI18n();
   const doc = useMemo(() => parseLrc(lyrics ?? ''), [lyrics]);
   const [activeIndex, setActiveIndex] = useState(-1);
   /** 上一次的高亮行；用它挡住多余的 setState（state 本身在闭包里读不到最新值） */
@@ -292,7 +294,7 @@ export function LyricsView({
               className={`lyric-line lyric-${state}${canSeek ? ' lyric-seekable' : ''}${sizeClass}`}
               style={{ height: lineHeight, lineHeight: `${lineHeight}px` }}
               onClick={() => seekTo(index)}
-              title={canSeek ? '点这一行跳到对应位置' : '录音中不能跳转'}
+              title={canSeek ? t('components.lyrics.seekHint') : t('components.lyrics.seekLocked')}
             >
               {chars ? (
                 chars.map((char, charIndex) => (

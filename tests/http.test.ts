@@ -98,7 +98,10 @@ describe('HTTP API（真实 Express + 临时数据目录）', () => {
   it('未知接口 404 JSON', async () => {
     const response = await fetch(`${baseUrl}/api/nope`);
     assert.equal(response.status, 404);
-    assert.deepEqual(await response.json(), { error: '接口不存在' });
+    assert.deepEqual(await response.json(), {
+      code: 'endpoint_not_found',
+      message: 'Endpoint does not exist',
+    });
   });
 
   it('上传接口没带文件 → 400', async () => {
@@ -106,7 +109,7 @@ describe('HTTP API（真实 Express + 临时数据目录）', () => {
     form.append('notfile', 'x');
     const response = await fetch(`${baseUrl}/api/tracks`, { method: 'POST', body: form });
     assert.equal(response.status, 400);
-    assert.match(((await response.json()) as { error: string }).error, /表单字段名应为 file/);
+    assert.equal(((await response.json()) as { code: string }).code, 'upload_missing_file');
   });
 
   it('上传视频被拒：伴奏库只收音频（靠 ffprobe 判定，不看扩展名）', async () => {
@@ -114,7 +117,7 @@ describe('HTTP API（真实 Express + 临时数据目录）', () => {
     form.append('file', new Blob([await makeMp4()], { type: 'video/mp4' }), 'mv.mp4');
     const response = await fetch(`${baseUrl}/api/tracks`, { method: 'POST', body: form });
     assert.equal(response.status, 400);
-    assert.match(((await response.json()) as { error: string }).error, /音频/);
+    assert.equal(((await response.json()) as { code: string }).code, 'upload_failed');
 
     // 混进库里一条都不行
     const list = (await (await fetch(`${baseUrl}/api/tracks`)).json()) as { kind: string }[];
@@ -163,7 +166,7 @@ describe('HTTP API（真实 Express + 临时数据目录）', () => {
       body: JSON.stringify({ title: '  ' }),
     });
     assert.equal(empty.status, 400);
-    assert.match(((await empty.json()) as { error: string }).error, /歌名不能为空/);
+    assert.equal(((await empty.json()) as { code: string }).code, 'track_title_empty');
 
     const tooLong = await fetch(`${baseUrl}/api/tracks/${trackId}`, {
       method: 'PATCH',
@@ -219,7 +222,8 @@ describe('HTTP API（真实 Express + 临时数据目录）', () => {
       body: JSON.stringify({ lyrics: '这是一段没有时间戳的歌词\n第二行' }),
     });
     assert.equal(response.status, 400);
-    assert.match(((await response.json()) as { error: string }).error, /\[mm:ss\]/);
+    // 纯文本歌词被拒（服务端只说码，句子由前端拼 —— 见 locales/*/errors.ts）
+    assert.equal(((await response.json()) as { code: string }).code, 'lyrics_not_lrc');
   });
 
   it('歌词：lyricsOffsetMs 被钳制到 ±30000 并取整', async () => {
@@ -327,7 +331,7 @@ describe('HTTP API（真实 Express + 临时数据目录）', () => {
 
     const badExtension = await upload('[00:01.00]甲', '歌词.docx');
     assert.equal(badExtension.status, 400);
-    assert.match(((await badExtension.json()) as { error: string }).error, /\.lrc/);
+    assert.equal(((await badExtension.json()) as { code: string }).code, 'lyrics_file_type');
 
     const missingTrack = await upload('[00:01.00]甲', 'x.lrc', '不存在的id');
     assert.equal(missingTrack.status, 404);
@@ -341,7 +345,7 @@ describe('HTTP API（真实 Express + 临时数据目录）', () => {
       body: form,
     });
     assert.equal(response.status, 400);
-    assert.match(((await response.json()) as { error: string }).error, /表单字段名应为 lyrics/);
+    assert.equal(((await response.json()) as { code: string }).code, 'upload_missing_file');
   });
 
   it('伴奏媒体可流式播放（audio/mpeg）', async () => {
@@ -368,8 +372,9 @@ describe('HTTP API（真实 Express + 临时数据目录）', () => {
       body: '这不是 JSON',
     });
     assert.equal(response.status, 400);
-    const body = (await response.json()) as { error: string };
-    assert.equal(typeof body.error, 'string');
+    const body = (await response.json()) as { code: string; message: string };
+    assert.equal(typeof body.message, 'string');
+    assert.ok(body.message.length > 0, '统一错误出口也要给一句可读说明');
   });
 
   it('删除伴奏不再被作品拦截：作品保留，脱钩后不能再合成', async () => {

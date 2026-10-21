@@ -6,12 +6,12 @@ import { useEffect, useRef, useState } from 'react';
 import {
   DEFAULT_MIX_PARAMS,
   MIX_LIMITS,
-  REVERB_LABELS,
   VOCAL_PRESETS,
-  VOCAL_PRESET_LABELS,
   type MixParams,
 } from '../../../shared/types';
 import { matchPreset, nearestReverbKind, presetParams } from '../../../shared/mix';
+import { useI18n } from '../i18n';
+import { presetLabel, reverbKindLabel } from '../i18n/labels';
 
 interface Props {
   /** 作品当前的混音参数 */
@@ -20,15 +20,15 @@ interface Props {
   onParamsChange?: (params: MixParams) => void;
 }
 
-function gainLabel(value: number): string {
-  if (value <= 0.001) return '静音';
+function gainLabel(value: number, t: (key: string) => string): string {
+  if (value <= 0.001) return t('audio.gain.muted');
   const db = 20 * Math.log10(value);
-  return `${db >= 0 ? '+' : ''}${db.toFixed(1)} dB`;
+  return `${db >= 0 ? '+' : ''}${db.toFixed(1)} ${t('audio.unit.decibel')}`;
 }
 
-function dbLabel(value: number): string {
-  if (Math.abs(value) < 0.05) return '0 dB';
-  return `${value > 0 ? '+' : ''}${value.toFixed(1)} dB`;
+function dbLabel(value: number, t: (key: string) => string): string {
+  if (Math.abs(value) < 0.05) return `0 ${t('audio.unit.decibel')}`;
+  return `${value > 0 ? '+' : ''}${value.toFixed(1)} ${t('audio.unit.decibel')}`;
 }
 
 /** 全字段比较（不看键顺序）：轮询每次都会造新对象，必须按内容比较 */
@@ -127,6 +127,7 @@ function Slider({
  *    两个入口只会让人犹豫点哪个。
  */
 export function MobileMixPanel({ value, onParamsChange }: Props) {
+  const { t, fmt, locale } = useI18n();
   const [params, setParams] = useState<MixParams>(value ?? DEFAULT_MIX_PARAMS);
   const paramsRef = useRef(params);
 
@@ -155,9 +156,11 @@ export function MobileMixPanel({ value, onParamsChange }: Props) {
     <div className="m-mix">
       <section className="m-mix-group">
         <div className="m-mix-group-head">
-          <span>人声预设</span>
+          <span>{t('audio.preset.title')}</span>
           <span className="m-faint">
-            {activePreset ? `当前：${VOCAL_PRESET_LABELS[activePreset]}` : '已手动调整'}
+            {activePreset
+              ? t('components.mix.presetCurrent', { preset: presetLabel(locale, activePreset) })
+              : t('components.mix.presetManual')}
           </span>
         </div>
         <div className="m-chip-row m-chip-row-scroll">
@@ -168,19 +171,17 @@ export function MobileMixPanel({ value, onParamsChange }: Props) {
               className={`m-chip${activePreset === preset ? ' active' : ''}`}
               onClick={() => applyPreset(preset)}
             >
-              {VOCAL_PRESET_LABELS[preset]}
+              {presetLabel(locale, preset)}
             </button>
           ))}
         </div>
-        <p className="m-notes">
-          点一下把均衡和混响的起点写进下面的滑块，之后还能继续手调；修音（压缩/去齿音/降噪）不受预设影响，默认关闭。
-        </p>
+        <p className="m-notes">{t('components.mix.presetHint')}</p>
       </section>
 
       <section className="m-mix-group">
         <div className="m-mix-group-head">
-          <span>人声混响</span>
-          <span className="m-faint">空间由小到大 · 湿度独立</span>
+          <span>{t('audio.reverb.title')}</span>
+          <span className="m-faint">{t('components.mix.reverbAxes')}</span>
         </div>
         {/*
            * 混响 = 空间 + 湿度两个连续滑块。空间轴上是原来的 8 个档位名
@@ -188,48 +189,45 @@ export function MobileMixPanel({ value, onParamsChange }: Props) {
            * 拖一下走 1%，锚点之间插值，听感平滑过渡。
            */}
         <Slider
-          label="空间"
+          label={t('audio.reverb.space')}
           param="reverbSpace"
           value={params.reverbSpace}
-          display={REVERB_LABELS[nearestReverbKind(params.reverbSpace)]}
+          display={reverbKindLabel(locale, nearestReverbKind(params.reverbSpace))}
           min={MIX_LIMITS.reverb.space.min}
           max={MIX_LIMITS.reverb.space.max}
           step={MIX_LIMITS.reverb.space.step}
           onChange={(reverbSpace) => update({ reverbSpace })}
         />
         <Slider
-          label="湿度"
+          label={t('audio.reverb.wet')}
           param="reverbWet"
           value={params.reverbWet}
-          display={params.reverbWet <= 0 ? '干声' : `${Math.round(params.reverbWet * 100)}%`}
+          display={params.reverbWet <= 0 ? t('audio.reverb.dry') : fmt.percent(params.reverbWet)}
           min={MIX_LIMITS.reverb.wet.min}
           max={MIX_LIMITS.reverb.wet.max}
           step={MIX_LIMITS.reverb.wet.step}
           onChange={(reverbWet) => update({ reverbWet })}
         />
-        <p className="m-notes">
-          「空间」在原声 / 小房间 / 金属板 / 大厅 / 演唱会 / 教堂 / 体育场 / 峡谷之间连续过渡，
-          「湿度」独立控制混响量（0% = 干声）；预设只是起点，之后可继续微调，试听立即生效。
-        </p>
+        <p className="m-notes">{t('components.mix.reverbNote')}</p>
       </section>
 
       <section className="m-mix-group">
         <div className="m-mix-group-head">
-          <span>音量</span>
+          <span>{t('audio.gain.title')}</span>
         </div>
         <Slider
-          label="人声"
+          label={t('audio.gain.vocalShort')}
           value={params.vocalGain}
-          display={gainLabel(params.vocalGain)}
+          display={gainLabel(params.vocalGain, t)}
           min={MIX_LIMITS.gain.min}
           max={MIX_LIMITS.gain.max}
           step={MIX_LIMITS.gain.step}
           onChange={(vocalGain) => update({ vocalGain })}
         />
         <Slider
-          label="伴奏"
+          label={t('audio.gain.accompShort')}
           value={params.accompGain}
-          display={gainLabel(params.accompGain)}
+          display={gainLabel(params.accompGain, t)}
           min={MIX_LIMITS.gain.min}
           max={MIX_LIMITS.gain.max}
           step={MIX_LIMITS.gain.step}
@@ -239,31 +237,31 @@ export function MobileMixPanel({ value, onParamsChange }: Props) {
 
       <section className="m-mix-group">
         <div className="m-mix-group-head">
-          <span>均衡</span>
-          <span className="m-faint">低 200Hz · 中 1.2kHz · 高 4kHz</span>
+          <span>{t('audio.eq.title')}</span>
+          <span className="m-faint">{t('audio.eq.bands')}</span>
         </div>
         <Slider
-          label="低音"
+          label={t('audio.eq.low')}
           value={params.eqLowDb}
-          display={dbLabel(params.eqLowDb)}
+          display={dbLabel(params.eqLowDb, t)}
           min={MIX_LIMITS.eqDb.min}
           max={MIX_LIMITS.eqDb.max}
           step={MIX_LIMITS.eqDb.step}
           onChange={(eqLowDb) => update({ eqLowDb })}
         />
         <Slider
-          label="中音"
+          label={t('audio.eq.mid')}
           value={params.eqMidDb}
-          display={dbLabel(params.eqMidDb)}
+          display={dbLabel(params.eqMidDb, t)}
           min={MIX_LIMITS.eqDb.min}
           max={MIX_LIMITS.eqDb.max}
           step={MIX_LIMITS.eqDb.step}
           onChange={(eqMidDb) => update({ eqMidDb })}
         />
         <Slider
-          label="高音"
+          label={t('audio.eq.high')}
           value={params.eqHighDb}
-          display={dbLabel(params.eqHighDb)}
+          display={dbLabel(params.eqHighDb, t)}
           min={MIX_LIMITS.eqDb.min}
           max={MIX_LIMITS.eqDb.max}
           step={MIX_LIMITS.eqDb.step}
@@ -273,22 +271,22 @@ export function MobileMixPanel({ value, onParamsChange }: Props) {
 
       <section className="m-mix-group">
         <div className="m-mix-group-head">
-          <span>修音</span>
-          <span className="m-faint">压缩 · 去齿音 · 降噪 · 不受预设影响</span>
+          <span>{t('audio.repair.title')}</span>
+          <span className="m-faint">{t('audio.repair.summary')}</span>
         </div>
         <Slider
-          label="压缩"
+          label={t('audio.repair.compression')}
           value={params.compression}
-          display={`${Math.round(params.compression * 100)}%`}
+          display={fmt.percent(params.compression)}
           min={MIX_LIMITS.amount.min}
           max={MIX_LIMITS.amount.max}
           step={MIX_LIMITS.amount.step}
           onChange={(compression) => update({ compression })}
         />
         <Slider
-          label="去齿音"
+          label={t('audio.repair.deEss')}
           value={params.deEss}
-          display={params.deEss <= 0 ? '关闭' : `${Math.round(params.deEss * 100)}%`}
+          display={params.deEss <= 0 ? t('audio.repair.off') : fmt.percent(params.deEss)}
           min={MIX_LIMITS.amount.min}
           max={MIX_LIMITS.amount.max}
           step={MIX_LIMITS.amount.step}
@@ -300,21 +298,19 @@ export function MobileMixPanel({ value, onParamsChange }: Props) {
             checked={params.noiseReduction}
             onChange={(event) => update({ noiseReduction: event.target.checked })}
           />
-          降噪
+          {t('audio.repair.noiseReduction')}
         </label>
-        <p className="m-notes">
-          去齿音在试听里是近似效果；降噪只该在录音有明显底噪时开，且**只在合成后的成品里生效**。
-        </p>
+        <p className="m-notes">{t('components.mix.repairNote')}</p>
       </section>
 
       <section className="m-mix-group">
         <div className="m-mix-group-head">
-          <span>人声对齐</span>
-          <span className="m-faint">±1000ms</span>
+          <span>{t('audio.offset.title')}</span>
+          <span className="m-faint">{t('audio.offset.range')}</span>
         </div>
         <div className="m-offset-row">
           <OffsetMsInput value={params.userOffsetMs} onChange={(next) => update({ userOffsetMs: next })} />
-          <span className="m-slider-value">ms</span>
+          <span className="m-slider-value">{t('common.unit.millisecond')}</span>
           <input
             type="range"
             min={MIX_LIMITS.userOffsetMs.min}
@@ -324,7 +320,7 @@ export function MobileMixPanel({ value, onParamsChange }: Props) {
             onChange={(event) => update({ userOffsetMs: Number(event.target.value) })}
           />
         </div>
-        <p className="m-notes">正值 = 人声更晚（抢拍），负值 = 更早（拖拍）。起录时那段静音已自动扣除。</p>
+        <p className="m-notes">{t('audio.offset.hint')}</p>
       </section>
 
     </div>

@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { formatBytes, isAudioFile, isLyricsFileName } from '../utils';
+import { useI18n } from '../i18n';
 
 /** 音频文件选择框的 accept：只列音频，视频一概不出现 */
 const AUDIO_ACCEPT = 'audio/*,.mp3,.wav,.flac,.m4a,.aac,.ogg,.oga,.opus,.wma,.ape,.aiff,.aif,.caf,.amr,.ac3,.dts,.wv,.tta';
@@ -90,6 +91,7 @@ function Picker({
  * 点「开始上传」才真的发请求。
  */
 export function UploadDialog({ draft, onClose, onSubmit }: Props) {
+  const { t, fmt } = useI18n();
   const [audioFiles, setAudioFiles] = useState<File[]>(draft.audio);
   const [lyricsFile, setLyricsFile] = useState<File | null>(draft.lyrics);
   /** 行内错误（选到了不支持的文件） */
@@ -123,7 +125,7 @@ export function UploadDialog({ draft, onClose, onSubmit }: Props) {
         // 歌词只能跟一个音频走：一变成多选就撤掉已选的歌词，别让它静默失效
         if (next.length > 1 && lyricsFile) {
           setLyricsFile(null);
-          setInfo('一次传多个音频时不能同时指定歌词，已撤掉选中的歌词；可上传后在编辑里补。');
+          setInfo(t('components.upload.lyricsDropped'));
         }
         return next;
       });
@@ -131,8 +133,9 @@ export function UploadDialog({ draft, onClose, onSubmit }: Props) {
     }
     if (rejected.length > 0) {
       setError(
-        `只支持音频文件，已忽略 ${rejected.map((file) => file.name).join('、')}` +
-          '（视频伴奏请先提取音频）',
+        t('components.upload.audioRejected', {
+          names: fmt.list(rejected.map((file) => file.name)),
+        }),
       );
     }
   };
@@ -146,7 +149,7 @@ export function UploadDialog({ draft, onClose, onSubmit }: Props) {
       setError(null);
     }
     if (rejected.length > 0 || lyrics.length > 1) {
-      setError('歌词只能选一个 .lrc / .txt 文件');
+      setError(t('components.upload.lyricsSingle'));
     }
   };
 
@@ -171,16 +174,16 @@ export function UploadDialog({ draft, onClose, onSubmit }: Props) {
         className="app-modal-panel"
         role="dialog"
         aria-modal="true"
-        aria-label="上传伴奏"
+        aria-label={t('components.upload.title')}
         tabIndex={-1}
       >
         <div className="app-modal-head">
           <div>
             <div className="page-title" style={{ fontSize: 18 }}>
-              上传伴奏
+              {t('components.upload.title')}
             </div>
             <p className="page-sub" style={{ marginTop: 2 }}>
-              选一个音频文件，想一起跟唱的话再带上歌词。单个文件最大 1GB。
+              {t('components.upload.subtitle')}
             </p>
           </div>
           <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
@@ -191,11 +194,15 @@ export function UploadDialog({ draft, onClose, onSubmit }: Props) {
         {draft.note && <div className="alert alert-warn">{draft.note}</div>}
 
         <Picker
-          label="音频文件（必填）"
-          hint={multiAudio ? `已选 ${audioFiles.length} 个` : '可一次选多个'}
+          label={t('components.upload.audioLabel')}
+          hint={
+            multiAudio
+              ? t('components.upload.audioCount', { count: fmt.integer(audioFiles.length) })
+              : t('components.upload.audioMultiHint')
+          }
           accept={AUDIO_ACCEPT}
           multiple
-          emptyText="点这里选择音频文件，或把文件拖到伴奏库上传区"
+          emptyText={t('components.upload.audioEmpty')}
           onPick={pickAudio}
         >
           {audioFiles.length > 0 && (
@@ -220,12 +227,12 @@ export function UploadDialog({ draft, onClose, onSubmit }: Props) {
         </Picker>
 
         <Picker
-          label="歌词文件（可选）"
-          hint=".lrc / .txt"
+          label={t('components.upload.lyricsLabel')}
+          hint={t('components.upload.lyricsHint')}
           accept={LYRICS_ACCEPT}
           disabled={multiAudio}
           emptyText={
-            multiAudio ? '一次传多个音频时不能同时指定歌词，可上传后在编辑里补' : '点这里选择歌词文件'
+            multiAudio ? t('components.upload.lyricsDisabledMulti') : t('components.upload.lyricsEmpty')
           }
           onPick={pickLyrics}
         >
@@ -249,9 +256,10 @@ export function UploadDialog({ draft, onClose, onSubmit }: Props) {
         </Picker>
 
         <div className="small faint">
-          歌词每行都要带时间戳（例如 <code>[00:12.00]第一句</code>）；不上传歌词的话，
-          演唱时就没有跟唱字幕，之后也可以在伴奏库里点「编辑」补。
-          {lyricsFile && audioFiles.length === 1 && '歌词会跟着第一个音频一起入库。'}
+          {t('components.upload.lyricsNotePrefix')}
+          <code>{t('components.upload.lyricsExample')}</code>
+          {t('components.upload.lyricsNoteSuffix')}
+          {lyricsFile && audioFiles.length === 1 && t('components.upload.lyricsWithFirst')}
         </div>
 
         {info && <div className="small" style={{ color: 'var(--accent-2)', marginTop: 10 }}>{info}</div>}
@@ -264,7 +272,7 @@ export function UploadDialog({ draft, onClose, onSubmit }: Props) {
 
         <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
           <button type="button" className="btn btn-ghost" onClick={onClose}>
-            取消
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -272,7 +280,7 @@ export function UploadDialog({ draft, onClose, onSubmit }: Props) {
             disabled={!canSubmit}
             onClick={() => void onSubmit(audioFiles, lyricsFile)}
           >
-            开始上传
+            {t('components.upload.start')}
           </button>
         </div>
       </div>

@@ -4,8 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { VOCAL_PRESET_LABELS } from '../../../shared/types';
-import { describePitch, describeReverb } from '../../../shared/mix';
+import { presetLabel, pitchLabel, reverbSummary } from '../i18n/labels';
 import {
   api,
   workAudioDownloadUrl,
@@ -19,6 +18,7 @@ import { EmptyState } from '../components/EmptyState';
 import { WorkSkeletonGrid } from '../components/Skeleton';
 import { toast } from '../components/ToastStack';
 import { usePolling } from '../hooks/usePolling';
+import { useI18n } from '../i18n';
 import {
   coverGradient,
   errorMessage,
@@ -51,18 +51,24 @@ import {
  * e2e 也指着它）；轮询只在真有作品在混音时跑（usePolling）。
  */
 
-/** 状态过滤档位（chip 上带各自的数量） */
-const STATUS_FILTERS: { value: WorkStatusFilter; label: string }[] = [
-  { value: 'all', label: '全部' },
-  { value: 'ready', label: '已就绪' },
-  { value: 'mixing', label: '合成中' },
-  { value: 'failed', label: '失败' },
+/**
+ * 状态过滤档位（chip 上带各自的数量）。
+ *
+ * labelKey 是文案键而不是文案本身：渲染时经 t() 取当前语言（模块顶层拿不到
+ * context，所以这里只放键名）。
+ */
+const STATUS_FILTERS: { value: WorkStatusFilter; labelKey: string }[] = [
+  { value: 'all', labelKey: 'common.all' },
+  { value: 'ready', labelKey: 'common.ready' },
+  { value: 'mixing', labelKey: 'works.status.mixing' },
+  { value: 'failed', labelKey: 'common.failed' },
 ];
 
 /** 重混 chip 的出现阈值：createdAt 与 updatedAt 差过 1 分钟才算「重新混过」 */
 const REMIX_HINT_MS = 60_000;
 
 export default function WorksPage() {
+  const { t, fmt, plural, locale } = useI18n();
   const location = useLocation();
   const [works, setWorks] = useState<WorkListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -92,11 +98,11 @@ export default function WorksPage() {
       setWorks(await api.listWorks());
       setError(null);
     } catch (err) {
-      setError(errorMessage(err, '加载作品失败'));
+      setError(errorMessage(err, t('works.loadFailed')));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void load();
@@ -133,8 +139,9 @@ export default function WorksPage() {
   /* ------------------------------ 筛选派生 ------------------------------ */
 
   const visibleWorks = useMemo(
-    () => selectVisibleWorks(works, { query, status: statusFilter, sortBy }),
-    [works, query, statusFilter, sortBy],
+    // 第三个参数是界面语言：歌名排序跟着它走（中文拼音序 / 英文拉丁序）
+    () => selectVisibleWorks(works, { query, status: statusFilter, sortBy }, locale),
+    [works, query, statusFilter, sortBy, locale],
   );
 
   /** 每个状态档各有多少部（chip 上的计数） */
@@ -154,19 +161,19 @@ export default function WorksPage() {
 
   const handleDelete = async (work: WorkListItem) => {
     const confirmed = await confirmAction({
-      title: '删除作品',
-      message: `确定删除作品「${work.title}」吗？录音干声和成品 MP3 都会一起删掉。`,
-      confirmText: '删除',
+      title: t('works.delete.title'),
+      message: t('works.delete.message', { title: work.title }),
+      confirmText: t('common.delete'),
       danger: true,
     });
     if (!confirmed) return;
     try {
       await api.deleteWork(work.id);
-      toast.ok(`已删除作品「${work.title}」`);
+      toast.ok(t('works.deleted', { title: work.title }));
       if (renamingId === work.id) setRenamingId(null);
       await load();
     } catch (err) {
-      setError(errorMessage(err, '删除失败'));
+      setError(errorMessage(err, t('works.deleteFailed')));
     }
   };
 
@@ -174,18 +181,18 @@ export default function WorksPage() {
   const commitRename = async (work: WorkListItem) => {
     const title = renameDraft.trim();
     if (!title) {
-      toast.error('作品名不能为空');
+      toast.error(t('works.rename.empty'));
       return;
     }
     setBusyId(work.id);
     try {
       await api.updateWork(work.id, { title });
       setRenamingId(null);
-      toast.ok('已改名');
+      toast.ok(t('works.renamed'));
       await load();
     } catch (err) {
       // 失败保持编辑态：用户改完名字再试一次，不用从头点开
-      toast.error(errorMessage(err, '重命名失败'));
+      toast.error(errorMessage(err, t('works.renameFailed')));
     } finally {
       setBusyId(null);
     }
@@ -202,7 +209,7 @@ export default function WorksPage() {
       await api.remixWork(work.id, work.mixParams);
       await load();
     } catch (err) {
-      toast.error(errorMessage(err, '重试失败'));
+      toast.error(errorMessage(err, t('works.retryFailed')));
     } finally {
       setBusyId(null);
     }
@@ -235,7 +242,7 @@ export default function WorksPage() {
     // 「重混过」只进 title 提示：元信息行里再并排一个「10-16重混 · 10-16演唱」
     // 是两个重复日期，读起来像排版错误
     const remixHint = work.updatedAt - work.createdAt > REMIX_HINT_MS
-      ? ` · 最近混音：${formatDateTime(work.updatedAt)}`
+      ? ` · ${t('works.remix.hint', { time: formatDateTime(work.updatedAt, locale) })}`
       : '';
     const playing = playingId === work.id;
 
@@ -277,7 +284,7 @@ export default function WorksPage() {
         ) : (
           <span
             className={`work-row-play-badge${work.status === 'failed' ? ' is-failed' : ''}`}
-            title={work.status === 'mixing' ? '正在合成' : '合成失败'}
+            title={work.status === 'mixing' ? t('works.play.mixing') : t('works.status.failed')}
           >
             {work.status === 'mixing' ? <span className="spin" /> : '!'}
           </span>
@@ -290,7 +297,7 @@ export default function WorksPage() {
                 className="text-input work-row-rename"
                 value={renameDraft}
                 autoFocus
-                aria-label="作品名"
+                aria-label={t('works.rename.label')}
                 onChange={(event) => setRenameDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') void commitRename(work);
@@ -311,14 +318,14 @@ export default function WorksPage() {
                   disabled={busyId === work.id || !renameDraft.trim()}
                   onClick={() => void commitRename(work)}
                 >
-                  保存
+                  {t('common.save')}
                 </button>
                 <button
                   type="button"
                   className="btn btn-ghost btn-sm"
                   onClick={() => setRenamingId(null)}
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
               </span>
             ) : (
@@ -326,19 +333,19 @@ export default function WorksPage() {
                 {work.status === 'ready' && (
                   <>
                     <span className="work-row-dot is-ok" aria-hidden="true" />
-                    已就绪
+                    {t('common.ready')}
                   </>
                 )}
                 {work.status === 'mixing' && (
                   <>
                     <span className="work-row-dot is-mixing" aria-hidden="true" />
-                    合成中
+                    {t('works.status.mixing')}
                   </>
                 )}
                 {work.status === 'failed' && (
                   <>
                     <span className="work-row-dot is-failed" aria-hidden="true" />
-                    合成失败
+                    {t('works.status.failed')}
                   </>
                 )}
               </span>
@@ -353,13 +360,19 @@ export default function WorksPage() {
           <div
             className="work-row-meta"
             title={[
-              work.trackTitle ? `伴奏：${work.trackTitle}` : '伴奏已删除',
+              work.trackTitle
+                ? t('works.track.label', { title: work.trackTitle })
+                : t('works.track.deleted'),
               work.trackArtist,
-              `时长 ${formatDuration(work.vocalDuration)}`,
-              work.sizeBytes !== null ? `成品 MP3 ${formatBytes(work.sizeBytes)}` : '',
-              `人声预设：${VOCAL_PRESET_LABELS[work.mixParams.vocalPreset]}`,
-              `混响：${describeReverb(work.mixParams.reverbSpace, work.mixParams.reverbWet)}`,
-              `演唱于 ${formatDateTime(work.createdAt)}`,
+              t('works.meta.duration', { duration: formatDuration(work.vocalDuration) }),
+              work.sizeBytes !== null
+                ? t('works.meta.size', { size: formatBytes(work.sizeBytes, locale) })
+                : '',
+              t('works.meta.vocalPreset', { preset: presetLabel(locale, work.mixParams.vocalPreset) }),
+              t('works.meta.reverb', {
+                reverb: reverbSummary(locale, work.mixParams.reverbSpace, work.mixParams.reverbWet),
+              }),
+              t('works.meta.sungAt', { time: formatDateTime(work.createdAt, locale) }),
               remixHint.trim(),
               work.error ?? '',
             ]
@@ -372,7 +385,7 @@ export default function WorksPage() {
                 {work.trackArtist ? ` · ${work.trackArtist}` : ''}
               </span>
             ) : (
-              <span className="work-row-track is-gone">伴奏已删除</span>
+              <span className="work-row-track is-gone">{t('works.track.deleted')}</span>
             )}
             <span className="work-row-sep" aria-hidden="true">
               ·
@@ -390,8 +403,8 @@ export default function WorksPage() {
               ·
             </span>
             <span>
-              {VOCAL_PRESET_LABELS[work.mixParams.vocalPreset]} ·{' '}
-              {describeReverb(work.mixParams.reverbSpace, work.mixParams.reverbWet)}
+              {presetLabel(locale, work.mixParams.vocalPreset)} ·{' '}
+              {reverbSummary(locale, work.mixParams.reverbSpace, work.mixParams.reverbWet)}
             </span>
             {/* 伴奏被移调过：这版的调和原文件不一样，得说出来 */}
             {work.trackPitchSemitones !== 0 && (
@@ -399,21 +412,25 @@ export default function WorksPage() {
                 <span className="work-row-sep" aria-hidden="true">
                   ·
                 </span>
-                <span title={`混音时伴奏移调了 ${describePitch(work.trackPitchSemitones)}`}>
-                  {describePitch(work.trackPitchSemitones)}
+                <span title={t('works.pitch.shifted', { pitch: pitchLabel(locale, work.trackPitchSemitones) })}>
+                  {pitchLabel(locale, work.trackPitchSemitones)}
                 </span>
               </>
             )}
             <span className="work-row-sep" aria-hidden="true">
               ·
             </span>
-            <span title={`演唱于 ${formatDateTime(work.createdAt)}`}>
-              {formatRelativeTime(work.createdAt)}演唱
+            <span title={t('works.meta.sungAt', { time: formatDateTime(work.createdAt, locale) })}>
+              {t('works.sung.relative', {
+                when: formatRelativeTime(work.createdAt, undefined, locale),
+              })}
             </span>
           </div>
 
           {work.status === 'failed' && (
-            <div className="work-row-error">合成失败：{work.error ?? '未知原因'}</div>
+            <div className="work-row-error">
+              {t('works.mixFailedReason', { reason: work.error ?? t('common.unknown') })}
+            </div>
           )}
         </div>
 
@@ -423,25 +440,30 @@ export default function WorksPage() {
               <Link
                 className="btn btn-sm"
                 to={`/works/${work.id}`}
-                title="试听效果、调整参数并重新合成"
+                title={t('works.action.adjustHint')}
               >
-                调整效果
+                {t('works.action.adjust')}
               </Link>
               {work.status === 'ready' ? (
                 <a className="btn btn-sm" href={workAudioDownloadUrl(work.id)}>
-                  下载 MP3
+                  {t('works.action.downloadMp3')}
                 </a>
               ) : (
-                <button type="button" className="btn btn-sm" disabled title="作品还没就绪，不能下载">
-                  下载 MP3
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled
+                  title={t('works.action.downloadDisabled')}
+                >
+                  {t('works.action.downloadMp3')}
                 </button>
               )}
               <a
                 className="btn btn-sm btn-ghost work-row-action-vocal work-row-action-soft"
                 href={workVocalDownloadUrl(work.id)}
-                title="下载干声 WAV（未经处理的原始录音）"
+                title={t('works.action.vocalHint')}
               >
-                干声
+                {t('works.action.vocal')}
               </a>
               {work.status === 'failed' && (
                 <button
@@ -450,7 +472,7 @@ export default function WorksPage() {
                   disabled={busyId === work.id}
                   onClick={() => void handleRetry(work)}
                 >
-                  重试合成
+                  {t('works.action.retry')}
                 </button>
               )}
               {/*
@@ -461,8 +483,8 @@ export default function WorksPage() {
               <button
                 type="button"
                 className="btn btn-ghost btn-sm work-row-action-soft work-row-action-icon work-row-rename-trigger"
-                aria-label={`把「${work.title}」改名`}
-                title="改名"
+                aria-label={t('works.action.renameAria', { title: work.title })}
+                title={t('works.action.rename')}
                 onClick={() => {
                   setRenameDraft(work.title);
                   setRenamingId(work.id);
@@ -473,8 +495,8 @@ export default function WorksPage() {
               <button
                 type="button"
                 className="btn btn-ghost btn-sm work-row-action-soft work-row-action-icon is-danger"
-                aria-label={`删除「${work.title}」`}
-                title="删除"
+                aria-label={t('works.action.deleteAria', { title: work.title })}
+                title={t('common.delete')}
                 onClick={() => void handleDelete(work)}
               >
                 ✕
@@ -491,13 +513,17 @@ export default function WorksPage() {
       <div className="page-head">
         <div>
           <h1 className="page-title">
-            我的作品
-            {works.length > 0 && <span className="page-count">共 {works.length} 部</span>}
+            {t('works.title')}
+            {works.length > 0 && (
+              <span className="page-count">
+                {plural('works.count', works.length, { count: fmt.integer(works.length) })}
+              </span>
+            )}
           </h1>
-          <p className="page-sub">每唱一次都会存下一版 MP3，随时回听、下载或调整效果。</p>
+          <p className="page-sub">{t('works.subtitle')}</p>
         </div>
         <Link className="btn" to="/">
-          去伴奏库
+          {t('works.goLibrary')}
         </Link>
       </div>
 
@@ -505,7 +531,7 @@ export default function WorksPage() {
         <div className="alert alert-error" role="alert">
           {error}
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => void load()}>
-            重试
+            {t('common.retry')}
           </button>
         </div>
       )}
@@ -521,15 +547,15 @@ export default function WorksPage() {
               ref={searchRef}
               className="text-input"
               value={query}
-              placeholder="搜索作品名 / 伴奏 / 歌手…"
-              aria-label="按作品名、伴奏名或歌手搜索作品"
+              placeholder={t('works.search.placeholder')}
+              aria-label={t('works.search.aria')}
               onChange={(event) => setQuery(event.target.value)}
             />
             {query && (
               <button
                 type="button"
                 className="search-clear"
-                aria-label="清空搜索词"
+                aria-label={t('works.search.clear')}
                 onClick={() => {
                   setQuery('');
                   searchRef.current?.focus();
@@ -542,16 +568,16 @@ export default function WorksPage() {
           <select
             className="select-input"
             value={sortBy}
-            aria-label="排序方式"
+            aria-label={t('works.sort.aria')}
             onChange={(event) => setSortBy(event.target.value as WorksSortBy)}
           >
-            <option value="recent">最近演唱</option>
-            <option value="oldest">最早演唱</option>
-            <option value="title">按歌名</option>
-            <option value="duration">按时长</option>
+            <option value="recent">{t('works.sort.recent')}</option>
+            <option value="oldest">{t('works.sort.oldest')}</option>
+            <option value="title">{t('works.sort.title')}</option>
+            <option value="duration">{t('works.sort.duration')}</option>
           </select>
           <div className="option-row work-status-filters">
-            {STATUS_FILTERS.map(({ value, label }) => (
+            {STATUS_FILTERS.map(({ value, labelKey }) => (
               <button
                 key={value}
                 type="button"
@@ -559,15 +585,18 @@ export default function WorksPage() {
                 aria-pressed={statusFilter === value}
                 onClick={() => setStatusFilter(value)}
               >
-                {label}
-                <span className="filter-chip-count">{statusCounts[value]}</span>
+                {t(labelKey)}
+                <span className="filter-chip-count">{fmt.integer(statusCounts[value])}</span>
               </button>
             ))}
           </div>
           <span className="list-count">
             {visibleWorks.length === works.length
-              ? `共 ${works.length} 部`
-              : `${visibleWorks.length} / ${works.length} 部`}
+              ? plural('works.count', works.length, { count: fmt.integer(works.length) })
+              : plural('works.count.filtered', works.length, {
+                  visible: fmt.integer(visibleWorks.length),
+                  total: fmt.integer(works.length),
+                })}
           </span>
         </div>
       )}
@@ -577,26 +606,26 @@ export default function WorksPage() {
       ) : works.length === 0 ? (
         <EmptyState
           icon="🎤"
-          title="还没有作品"
-          description="去伴奏库选一首，戴上耳机开始你的第一次演唱吧。"
+          title={t('works.empty.title')}
+          description={t('works.empty.description')}
           action={
             <Link className="btn btn-primary" to="/">
-              去伴奏库
+              {t('works.goLibrary')}
             </Link>
           }
         />
       ) : visibleWorks.length === 0 ? (
         <EmptyState
           icon="🔍"
-          title="没有匹配的作品"
+          title={t('works.empty.noMatch.title')}
           description={
             query.trim()
-              ? `没有和「${query.trim()}」相关的作品名、伴奏或歌手。`
-              : '当前状态过滤下没有作品，换个状态看看。'
+              ? t('works.empty.noMatch.byQuery', { query: query.trim() })
+              : t('works.empty.noMatch.byStatus')
           }
           action={
             <button type="button" className="btn" onClick={clearFilters}>
-              清空筛选
+              {t('works.clearFilters')}
             </button>
           }
         />

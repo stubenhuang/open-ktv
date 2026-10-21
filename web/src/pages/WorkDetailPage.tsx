@@ -12,6 +12,7 @@ import { toast } from '../components/ToastStack';
 import { LivePreview, type PreviewStatus } from '../components/LivePreview';
 import { MixPanel } from '../components/MixPanel';
 import { usePolling } from '../hooks/usePolling';
+import { useI18n } from '../i18n';
 import { errorMessage, formatDateTime, formatDuration } from '../utils';
 
 /**
@@ -26,6 +27,7 @@ import { errorMessage, formatDateTime, formatDuration } from '../utils';
  * 不锁高度也不裁内容（锁 height + overflow:hidden 会在矮窗口上把「合成」裁掉）。
  */
 export default function WorkDetailPage() {
+  const { t, locale } = useI18n();
   const { workId = '' } = useParams();
   const navigate = useNavigate();
 
@@ -108,9 +110,9 @@ export default function WorkDetailPage() {
       setWork(await api.getWork(workId));
       setLoadError(null);
     } catch (err) {
-      setLoadError(errorMessage(err, '加载作品失败'));
+      setLoadError(errorMessage(err, t('detail.loadFailed')));
     }
-  }, [workId]);
+  }, [workId, t]);
 
   useEffect(() => {
     void load();
@@ -129,7 +131,7 @@ export default function WorkDetailPage() {
       navigate('/works', { state: { focusWorkId: work.id } });
     } catch (err) {
       // 失败留在本页，让用户改完参数再点一次
-      setActionError(errorMessage(err, '合成失败'));
+      setActionError(errorMessage(err, t('detail.mixFailed')));
     } finally {
       setBusy(false);
     }
@@ -141,10 +143,10 @@ export default function WorkDetailPage() {
     try {
       await api.updateWork(work.id, { title: titleDraft });
       setEditing(false);
-      toast.ok('已改名');
+      toast.ok(t('detail.renamed'));
       await load();
     } catch (err) {
-      setActionError(errorMessage(err, '重命名失败'));
+      setActionError(errorMessage(err, t('detail.renameFailed')));
     } finally {
       setBusy(false);
     }
@@ -153,9 +155,9 @@ export default function WorkDetailPage() {
   const handleDelete = async () => {
     if (!work) return;
     const confirmed = await confirmAction({
-      title: '删除作品',
-      message: `确定删除作品「${work.title}」吗？录音干声和成品 MP3 都会一起删掉。`,
-      confirmText: '删除',
+      title: t('detail.delete.title'),
+      message: t('detail.delete.message', { title: work.title }),
+      confirmText: t('common.delete'),
       danger: true,
     });
     if (!confirmed) return;
@@ -163,7 +165,7 @@ export default function WorkDetailPage() {
       await api.deleteWork(work.id);
       navigate('/works');
     } catch (err) {
-      setActionError(errorMessage(err, '删除失败'));
+      setActionError(errorMessage(err, t('detail.deleteFailed')));
     }
   };
 
@@ -171,11 +173,9 @@ export default function WorkDetailPage() {
   const handleUndoRetake = async () => {
     if (!work) return;
     const confirmed = await confirmAction({
-      title: '撤销重录',
-      message:
-        '确定恢复到上一步重录前的干声吗？当前干声会被替换掉，并自动重新混音。' +
-        '（只回退一级：再往前的一版已经被覆盖。）',
-      confirmText: '撤销并重新混音',
+      title: t('detail.undoRetake.title'),
+      message: t('detail.undoRetake.message'),
+      confirmText: t('detail.undoRetake.confirm'),
     });
     if (!confirmed) return;
     setBusy(true);
@@ -184,7 +184,7 @@ export default function WorkDetailPage() {
       // 状态已翻成 mixing；load 一次让徽章和轮询跟上
       await load();
     } catch (err) {
-      setActionError(errorMessage(err, '撤销重录失败'));
+      setActionError(errorMessage(err, t('detail.undoRetakeFailed')));
     } finally {
       setBusy(false);
     }
@@ -195,13 +195,13 @@ export default function WorkDetailPage() {
       <div>
         <div className="alert alert-error">{loadError}</div>
         <Link className="btn" to="/works">
-          返回作品库
+          {t('detail.back')}
         </Link>
       </div>
     );
   }
 
-  if (!work) return <div className="empty-state">正在加载作品…</div>;
+  if (!work) return <div className="empty-state">{t('detail.loading')}</div>;
 
   const mixing = work.status === 'mixing';
 
@@ -229,10 +229,10 @@ export default function WorkDetailPage() {
                 disabled={busy}
                 onClick={() => void handleRename()}
               >
-                保存
+                {t('common.save')}
               </button>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(false)}>
-                取消
+                {t('common.cancel')}
               </button>
             </div>
           ) : (
@@ -247,34 +247,35 @@ export default function WorkDetailPage() {
                   setEditing(true);
                 }}
               >
-                改名
+                {t('detail.rename')}
               </button>
             </div>
           )}
           <div className="detail-sub-row" style={{ marginTop: 6 }}>
             <p className="page-sub" style={{ margin: 0 }}>
-              {work.trackTitle ? `伴奏：${work.trackTitle} · ` : ''}
-              时长 {formatDuration(work.vocalDuration)} · {formatDateTime(work.createdAt)}
+              {work.trackTitle ? `${t('detail.track.label', { title: work.trackTitle })} · ` : ''}
+              {t('detail.duration.label', { duration: formatDuration(work.vocalDuration) })} ·{' '}
+              {formatDateTime(work.createdAt, locale)}
             </p>
             {/* 成品 MP3 的徽章跟着状态走：唱完刚落页时能看到初始混音的进度 */}
             {mixing ? (
               <span className="badge badge-work">
                 <span className="spin" style={{ borderTopColor: 'var(--accent-2)' }} />
-                正在合成…
+                {t('detail.status.mixing')}
               </span>
             ) : work.status === 'ready' ? (
-              <span className="badge badge-ok">已就绪</span>
+              <span className="badge badge-ok">{t('common.ready')}</span>
             ) : null}
           </div>
         </div>
         <div className="row">
           <Link className="btn btn-ghost" to="/works">
-            返回作品库
+            {t('detail.back')}
           </Link>
           {/* 伴奏被删的作品不能再混音，重录（拼完要重新混音）同理不给入口 */}
           {work.trackId && (
             <Link className="btn" to={`/works/${work.id}/retake`}>
-              分段重录
+              {t('detail.retake')}
             </Link>
           )}
           {work.hasPrevVocal && (
@@ -283,13 +284,13 @@ export default function WorkDetailPage() {
               className="btn btn-ghost"
               disabled={busy}
               onClick={() => void handleUndoRetake()}
-              title="恢复上一步重录前的干声，并自动重新混音"
+              title={t('detail.undoRetake.hint')}
             >
-              撤销重录
+              {t('detail.undoRetake.title')}
             </button>
           )}
           <button type="button" className="btn btn-danger" onClick={() => void handleDelete()}>
-            删除
+            {t('common.delete')}
           </button>
         </div>
       </div>
@@ -298,18 +299,15 @@ export default function WorkDetailPage() {
 
       {work.status === 'failed' && (
         <div className="alert alert-error">
-          合成失败：{work.error ?? '未知原因'}
+          {t('detail.mixFailedReason', { reason: work.error ?? t('common.unknown') })}
           <br />
-          常见原因：伴奏文件被删了、磁盘写满、或者干声文件损坏。可以调一下参数再点「合成」试试。
+          {t('detail.mixFailedHints')}
         </div>
       )}
 
       {/* 伴奏被删掉的作品：干声和成品 MP3 都还在，但没有伴奏就不能再混音 */}
       {!work.trackId && (
-        <div className="alert alert-warn">
-          这个作品用的伴奏已经被删除了。已生成的 MP3 还能在作品库里播放 / 下载，
-          但实时试听和重新合成都需要伴奏文件，所以这里不再提供调整。
-        </div>
+        <div className="alert alert-warn">{t('detail.trackDeleted')}</div>
       )}
 
       {work.trackId && (

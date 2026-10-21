@@ -14,6 +14,7 @@ import {
 import { EmptyState } from '../components/EmptyState';
 import { TrackSkeletonList } from '../components/Skeleton';
 import { errorMessage, formatBytes, formatDuration } from '../utils';
+import { useI18n } from '../i18n';
 
 /** 任务轮询间隔 */
 const TASK_POLL_MS = 700;
@@ -32,6 +33,7 @@ function itemKey(item: LibraryItemDto): string {
  * 单并发队列里跑，这里只负责排任务 + 轮询进度。
  */
 export default function DiscoverPage() {
+  const { t, fmt, locale } = useI18n();
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
   const [items, setItems] = useState<LibraryItemDto[]>([]);
@@ -56,12 +58,12 @@ export default function DiscoverPage() {
         if (!cancelled) setSourceCount(result.sources.length);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(errorMessage(err, '读取曲库源失败'));
+        if (!cancelled) setError(errorMessage(err, t('discover.sources.failed')));
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t]);
 
   /* --------------------------------- 搜索 --------------------------------- */
 
@@ -74,12 +76,12 @@ export default function DiscoverPage() {
       setError(null);
     } catch (err) {
       setItems([]);
-      setError(errorMessage(err, '搜索失败'));
+      setError(errorMessage(err, t('discover.search.failed')));
     } finally {
       setSearching(false);
       setSearched(true);
     }
-  }, []);
+  }, [t]);
 
   // 首次进来就把曲库列出来（空关键词 = 全部），不用先打字。
   // 只跑一次：之后的搜索全部由「搜索」按钮 / 回车 / 切分类触发。
@@ -187,7 +189,7 @@ export default function DiscoverPage() {
         },
       }));
     } catch (err) {
-      setError(errorMessage(err, '点歌失败'));
+      setError(errorMessage(err, t('discover.request.failed')));
     }
   };
 
@@ -200,16 +202,17 @@ export default function DiscoverPage() {
       <div>
         <div className="page-head">
           <div>
-            <h1 className="page-title">点歌台</h1>
-            <p className="page-sub">搜歌名或歌手，点「点歌」自动下载进伴奏库；有歌词会一起带上。</p>
+            <h1 className="page-title">{t('discover.title')}</h1>
+            <p className="page-sub">{t('discover.subtitle')}</p>
           </div>
         </div>
         <div className="card">
           <div className="page-title" style={{ fontSize: 16 }}>
-            <span aria-hidden="true">📂 </span>还没有配置任何曲库源
+            <span aria-hidden="true">📂 </span>
+            {t('discover.noSources.title')}
           </div>
           <p className="page-sub" style={{ marginTop: 6 }}>
-            配上曲库源之后就能在这里搜歌、点歌。伴奏照样能手动上传，不受影响。
+            {t('discover.noSources.description')}
           </p>
           {/*
             环境变量和 JSON 格式是给「打算自建源」的人看的，大多数人永远不需要 ——
@@ -217,19 +220,19 @@ export default function DiscoverPage() {
             页面的主要信息（没源可用 + 怎么办）一眼能读完。
           */}
           <details className="library-config-details">
-            <summary>查看怎么配置曲库源</summary>
+            <summary>{t('discover.noSources.howTo')}</summary>
             <p className="small faint" style={{ marginTop: 6 }}>
-              内置的 5sing 伴奏源可以用 <code>FIVESING_ENABLED=1</code>（默认就是开的）打开；
-              也可以用 <code>LIBRARY_SOURCES</code> 环境变量配上自己的源。源站只需要托管一份静态
-              JSON，不需要任何服务端逻辑，所以 NAS、对象存储、局域网 HTTP 都能直接用。
+              {t('discover.noSources.builtin')}{' '}
+              <code>FIVESING_ENABLED=1</code>
+              {t('discover.noSources.builtinAfter')}{' '}
+              <code>LIBRARY_SOURCES</code>{' '}
+              {t('discover.noSources.custom')}
             </p>
-            <pre className="library-config-sample">{`FIVESING_ENABLED=1 ./openktv.sh start
-# 或者用自己的清单：
-LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh start`}</pre>
+            <pre className="library-config-sample">{t('discover.noSources.sample')}</pre>
             <p className="small faint" style={{ marginTop: 8 }}>
-              清单格式：{`{"version":1,"name":"我的伴奏库","items":[{"id":"qingtian","title":"晴天","artist":"周杰伦","kind":"audio","url":"qingtian.mp3","lrc":"qingtian.lrc"}]}`}
+              {t('discover.noSources.format')}
               <br />
-              配好之后重启服务即可。
+              {t('discover.noSources.formatHint')}
             </p>
           </details>
         </div>
@@ -241,8 +244,8 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
     <div>
       <div className="page-head">
         <div>
-          <h1 className="page-title">点歌台</h1>
-          <p className="page-sub">搜歌名或歌手，点「点歌」自动下载进伴奏库；有歌词会一起带上。</p>
+          <h1 className="page-title">{t('discover.title')}</h1>
+          <p className="page-sub">{t('discover.subtitle')}</p>
         </div>
       </div>
 
@@ -254,7 +257,7 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
             className="btn btn-ghost btn-sm"
             onClick={() => void runSearch(query, kind)}
           >
-            重试
+            {t('common.retry')}
           </button>
         </div>
       )}
@@ -267,7 +270,7 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
           <input
             className="text-input"
             value={query}
-            placeholder="输入歌名或歌手，点「搜索」"
+            placeholder={t('discover.search.placeholder')}
             autoFocus
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
@@ -278,7 +281,7 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
             <button
               type="button"
               className="search-clear"
-              aria-label="清空搜索词"
+              aria-label={t('discover.search.clear')}
               onClick={() => {
                 setQuery('');
                 // 清空是明确的意图：直接回到「全部」，省得用户再按一次搜索
@@ -296,14 +299,14 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
           disabled={searching}
           onClick={submitSearch}
         >
-          搜索
+          {t('common.search')}
         </button>
         <div className="option-row">
           {(
             [
-              ['all', '全部'],
-              ['audio', '音频'],
-              ['video', '视频'],
+              ['all', t('common.all')],
+              ['audio', t('discover.filter.audio')],
+              ['video', t('discover.filter.video')],
             ] as const
           ).map(([value, label]) => (
             <button
@@ -328,7 +331,9 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
               className={`badge ${source.ok ? 'badge-kind' : 'badge-fail'}`}
               title={source.error ?? ''}
             >
-              {source.ok ? `${source.label}（${source.count}）` : `${source.label}：不可用`}
+              {source.ok
+                ? t('discover.source.ok', { label: source.label, count: fmt.integer(source.count) })
+                : t('discover.source.unavailable', { label: source.label })}
             </span>
           ))}
         </div>
@@ -339,8 +344,8 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
       ) : searched && items.length === 0 ? (
         <EmptyState
           icon="🔍"
-          title={query ? `没搜到「${query}」相关的伴奏` : '曲库里还没有伴奏'}
-          description="换个关键词试试，或者去伴奏库自己上传一首。"
+          title={query ? t('discover.empty.noMatch.title', { query }) : t('discover.empty.title')}
+          description={t('discover.empty.description')}
           action={
             query ? (
               <button
@@ -351,11 +356,11 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
                   void runSearch('', kind);
                 }}
               >
-                清空搜索词
+                {t('discover.search.clear')}
               </button>
             ) : (
               <Link className="btn btn-primary" to="/">
-                去伴奏库上传
+                {t('discover.empty.goLibrary')}
               </Link>
             )
           }
@@ -371,7 +376,10 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
 
             return (
               <div key={key} className="track-item">
-                <div className="track-kind" title={item.kind === 'video' ? '视频伴奏' : '音频伴奏'}>
+                <div
+                  className="track-kind"
+                  title={t(item.kind === 'video' ? 'discover.kind.video' : 'discover.kind.audio')}
+                >
                   {item.kind === 'video' ? '🎬' : '🎵'}
                 </div>
 
@@ -382,12 +390,12 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
                     {item.durationSec !== null && (
                       <span className="mono">{formatDuration(item.durationSec)}</span>
                     )}
-                    {item.sizeBytes !== null && <span>{formatBytes(item.sizeBytes)}</span>}
-                    {item.hasLyrics && <span className="badge badge-ok">带歌词</span>}
+                    {item.sizeBytes !== null && <span>{formatBytes(item.sizeBytes, locale)}</span>}
+                    {item.hasLyrics && <span className="badge badge-ok">{t('discover.hasLyrics')}</span>}
                   </div>
                   {failed && (
                     <div className="small" style={{ color: 'var(--danger)', marginTop: 4 }}>
-                      {task?.error ?? '下载失败'}
+                      {task?.error ?? t('discover.download.failed')}
                     </div>
                   )}
                 </div>
@@ -402,17 +410,19 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
                         />
                       </div>
                       <span className="small muted download-percent">
-                        {Math.round((task?.progress ?? 0) * 100)}%
+                        {fmt.percent(task?.progress ?? 0)}
                       </span>
                       <span className="small muted" style={{ minWidth: 66 }}>
-                        {task?.state === 'queued' ? '排队中…' : '下载中…'}
+                        {task?.state === 'queued'
+                          ? t('discover.download.queued')
+                          : t('discover.download.running')}
                       </span>
                     </>
                   ) : importedTrackId || task?.trackId ? (
                     <>
-                      <span className="badge badge-ok">已入库</span>
+                      <span className="badge badge-ok">{t('discover.imported')}</span>
                       <Link className="btn btn-primary btn-sm" to={`/sing/${importedTrackId ?? task?.trackId}`}>
-                        去演唱
+                        {t('discover.goSing')}
                       </Link>
                     </>
                   ) : (
@@ -421,7 +431,7 @@ LIBRARY_SOURCES="我的伴奏库=https://nas.local/ktv/index.json" ./openktv.sh 
                       className="btn btn-primary btn-sm"
                       onClick={() => void handleDownload(item)}
                     >
-                      {failed ? '重试点歌' : '点歌'}
+                      {failed ? t('discover.download.retry') : t('discover.download.button')}
                     </button>
                   )}
                 </div>

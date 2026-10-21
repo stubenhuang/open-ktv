@@ -9,6 +9,7 @@ import { AudioPlayer } from '../../components/AudioPlayer';
 import { confirmAction } from '../../components/ConfirmDialog';
 import { toast } from '../../components/ToastStack';
 import { usePolling } from '../../hooks/usePolling';
+import { useI18n } from '../../i18n';
 import { errorMessage, formatBytes, formatDateTime, formatDuration } from '../../utils';
 
 /**
@@ -21,6 +22,7 @@ import { errorMessage, formatBytes, formatDateTime, formatDuration } from '../..
 export default function MobileWorkPage() {
   const { workId = '' } = useParams();
   const navigate = useNavigate();
+  const { t, locale } = useI18n();
   const [work, setWork] = useState<WorkListItem | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
@@ -36,7 +38,7 @@ export default function MobileWorkPage() {
         if (!cancelled) setWork(result);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(errorMessage(err, '加载作品失败'));
+        if (!cancelled) setError(errorMessage(err, t('mobile.load_work_failed')));
       });
     return () => {
       cancelled = true;
@@ -49,7 +51,7 @@ export default function MobileWorkPage() {
       api
         .getWork(workId)
         .then(setWork)
-        .catch((err: unknown) => setError(errorMessage(err, '刷新状态失败')));
+        .catch((err: unknown) => setError(errorMessage(err, t('mobile.refresh_failed'))));
     },
     1500,
     work?.status === 'mixing',
@@ -62,7 +64,7 @@ export default function MobileWorkPage() {
       const next = await api.remixWork(workId, {});
       setWork({ ...(work as WorkListItem), ...next });
     } catch (err) {
-      setError(errorMessage(err, '重试合成失败'));
+      setError(errorMessage(err, t('mobile.retry_mix_failed')));
     } finally {
       setRetrying(false);
     }
@@ -74,10 +76,10 @@ export default function MobileWorkPage() {
     try {
       await api.updateWork(work.id, { title: titleDraft });
       setEditing(false);
-      toast.ok('已改名');
+      toast.ok(t('mobile.renamed'));
       setWork(await api.getWork(work.id));
     } catch (err) {
-      setError(errorMessage(err, '重命名失败'));
+      setError(errorMessage(err, t('mobile.rename_failed')));
     } finally {
       setRenaming(false);
     }
@@ -86,18 +88,18 @@ export default function MobileWorkPage() {
   const remove = async () => {
     if (!work) return;
     const confirmed = await confirmAction({
-      title: '删除作品',
-      message: `确定删除作品「${work.title}」吗？录音干声和成品 MP3 都会一起删掉。`,
-      confirmText: '删除',
+      title: t('mobile.delete_work_title'),
+      message: t('mobile.delete_work_message', { title: work.title }),
+      confirmText: t('common.delete'),
       danger: true,
     });
     if (!confirmed) return;
     try {
       await api.deleteWork(work.id);
-      toast.ok('已删除');
+      toast.ok(t('mobile.deleted'));
       navigate('/m/works');
     } catch (err) {
-      setError(errorMessage(err, '删除失败'));
+      setError(errorMessage(err, t('mobile.delete_failed')));
     }
   };
 
@@ -106,7 +108,7 @@ export default function MobileWorkPage() {
       <div className="m-page">
         <div className="m-topbar">
           <Link className="m-back" to="/m">
-            ‹ 返回
+            {t('mobile.back')}
           </Link>
         </div>
         <div className="m-alert m-alert-error">{error}</div>
@@ -117,7 +119,7 @@ export default function MobileWorkPage() {
   if (!work) {
     return (
       <div className="m-page">
-        <div className="m-empty">正在加载…</div>
+        <div className="m-empty">{t('mobile.loading')}</div>
       </div>
     );
   }
@@ -126,7 +128,7 @@ export default function MobileWorkPage() {
     <div className="m-page">
       <div className="m-topbar">
         <Link className="m-back" to="/m/works">
-          ‹ 返回
+          {t('mobile.back')}
         </Link>
         <div className="m-topbar-title">
           {editing ? (
@@ -147,14 +149,15 @@ export default function MobileWorkPage() {
                 disabled={renaming || !titleDraft.trim()}
                 onClick={() => void rename()}
               >
-                保存
+                {t('common.save')}
               </button>
             </div>
           ) : (
             <>
               <div className="m-topbar-name">{work.title}</div>
               <div className="m-topbar-sub">
-                {work.trackTitle ?? '伴奏已删除'} · {formatDateTime(work.createdAt)}
+                {work.trackTitle ?? t('mobile.works.track_deleted')} ·{' '}
+                {formatDateTime(work.createdAt, locale)}
               </div>
             </>
           )}
@@ -167,22 +170,24 @@ export default function MobileWorkPage() {
         <div className="m-result-card">
           <div className="m-saving">
             <span className="spin" />
-            正在合成 MP3…
+            {t('mobile.mixing_mp3')}
           </div>
-          <p className="m-notes">几秒就好。可以先去选下一首，合成完了回来再听。</p>
+          <p className="m-notes">{t('mobile.mixing_hint')}</p>
         </div>
       )}
 
       {work.status === 'failed' && (
         <div className="m-result-card">
-          <div className="m-alert m-alert-error">合成失败：{work.error ?? '未知原因'}</div>
+          <div className="m-alert m-alert-error">
+            {t('mobile.mix_failed', { reason: work.error ?? t('components.unknown_reason') })}
+          </div>
           <button
             type="button"
             className="m-btn m-btn-primary m-btn-record"
             disabled={retrying}
             onClick={() => void retry()}
           >
-            {retrying ? '正在重试…' : '重试合成'}
+            {retrying ? t('mobile.retrying') : t('mobile.retry_mix')}
           </button>
         </div>
       )}
@@ -192,12 +197,12 @@ export default function MobileWorkPage() {
           <AudioPlayer src={workAudioUrl(work.id, work.updatedAt)} />
           <dl className="m-meta">
             <div>
-              <dt>时长</dt>
+              <dt>{t('common.duration')}</dt>
               <dd>{formatDuration(work.vocalDuration)}</dd>
             </div>
             <div>
-              <dt>大小</dt>
-              <dd>{work.sizeBytes ? formatBytes(work.sizeBytes) : '--'}</dd>
+              <dt>{t('common.size')}</dt>
+              <dd>{work.sizeBytes ? formatBytes(work.sizeBytes, locale) : '--'}</dd>
             </div>
           </dl>
         </div>
@@ -206,7 +211,7 @@ export default function MobileWorkPage() {
       <div className="m-rec-actions">
         {work.trackId && (
           <Link className="m-btn m-btn-primary m-btn-record" to={`/m/work/${work.id}/edit`}>
-            调整效果
+            {t('mobile.adjust_effects')}
           </Link>
         )}
         {!editing && (
@@ -218,26 +223,24 @@ export default function MobileWorkPage() {
               setEditing(true);
             }}
           >
-            改名
+            {t('mobile.rename')}
           </button>
         )}
         <button type="button" className="m-btn m-btn-ghost m-btn-record" onClick={() => void remove()}>
-          删除
+          {t('common.delete')}
         </button>
       </div>
 
       <div className="m-rec-actions">
         <Link className="m-btn m-btn-primary m-btn-record" to="/m">
-          再唱一首
+          {t('mobile.sing_another')}
         </Link>
         <Link className="m-btn m-btn-ghost m-btn-record" to="/m">
-          返回首页
+          {t('mobile.back_home')}
         </Link>
       </div>
 
-      {!work.trackId && (
-        <p className="m-notes">这个作品的伴奏已被删除：成品 MP3 还能播放，但不能重新合成。</p>
-      )}
+      {!work.trackId && <p className="m-notes">{t('mobile.track_deleted_note')}</p>}
     </div>
   );
 }

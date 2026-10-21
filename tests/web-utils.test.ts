@@ -68,38 +68,55 @@ describe('formatTimer（毫秒 → mm:ss.mmm）', () => {
 });
 
 describe('formatBytes', () => {
-  it('各单位', () => {
-    assert.equal(formatBytes(0), '0 B');
-    assert.equal(formatBytes(512), '512 B');
-    assert.equal(formatBytes(1023), '1023 B');
-    assert.equal(formatBytes(1024), '1.0 KB');
-    assert.equal(formatBytes(1536), '1.5 KB');
-    assert.equal(formatBytes(5 * 1024 * 1024), '5.0 MB');
-    assert.equal(formatBytes(2.5 * 1024 ** 3), '2.5 GB');
+  /*
+   * 走 `Intl.NumberFormat` 的 unit 样式：单位词与小数分隔符都由语言决定。
+   * 所以断言不写死「1.0 KB」这种字面量，而是按语言给出期望值 ——
+   * 这也顺带验了「同一种语言两次调用结果一致」。
+   */
+  const cases: Array<[number, string, string]> = [
+    [0, '0字节', '0 bytes'],
+    [512, '512字节', '512 bytes'],
+    [1023, '1,023字节', '1,023 bytes'],
+    [1024, '1.0 kB', '1.0 kB'],
+    [1536, '1.5 kB', '1.5 kB'],
+    [5 * 1024 * 1024, '5.0 MB', '5.0 MB'],
+    [2.5 * 1024 ** 3, '2.5 GB', '2.5 GB'],
+  ];
+
+  it('各单位（按 Intl 的 unit 样式，中英各一份期望）', () => {
+    for (const [bytes, zh, en] of cases) {
+      assert.equal(formatBytes(bytes, 'zh-CN'), zh, `${bytes} 字节的中文显示`);
+      assert.equal(formatBytes(bytes, 'en'), en, `${bytes} 字节的英文显示`);
+    }
   });
 
-  it('脏数据', () => {
-    assert.equal(formatBytes(Number.NaN), '0 B');
-    assert.equal(formatBytes(-1), '0 B');
+  it('脏数据按 0 算', () => {
+    assert.equal(formatBytes(Number.NaN), formatBytes(0));
+    assert.equal(formatBytes(-1), formatBytes(0));
   });
 
   it('超过 GB 不再放大单位', () => {
-    assert.equal(formatBytes(1024 ** 4), '1024.0 GB');
+    assert.equal(formatBytes(1024 ** 4, 'zh-CN'), '1,024.0 GB');
+    assert.equal(formatBytes(1024 ** 4, 'en'), '1,024.0 GB');
   });
 });
 
 describe('formatDateTime', () => {
-  it('按本地时区格式化并补零', () => {
+  /*
+   * 顺序与补零交给 `Intl.DateTimeFormat`：中文给「2025/01/02 03:04」，
+   * 英文给「01/02/2025 03:04」。两边都不该出现「3:4」这种没补零的形式。
+   */
+  it('按本地时区格式化，月份/日期/小时/分钟都补零', () => {
     const timestamp = new Date(2025, 0, 2, 3, 4, 5).getTime();
-    const date = new Date(timestamp);
-    const pad = (value: number) => String(value).padStart(2, '0');
-    const want = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-    assert.equal(formatDateTime(timestamp), want);
+    assert.match(formatDateTime(timestamp, 'zh-CN'), /^2025\/01\/02 03:04$/);
+    // 英文的 Intl 会在日期与时间之间放一个逗号
+    assert.match(formatDateTime(timestamp, 'en'), /^01\/02\/2025, 03:04$/);
   });
 
-  it('月份/日期/小时/分钟都补零', () => {
-    const text = formatDateTime(new Date(2025, 8, 9, 7, 5).getTime());
-    assert.match(text, /^2025-09-09 07:05$/);
+  it('两种语言给出同一时刻，只是格式不同', () => {
+    const timestamp = new Date(2025, 8, 9, 7, 5).getTime();
+    assert.equal(formatDateTime(timestamp, 'zh-CN'), formatDateTime(timestamp, 'zh-CN'));
+    assert.notEqual(formatDateTime(timestamp, 'zh-CN'), formatDateTime(timestamp, 'en'));
   });
 });
 
@@ -332,50 +349,73 @@ describe('formatRelativeTime（时间戳 → 友好相对时间）', () => {
   const at = (y: number, m: number, d: number, h: number, min: number) =>
     new Date(y, m, d, h, min).getTime();
 
-  it('一分钟内都是「刚刚」', () => {
-    assert.equal(formatRelativeTime(noon - 30_000, noon), '刚刚');
-    assert.equal(formatRelativeTime(noon - 59_999, noon), '刚刚');
-    assert.equal(formatRelativeTime(noon, noon), '刚刚');
+  /*
+   * 文案全部来自 `Intl.RelativeTimeFormat` / `Intl.DateTimeFormat`，
+   * 所以断言按「这种语言该出现什么」来写，不写死整句 —— ICU 版本之间
+   * 「现在 / 此刻」、「昨天 / 1天前」的用词会有出入，写死就白测了。
+   */
+  it('一分钟内按「刚刚」（中文「现在」/ 英文 "now"）', () => {
+    for (const ts of [noon - 30_000, noon - 59_999, noon, noon + 5_000]) {
+      assert.match(formatRelativeTime(ts, noon, 'zh-CN'), /现在|刚刚/);
+      assert.match(formatRelativeTime(ts, noon, 'en'), /now/i);
+    }
   });
 
   it('一小时内说「N 分钟前」', () => {
-    assert.equal(formatRelativeTime(noon - 60_000, noon), '1 分钟前');
-    assert.equal(formatRelativeTime(noon - 5 * 60_000, noon), '5 分钟前');
-    assert.equal(formatRelativeTime(noon - 59 * 60_000, noon), '59 分钟前');
+    for (const [ago, n] of [[60_000, 1], [5 * 60_000, 5], [59 * 60_000, 59]] as const) {
+      assert.match(formatRelativeTime(noon - ago, noon, 'zh-CN'), new RegExp(`${n}\s*分钟前`));
+      assert.match(formatRelativeTime(noon - ago, noon, 'en'), new RegExp(`${n} minutes? ago`));
+    }
   });
 
-  it('当天说「今天 HH:mm」', () => {
-    assert.equal(formatRelativeTime(at(2025, 0, 2, 8, 5), noon), '今天 08:05');
+  it('当天给时刻，不给「N 小时前」', () => {
     // 恰好一小时整也落进日历口径，而不是「60 分钟前」
-    assert.equal(formatRelativeTime(noon - 3_600_000, noon), '今天 11:00');
+    assert.match(formatRelativeTime(noon - 3_600_000, noon, 'zh-CN'), /^11:00$/);
+    assert.match(formatRelativeTime(noon - 3_600_000, noon, 'en'), /11:00/);
+    assert.match(formatRelativeTime(at(2025, 0, 2, 8, 5), noon, 'zh-CN'), /^08:05$/);
   });
 
-  it('前一天说「昨天 HH:mm」', () => {
-    assert.equal(formatRelativeTime(at(2025, 0, 1, 21, 12), noon), '昨天 21:12');
+  it('前一天说「昨天」', () => {
+    assert.match(formatRelativeTime(at(2025, 0, 1, 21, 12), noon, 'zh-CN'), /昨天/);
+    assert.match(formatRelativeTime(at(2025, 0, 1, 21, 12), noon, 'en'), /yesterday/i);
   });
 
-  it('同一年（且不是今/昨天）说「MM-DD」', () => {
-    // 换一个居中的 now：1 月 2 日的「同一年过去日期」只可能是昨天，测不到 MM-DD
+  it('同一年（且不是今/昨天）给月日', () => {
+    // 换一个居中的 now：1 月 2 日的「同一年过去日期」只可能是昨天，测不到月日
     const summer = new Date(2025, 5, 15, 12, 0, 0).getTime();
-    assert.equal(formatRelativeTime(at(2025, 2, 9, 7, 5), summer), '03-09');
-    assert.equal(formatRelativeTime(at(2025, 4, 31, 23, 59), summer), '05-31');
-    assert.equal(formatRelativeTime(at(2025, 0, 1, 0, 0), summer), '01-01');
+    for (const [y, m, d] of [[2025, 2, 9], [2025, 4, 31], [2025, 0, 1]] as const) {
+      const text = formatRelativeTime(at(y, m, d, 7, 5), summer, 'zh-CN');
+      assert.match(text, /月.*日/, `${text} 该是月日`);
+      assert.doesNotMatch(text, /分钟前|昨天|现在/, '同一年过去日期不该走相对口径');
+    }
   });
 
-  it('跨年给完整日期', () => {
-    assert.equal(formatRelativeTime(at(2024, 11, 31, 23, 59), noon), '2024-12-31');
-    assert.equal(formatRelativeTime(at(2023, 5, 1, 0, 0), noon), '2023-06-01');
+  it('跨年给完整日期（带年份）', () => {
+    for (const [y, m, d] of [[2024, 11, 31], [2023, 5, 1]] as const) {
+      assert.match(formatRelativeTime(at(y, m, d, 23, 59), noon, 'zh-CN'), new RegExp(`${y}年`));
+      assert.match(formatRelativeTime(at(y, m, d, 23, 59), noon, 'en'), new RegExp(String(y)));
+    }
   });
 
   it('未来的时间戳（时钟偏斜）按「刚刚」，不渲染负数', () => {
-    assert.equal(formatRelativeTime(noon + 5_000, noon), '刚刚');
-    assert.equal(formatRelativeTime(new Date(2025, 5, 1).getTime(), noon), '刚刚');
+    assert.match(formatRelativeTime(noon + 5_000, noon, 'zh-CN'), /现在|刚刚/);
+    assert.match(formatRelativeTime(new Date(2025, 5, 1).getTime(), noon, 'zh-CN'), /现在|刚刚/);
   });
 
   it('脏数据给占位符', () => {
     assert.equal(formatRelativeTime(0, noon), '--');
     assert.equal(formatRelativeTime(Number.NaN, noon), '--');
     assert.equal(formatRelativeTime(new Date('nope').getTime(), noon), '--');
+  });
+
+  it('同一语言两次调用结果一致（formatter 缓存没有串味）', () => {
+    const a = formatRelativeTime(noon - 5 * 60_000, noon, 'zh-CN');
+    const b = formatRelativeTime(noon - 5 * 60_000, noon, 'zh-CN');
+    assert.equal(a, b);
+    assert.notEqual(
+      formatRelativeTime(noon - 5 * 60_000, noon, 'zh-CN'),
+      formatRelativeTime(noon - 5 * 60_000, noon, 'en'),
+    );
   });
 });
 

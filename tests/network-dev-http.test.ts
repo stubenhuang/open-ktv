@@ -51,7 +51,7 @@ describe('开发模式 + VITE_HTTPS=0', () => {
       mobileUrl: string | null;
       selfSigned: boolean;
       micBlocked: boolean;
-      reason: string | null;
+      reasonCode: string | null;
     };
 
     assert.deepEqual(info.mobileOrigin, { scheme: 'http', port: WEB_PORT });
@@ -59,6 +59,6 @@ describe('开发模式 + VITE_HTTPS=0', () => {
     assert.ok(info.mobileUrl?.endsWith(`:${WEB_PORT}/m`));
     assert.equal(info.micBlocked, true);
     assert.equal(info.selfSigned, false);
-    assert.match(info.reason ?? '', /VITE_HTTPS=1/);
+    assert.equal(info.reasonCode, 'http_entry');
   });
 });

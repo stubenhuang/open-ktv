@@ -4,9 +4,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { PITCH_LIMITS, type TrackSummary } from '../../../shared/types';
-import { describePitch } from '../../../shared/mix';
 import { api, health } from '../api';
 import { errorMessage } from '../utils';
+import { useI18n } from '../i18n';
+import { pitchLabel } from '../i18n/labels';
 
 /**
  * 升降调控件（伴奏移调）。
@@ -67,6 +68,7 @@ export function PitchControl({
   onStatusChange,
   onError,
 }: PitchControlProps) {
+  const { t, locale } = useI18n();
   const [semitones, setSemitones] = useState(track.pitchSemitones);
   /** 用户是否正在拖（拖动中不回弹服务端的值） */
   const dirtyRef = useRef(false);
@@ -112,7 +114,7 @@ export function PitchControl({
     void api
       .updateTrack(track.id, { pitchSemitones: next })
       .catch((err: unknown) => {
-        onError?.(errorMessage(err, '升降调保存失败'));
+        onError?.(errorMessage(err, t('components.pitch.saveFailed')));
       })
       .finally(() => setSaving(false));
   };
@@ -137,18 +139,15 @@ export function PitchControl({
   const sliderDisabled = disabled || generating || !supported;
 
   const statusLine = !supported ? (
-    <div className="small faint">
-      当前 ffmpeg 不带 rubberband，升降调不可用（其余功能不受影响）。
-      换一个带 <code>--enable-librubberband</code> 的构建即可启用。
-    </div>
+    <div className="small faint">{t('components.pitch.unsupported')}</div>
   ) : generating ? (
     <div className="small faint">
       <span className="spin" style={{ marginRight: 6 }} />
-      正在生成新调的伴奏（几秒）…这期间播放和试听听到的还是原调，生成好会自动换过来。
+      {t('components.pitch.generating')}
     </div>
   ) : status === 'failed' ? (
     <div className="small" style={{ color: 'var(--danger)' }}>
-      移调失败：{track.pitchError ?? '未知原因'}
+      {t('components.pitch.failed', { reason: track.pitchError ?? t('components.unknown_reason') })}
       <button
         type="button"
         className="btn btn-ghost btn-sm"
@@ -156,23 +155,23 @@ export function PitchControl({
         disabled={disabled}
         onClick={() => commit(semitones)}
       >
-        重试
+        {t('common.retry')}
       </button>
     </div>
   ) : semitones === 0 ? (
-    <div className="small faint">按原调播放。唱不上去就往右拖，伴奏会整体移调，时长不变。</div>
+    <div className="small faint">{t('components.pitch.originalHint')}</div>
   ) : (
     <div className="small faint">
-      已按「{describePitch(semitones)}」生成伴奏：演唱、实时试听、成品 MP3 用的都是这一份。
+      {t('components.pitch.ready', { pitch: pitchLabel(locale, semitones) })}
     </div>
   );
 
-  const label = describePitch(semitones);
+  const label = pitchLabel(locale, semitones);
 
   return (
     <div className={compact ? 'm-field' : 'field'}>
       <div className={compact ? 'm-field-label' : 'field-label'}>
-        <span>升降调</span>
+        <span>{t('audio.pitch.title')}</span>
         <span className={compact ? 'm-faint' : 'field-value'}>{label}</span>
       </div>
       <div className="row" style={{ gap: 8, alignItems: 'center' }}>
@@ -184,7 +183,7 @@ export function PitchControl({
           step={PITCH_LIMITS.semitones.step}
           value={semitones}
           disabled={sliderDisabled}
-          aria-label="伴奏升降调（半音）"
+          aria-label={t('components.pitch.aria')}
           onChange={(event) => change(Number(event.target.value))}
         />
         <button
@@ -193,11 +192,11 @@ export function PitchControl({
           disabled={sliderDisabled || semitones === 0}
           onClick={() => change(0)}
         >
-          原调
+          {t('audio.pitch.original')}
         </button>
       </div>
       {statusLine}
-      {saving && <div className="small faint">正在保存…</div>}
+      {saving && <div className="small faint">{t('common.saving')}</div>}
     </div>
   );
 }

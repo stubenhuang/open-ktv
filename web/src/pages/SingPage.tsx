@@ -13,12 +13,14 @@ import { KtvEngine, isMicSupported } from '../audio/engine';
 import { useMicDevices } from '../hooks/useMicDevices';
 import { usePolling } from '../hooks/usePolling';
 import { errorMessage, formatDuration, formatTimer } from '../utils';
+import { useI18n } from '../i18n';
 
 type Phase = 'idle' | 'saving';
 
 export default function SingPage() {
   const { trackId = '' } = useParams();
   const navigate = useNavigate();
+  const { t, fmt } = useI18n();
 
   const [track, setTrack] = useState<TrackDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -73,13 +75,13 @@ export default function SingPage() {
           if (!cancelled) setTrack(result);
         })
         .catch((err: unknown) => {
-          if (!cancelled) setLoadError(errorMessage(err, '加载伴奏失败'));
+          if (!cancelled) setLoadError(errorMessage(err, t('sing.loadFailed')));
         });
       return () => {
         cancelled = true;
       };
     },
-    [],
+    [t],
   );
 
   useEffect(() => {
@@ -118,11 +120,11 @@ export default function SingPage() {
       persistTimer.current = window.setTimeout(() => {
         persistTimer.current = null;
         void api.updateTrack(track.id, { lyricsOffsetMs: next }).catch((err: unknown) => {
-          setActionError(`歌词微调保存失败：${errorMessage(err)}`);
+          setActionError(t('sing.lyricsOffsetSaveFailed', { reason: errorMessage(err) }));
         });
       }, 400);
     },
-    [track],
+    [t, track],
   );
 
   // 卸载时丢掉待发的写库请求
@@ -179,7 +181,7 @@ export default function SingPage() {
       .catch((err: unknown) => {
         if (cancelled) return;
         setMicReady(false);
-        setActionError(`接入麦克风失败：${errorMessage(err)}`);
+        setActionError(t('sing.micConnectFailed', { reason: errorMessage(err) }));
       });
 
     return () => {
@@ -215,19 +217,13 @@ export default function SingPage() {
       // 但必须让用户知道「不是自己唱的问题」。
       if (result.droppedRatio > 0.005) {
         setCaptureWarning(
-          `这次录音有 ${(result.droppedRatio * 100).toFixed(1)}% 的时间片没采到，` +
-            '声音可能会断断续续。多半是音频设备/驱动或系统负载的问题，' +
-            '可以关掉别的占资源的程序、换一个麦克风接口再试。',
+          t('sing.capture.dropped', { percent: fmt.percent(result.droppedRatio, 1) }),
         );
       } else if (
         result.captureSettings.echoCancellation ||
         result.captureSettings.noiseSuppression
       ) {
-        setCaptureWarning(
-          '这个麦克风的驱动强制开启了「回声消除/降噪」，浏览器关不掉。' +
-            '它们会把歌声当成噪声处理，录出来可能发闷或断断续续。' +
-            '如果设备支持，去系统声音设置里把「环境降噪」之类的选项关掉。',
-        );
+        setCaptureWarning(t('sing.capture.echoCancellation'));
       }
 
       // 音频设备中途挂掉时，采集到的数据会远少于实际录制时长。
@@ -237,16 +233,20 @@ export default function SingPage() {
         const contextState = engine.context.state;
         setPhase('idle');
         setActionError(
-          `只采集到 ${result.durationSec.toFixed(1)} 秒音频，但录音持续了约 ${expectedSec.toFixed(1)} 秒` +
-            `（音频上下文状态：${contextState}）。多半是音频设备/驱动中途出错了，` +
-            '请检查耳机和麦克风后重试。',
+          t('sing.capture.shortfall', {
+            captured: fmt.seconds(result.durationSec),
+            expected: fmt.seconds(expectedSec),
+            state: t(`sing.audioContext.${contextState}`),
+          }),
         );
         return;
       }
 
       if (result.durationSec * 1000 < MIN_RECORD_MS) {
         setPhase('idle');
-        setActionError('录音太短了，至少唱满 1 秒再结束。');
+        setActionError(
+          t('sing.recording.tooShort', { seconds: fmt.seconds(MIN_RECORD_MS / 1000) }),
+        );
         return;
       }
 
@@ -261,11 +261,9 @@ export default function SingPage() {
     } catch (err) {
       setRecording(false);
       setPhase('idle');
-      setActionError(
-        `结束录音失败：${errorMessage(err)}`,
-      );
+      setActionError(t('sing.stopFailed', { reason: errorMessage(err) }));
     }
-  }, [engine, track, navigate]);
+  }, [engine, track, navigate, t, fmt]);
 
   handleStopRef.current = handleStop;
 
@@ -280,9 +278,9 @@ export default function SingPage() {
       setElapsedMs(0);
       setRecording(true);
     } catch (err) {
-      setActionError(errorMessage(err, '开始演唱失败'));
+      setActionError(errorMessage(err, t('sing.startFailed')));
     }
-  }, [engine, track]);
+  }, [engine, track, t]);
 
   const handleAbandon = useCallback(() => {
     if (!engine) return;
@@ -332,11 +330,10 @@ export default function SingPage() {
     return (
       <div>
         <div className="alert alert-error">
-          这个浏览器缺少录音所需的 Web Audio 能力（AudioWorklet / getUserMedia）。
-          请用桌面版 Chrome 或 Edge 打开。
+          {t('sing.unsupported')}
         </div>
         <Link className="btn" to="/">
-          返回伴奏库
+          {t('sing.backToLibrary')}
         </Link>
       </div>
     );
@@ -347,24 +344,24 @@ export default function SingPage() {
       <div>
         <div className="alert alert-error">{loadError}</div>
         <Link className="btn" to="/">
-          返回伴奏库
+          {t('sing.backToLibrary')}
         </Link>
       </div>
     );
   }
 
-  if (!track) return <div className="empty-state">正在加载伴奏…</div>;
+  if (!track) return <div className="empty-state">{t('sing.loadingTrack')}</div>;
 
   if (track.status !== 'ready') {
     return (
       <div>
         <div className="alert alert-warn">
           {track.status === 'processing'
-            ? `这个伴奏还在转码中（${Math.round((track.progress ?? 0) * 100)}%），转好之后才能演唱。`
-            : `这个伴奏处理失败了：${track.error ?? '未知原因'}`}
+            ? t('sing.track.processing', { percent: fmt.percent(track.progress ?? 0) })
+            : t('sing.track.failed', { reason: track.error ?? t('sing.unknownReason') })}
         </div>
         <Link className="btn" to="/">
-          返回伴奏库
+          {t('sing.backToLibrary')}
         </Link>
       </div>
     );
@@ -396,11 +393,12 @@ export default function SingPage() {
           <h1 className="page-title">{track.title}</h1>
           <p className="page-sub">
             {track.artist ? `${track.artist} · ` : ''}
-            {formatDuration(track.duration)} · {track.kind === 'video' ? '视频伴奏' : '音频伴奏'}
+            {formatDuration(track.duration)} ·{' '}
+            {track.kind === 'video' ? t('sing.trackKind.video') : t('sing.trackKind.audio')}
           </p>
         </div>
         <Link className="btn btn-ghost" to="/">
-          返回伴奏库
+          {t('sing.backToLibrary')}
         </Link>
       </div>
 
@@ -409,16 +407,13 @@ export default function SingPage() {
         整段铺开会从小半屏开始，把舞台和开始按钮全顶到下面去。
       */}
       <div className="alert alert-warn">
-        🎧 请戴上耳机再唱。
+        🎧 {t('sing.headphones.warning')}
         <button type="button" className="link-btn" onClick={() => setShowWhy((value) => !value)}>
-          {showWhy ? '收起' : '为什么？'}
+          {showWhy ? t('common.collapse') : t('sing.headphones.why')}
         </button>
         {showWhy && (
           <div className="sing-why">
-            为了保证音质，我们特意关掉了浏览器的「降噪 / 回声消除」—— 那套处理是给语音通话做的，
-            会把歌声当成噪声削掉（实测能削掉 18dB，听感就是断断续续）。代价是不再自动防啸叫：
-            外放时麦克风会把伴奏收回去，轻则串音重则啸叫。另外蓝牙耳机延迟通常 150ms 以上，
-            耳返会明显拖拍，建议用有线耳机。
+            {t('sing.headphones.reason')}
           </div>
         )}
       </div>
@@ -436,7 +431,7 @@ export default function SingPage() {
             style={{ marginLeft: 10 }}
             onClick={() => void mic.request()}
           >
-            重试授权
+            {t('sing.mic.retryAuth')}
           </button>
         </div>
       )}
@@ -482,7 +477,7 @@ export default function SingPage() {
                   </span>
                 </div>
                 <div className="stage-audio-title">{track.title}</div>
-                <div className="small faint">音频伴奏（无画面）</div>
+                <div className="small faint">{t('sing.stage.audioOnly')}</div>
               </div>
             ) : null}
 
@@ -498,12 +493,12 @@ export default function SingPage() {
                       {phase === 'saving' ? (
                         <>
                           <span className="spin" />
-                          正在合成…
+                          {t('sing.recording.mixing')}
                         </>
                       ) : (
                         <>
                           <span className="rec-dot" />
-                          <span>录音中</span>
+                          <span>{t('sing.recording.active')}</span>
                           <span className="mono">{formatTimer(elapsedMs)}</span>
                         </>
                       )}
@@ -519,10 +514,10 @@ export default function SingPage() {
                       {phase === 'saving' ? (
                         <>
                           <span className="spin" />
-                          正在合成…
+                          {t('sing.recording.mixing')}
                         </>
                       ) : (
-                        '完成录制'
+                        t('sing.recording.finish')
                       )}
                     </button>
                     <button
@@ -531,7 +526,7 @@ export default function SingPage() {
                       disabled={phase !== 'idle'}
                       onClick={handleAbandon}
                     >
-                      取消录制
+                      {t('sing.recording.cancel')}
                     </button>
                   </div>
                 </div>
@@ -549,23 +544,25 @@ export default function SingPage() {
                   disabled={!canStart}
                   onClick={() => void handleStart()}
                 >
-                  开始演唱
+                  {t('sing.start')}
                 </button>
                 <span className="muted small">
                   {track.pitchStatus === 'processing'
-                    ? '正在生成新调的伴奏，生成好才能开始演唱…'
+                    ? t('sing.hint.pitchProcessing')
                     : track.pitchStatus === 'failed'
                       ? // 不禁唱，但要说明白：这一版混的是原调，和新调对不上
-                        `移调没成功（${track.pitchError ?? '原因未知'}），将按原调演唱。想用新调就重试，或拖回「原调」。`
+                        t('sing.hint.pitchFailed', {
+                          reason: track.pitchError ?? t('sing.unknownReason'),
+                        })
                       : engine
                         ? mic.permission !== 'granted'
-                          ? '等待麦克风授权…'
+                          ? t('sing.hint.micPermission')
                           : mic.devices.length === 0
-                            ? '没有可用的外置麦克风，插上麦克风后这里会自动出现。'
+                            ? t('sing.hint.noExternalMic')
                             : micReady
-                              ? '准备好了：戴好耳机，点「开始演唱」。'
-                              : '正在接入麦克风…'
-                        : '正在准备音频…'}
+                              ? t('sing.hint.ready', { action: t('sing.start') })
+                              : t('sing.hint.micConnecting')
+                        : t('sing.hint.audioPreparing')}
                 </span>
               </div>
             </div>
@@ -577,12 +574,12 @@ export default function SingPage() {
             两列高度也就齐了 —— 它本来就跟「开始演唱」是一件事的注脚。
           */}
           <div className="card small muted" style={{ marginTop: 16 }}>
-            <div className="panel-card-title">📋 录音说明</div>
+            <div className="panel-card-title">📋 {t('sing.notes.title')}</div>
             <ul className="record-notes">
-              <li>只录你的干声，伴奏不进录音文件。</li>
-              <li>唱完自动把干声和伴奏合成一版 MP3。</li>
-              <li>想换效果，去作品库点「调整效果」：实时试听即时生效，点「合成」出新版 MP3。</li>
-              <li>开始时会先录 0.15 秒静音再放伴奏，用来自动对齐人声，不用手动调。</li>
+              <li>{t('sing.notes.dryOnly')}</li>
+              <li>{t('sing.notes.autoMix')}</li>
+              <li>{t('sing.notes.effects')}</li>
+              <li>{t('sing.notes.alignment')}</li>
             </ul>
           </div>
         </div>
@@ -593,11 +590,13 @@ export default function SingPage() {
         */}
         <div className="control-panel">
           <div className="card">
-            <div className="panel-card-title">🎙 麦克风</div>
+            <div className="panel-card-title">🎙 {t('sing.mic.title')}</div>
             <div className="field">
               <div className="field-label">
-                <span>输入设备</span>
-                {mic.permission !== 'granted' && <span className="faint small">未授权</span>}
+                <span>{t('sing.mic.device')}</span>
+                {mic.permission !== 'granted' && (
+                  <span className="faint small">{t('sing.mic.unauthorized')}</span>
+                )}
               </div>
               <select
                 className="select-input"
@@ -607,7 +606,9 @@ export default function SingPage() {
               >
                 {mic.devices.length === 0 && (
                   <option value="">
-                    {mic.permission === 'granted' ? '（没有可用的外置输入）' : '（等待麦克风授权）'}
+                    {mic.permission === 'granted'
+                      ? t('sing.mic.noExternalInput')
+                      : t('sing.mic.waitingPermission')}
                   </option>
                 )}
                 {mic.devices.map((device) => (
@@ -622,41 +623,46 @@ export default function SingPage() {
               {mic.hiddenBuiltinLabels.length > 0 &&
                 (mic.showBuiltin ? (
                   <div className="small faint">
-                    已显示全部输入设备（含内置麦克风）。
+                    {t('sing.mic.showingAll')}
                     <button type="button" className="link-btn" onClick={mic.toggleBuiltin}>
-                      只看外置
+                      {t('sing.mic.externalOnly')}
                     </button>
                   </div>
                 ) : mic.devices.length === 0 ? (
                   <div className="alert alert-warn" style={{ marginTop: 8 }}>
-                    没检测到外置麦克风，已隐藏：{mic.hiddenBuiltinLabels.join('、')}。
-                    插上 USB / 3.5mm 麦克风后会自动出现在这里。
+                    {t('sing.mic.noExternalDetected', {
+                      devices: fmt.list(mic.hiddenBuiltinLabels),
+                    })}
                     <button type="button" className="link-btn" onClick={mic.toggleBuiltin}>
-                      显示全部设备
+                      {t('sing.mic.showAll')}
                     </button>
                   </div>
                 ) : (
                   <div className="small faint">
-                    只列外置输入（已隐藏：{mic.hiddenBuiltinLabels.join('、')}）。
+                    {t('sing.mic.externalOnlyHint', {
+                      devices: fmt.list(mic.hiddenBuiltinLabels),
+                    })}
                     <button type="button" className="link-btn" onClick={mic.toggleBuiltin}>
-                      显示全部设备
+                      {t('sing.mic.showAll')}
                     </button>
                   </div>
                 ))}
               <div className="field-label" style={{ marginTop: 6 }}>
-                <span>输入电平</span>
-                <span className="faint small">{micReady ? '对着麦克风说话试试' : '未接入'}</span>
+                <span>{t('sing.mic.level')}</span>
+                <span className="faint small">
+                  {micReady ? t('sing.mic.speakToTest') : t('sing.mic.notConnected')}
+                </span>
               </div>
               <LevelMeter engine={engine} active={micReady} />
             </div>
           </div>
 
           <div className="card">
-            <div className="panel-card-title">🎧 耳机监听</div>
+            <div className="panel-card-title">🎧 {t('sing.monitor.title')}</div>
             <div className="field">
               <div className="field-label">
-                <span>伴奏音量</span>
-                <span className="field-value">{Math.round(accompVolume * 100)}%</span>
+                <span>{t('sing.monitor.accompVolume')}</span>
+                <span className="field-value">{fmt.percent(accompVolume)}</span>
               </div>
               <input
                 type="range"
@@ -666,14 +672,14 @@ export default function SingPage() {
                 value={accompVolume}
                 onChange={(event) => setAccompVolume(Number(event.target.value))}
               />
-              <div className="small faint">耳机里听到的伴奏大小。</div>
+              <div className="small faint">{t('sing.monitor.accompHint')}</div>
             </div>
 
             <div className="field" style={{ marginTop: 16 }}>
               <div className="field-label">
-                <span>人声耳返</span>
+                <span>{t('sing.monitor.micMonitor')}</span>
                 <span className="field-value">
-                  {micMonitoring ? `${Math.round(micVolume * 100)}%` : '已关闭'}
+                  {micMonitoring ? fmt.percent(micVolume) : t('common.disabled')}
                 </span>
               </div>
               <input
@@ -691,7 +697,7 @@ export default function SingPage() {
                   checked={micMonitoring}
                   onChange={(event) => setMicMonitoring(event.target.checked)}
                 />
-                在耳机里听到自己的声音
+                {t('sing.monitor.hearMyself')}
               </label>
             </div>
           </div>
@@ -702,7 +708,7 @@ export default function SingPage() {
              * 放在「耳机监听」前面：它是开唱前要弄好的事，和选麦克风同一类。
              */}
           <div className="card">
-            <div className="panel-card-title">🎚 升降调</div>
+            <div className="panel-card-title">🎚 {t('sing.pitch.title')}</div>
             <PitchControl
               track={track}
               disabled={recording || phase !== 'idle'}
@@ -713,13 +719,12 @@ export default function SingPage() {
 
           {track.hasLyrics && (
             <div className="card">
-              <div className="panel-card-title">📄 歌词</div>
+              <div className="panel-card-title">📄 {t('sing.lyrics.title')}</div>
               <div className="field">
                 <div className="field-label">
-                  <span>歌词对轴</span>
+                  <span>{t('sing.lyrics.offset')}</span>
                   <span className="field-value">
-                    {lyricsOffsetMs > 0 ? '+' : ''}
-                    {lyricsOffsetMs} ms
+                    {fmt.signed(lyricsOffsetMs)} {t('common.unit.millisecond')}
                   </span>
                 </div>
                 <input
@@ -732,7 +737,7 @@ export default function SingPage() {
                 />
                 <div className="row" style={{ justifyContent: 'space-between', marginTop: 6 }}>
                   <span className="small faint">
-                    歌词跟伴奏差半拍时拖这个；正值 = 歌词更晚，自动保存。
+                    {t('sing.lyrics.offsetHint')}
                   </span>
                   <button
                     type="button"
@@ -740,7 +745,7 @@ export default function SingPage() {
                     disabled={lyricsOffsetMs === 0}
                     onClick={() => applyLyricsOffset(0)}
                   >
-                    归零
+                    {t('sing.lyrics.offsetReset')}
                   </button>
                 </div>
               </div>

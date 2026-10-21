@@ -284,6 +284,69 @@ input[type='checkbox'] {
 }
 
 /*
+ * 导航栏右侧：语言切换 + 手机演唱入口。用 margin-left:auto 顶到最右，
+ * 窄屏时链接区自己横向滚，这一组不参与挤压。
+ */
+.app-nav-trailing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  flex: none;
+}
+
+/* 语言切换器：原生 select，样式跟随主题（见 components/LanguageSwitcher.tsx） */
+.lang-switcher {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lang-switcher-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.lang-switcher-select {
+  appearance: none;
+  padding: 6px 26px 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background:
+    /* 下拉箭头：纯 CSS 画，不引图片 */
+    linear-gradient(45deg, transparent 48%, var(--text-dim) 48%, var(--text-dim) 56%, transparent 56%)
+      no-repeat right 14px center / 6px 6px,
+    var(--bg-soft);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.lang-switcher-select:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.lang-switcher-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+@media (max-width: 620px) {
+  .lang-switcher-label {
+    display: none;
+  }
+
+  .lang-switcher-select {
+    padding: 6px 24px 6px 10px;
+  }
+}
+
+/*
  * 窄屏：三个导航项 + 品牌在一行里会互相挤。让链接区自己横向滚（滚动条藏掉），
  * 而不是换行把导航撑成两行 —— 导航长高一倍比左右滑难受得多。
  */

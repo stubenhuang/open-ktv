@@ -8,6 +8,7 @@ import { api, type TrackListItem } from '../api';
 import { PitchControl } from './PitchControl';
 import { toast } from './ToastStack';
 import { errorMessage } from '../utils';
+import { useI18n } from '../i18n';
 
 interface Props {
   /** 要编辑的伴奏（列表行快照） */
@@ -31,6 +32,7 @@ interface Props {
  *  · 只有用户真的动过歌词才提交 lyrics，避免用空框冲掉服务端的歌词。
  */
 export function TrackEditDialog({ track, onClose, onSaved }: Props) {
+  const { t, fmt } = useI18n();
   const [title, setTitle] = useState(track.title);
   const [artist, setArtist] = useState(track.artist ?? '');
   const [lyrics, setLyrics] = useState('');
@@ -70,7 +72,7 @@ export function TrackEditDialog({ track, onClose, onSaved }: Props) {
         setLyricsOffsetMs(detail.lyricsOffsetMs);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(errorMessage(err, '加载歌词失败'));
+        if (!cancelled) setError(errorMessage(err, t('components.trackEdit.loadLyricsFailed')));
       })
       .finally(() => {
         if (!cancelled) setLoadingLyrics(false);
@@ -103,11 +105,11 @@ export function TrackEditDialog({ track, onClose, onSaved }: Props) {
         ...(lyricsDirty ? { lyrics } : {}),
         lyricsOffsetMs,
       });
-      toast.ok('已保存');
+      toast.ok(t('components.trackEdit.saved'));
       await onSaved();
       onClose();
     } catch (err) {
-      setError(errorMessage(err, '保存失败'));
+      setError(errorMessage(err, t('components.trackEdit.saveFailed')));
     } finally {
       setBusy(false);
     }
@@ -121,10 +123,10 @@ export function TrackEditDialog({ track, onClose, onSaved }: Props) {
       const updated = await api.uploadLyrics(track.id, file);
       setLyrics(updated.lyrics ?? '');
       setLyricsDirty(false);
-      toast.ok('歌词已入库');
+      toast.ok(t('components.trackEdit.lyricsSaved'));
       await onSaved();
     } catch (err) {
-      setError(errorMessage(err, '上传歌词失败'));
+      setError(errorMessage(err, t('components.trackEdit.uploadLyricsFailed')));
     } finally {
       setBusy(false);
       if (lyricsInputRef.current) lyricsInputRef.current.value = '';
@@ -139,10 +141,10 @@ export function TrackEditDialog({ track, onClose, onSaved }: Props) {
       const updated = await api.fetchTrackLyrics(track.id);
       setLyrics(updated.lyrics ?? '');
       setLyricsDirty(false);
-      toast.ok('已自动获取歌词');
+      toast.ok(t('components.trackEdit.lyricsAutoSaved'));
       await onSaved();
     } catch (err) {
-      setError(errorMessage(err, '自动获取歌词失败'));
+      setError(errorMessage(err, t('components.trackEdit.autoLyricsFailed')));
     } finally {
       setBusy(false);
     }
@@ -161,16 +163,16 @@ export function TrackEditDialog({ track, onClose, onSaved }: Props) {
         className="app-modal-panel edit-modal-panel"
         role="dialog"
         aria-modal="true"
-        aria-label="编辑伴奏"
+        aria-label={t('components.trackEdit.title')}
         tabIndex={-1}
       >
         <div className="app-modal-head">
           <div>
             <div className="page-title" style={{ fontSize: 18 }}>
-              编辑伴奏
+              {t('components.trackEdit.title')}
             </div>
             <p className="page-sub" style={{ marginTop: 2 }}>
-              改歌名歌手、贴歌词、微调歌词时间。
+              {t('components.trackEdit.subtitle')}
             </p>
           </div>
           <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
@@ -189,23 +191,25 @@ export function TrackEditDialog({ track, onClose, onSaved }: Props) {
             className="text-input"
             style={{ flex: '1 1 200px' }}
             value={title}
-            placeholder="歌名"
+            placeholder={t('common.title')}
             onChange={(event) => setTitle(event.target.value)}
           />
           <input
             className="text-input"
             style={{ flex: '0 1 150px' }}
             value={artist}
-            placeholder="歌手"
+            placeholder={t('common.artist')}
             onChange={(event) => setArtist(event.target.value)}
           />
         </div>
 
         <div className="field">
           <div className="field-label">
-            <span>歌词（LRC）</span>
+            <span>{t('components.trackEdit.lyricsLabel')}</span>
             <span className="faint small">
-              {track.hasLyrics ? '已有歌词，改动会覆盖' : '还没有歌词'}
+              {track.hasLyrics
+                ? t('components.trackEdit.lyricsExisting')
+                : t('components.trackEdit.lyricsNone')}
             </span>
           </div>
           <textarea
@@ -214,8 +218,8 @@ export function TrackEditDialog({ track, onClose, onSaved }: Props) {
             disabled={loadingLyrics}
             placeholder={
               loadingLyrics
-                ? '正在加载歌词…'
-                : '每行都要带时间戳，例如：\n[00:12.00]第一句\n[00:16.50]第二句'
+                ? t('components.trackEdit.lyricsLoading')
+                : t('components.trackEdit.lyricsPlaceholder')
             }
             onChange={(event) => {
               setLyrics(event.target.value);
@@ -229,7 +233,7 @@ export function TrackEditDialog({ track, onClose, onSaved }: Props) {
               disabled={busy}
               onClick={() => lyricsInputRef.current?.click()}
             >
-              选择 .lrc 文件
+              {t('components.trackEdit.pickLrc')}
             </button>
             <button
               type="button"
@@ -237,7 +241,7 @@ export function TrackEditDialog({ track, onClose, onSaved }: Props) {
               disabled={busy}
               onClick={() => void autoLyrics()}
             >
-              自动获取歌词
+              {t('components.trackEdit.autoLyrics')}
             </button>
             {(lyrics.length > 0 || track.hasLyrics) && !loadingLyrics && (
               <button
@@ -249,7 +253,7 @@ export function TrackEditDialog({ track, onClose, onSaved }: Props) {
                   setLyricsDirty(true);
                 }}
               >
-                清空歌词
+                {t('components.trackEdit.clearLyrics')}
               </button>
             )}
             <input
@@ -263,15 +267,14 @@ export function TrackEditDialog({ track, onClose, onSaved }: Props) {
               }}
             />
           </div>
-          <div className="small faint">自动获取：按歌名/歌手从酷狗匹配 LRC。</div>
+          <div className="small faint">{t('components.trackEdit.autoLyricsHint')}</div>
         </div>
 
         <div className="field">
           <div className="field-label">
-            <span>歌词对轴</span>
+            <span>{t('components.trackEdit.lyricsOffset')}</span>
             <span className="field-value">
-              {lyricsOffsetMs > 0 ? '+' : ''}
-              {lyricsOffsetMs} ms
+              {fmt.signed(lyricsOffsetMs)} {t('common.unit.millisecond')}
             </span>
           </div>
           <input
@@ -282,7 +285,7 @@ export function TrackEditDialog({ track, onClose, onSaved }: Props) {
             value={lyricsOffsetMs}
             onChange={(event) => setLyricsOffsetMs(Number(event.target.value))}
           />
-          <div className="small faint">正值 = 歌词更晚出现；歌词跑在伴奏前面就往右拖。</div>
+          <div className="small faint">{t('components.trackEdit.lyricsOffsetHint')}</div>
         </div>
 
         {/*
@@ -301,7 +304,7 @@ export function TrackEditDialog({ track, onClose, onSaved }: Props) {
 
         <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
           <button type="button" className="btn btn-ghost" onClick={onClose}>
-            取消
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -312,10 +315,10 @@ export function TrackEditDialog({ track, onClose, onSaved }: Props) {
             {busy ? (
               <>
                 <span className="spin" style={{ borderTopColor: '#fff' }} />
-                保存中…
+                {t('common.saving')}
               </>
             ) : (
-              '保存'
+              t('common.save')
             )}
           </button>
         </div>

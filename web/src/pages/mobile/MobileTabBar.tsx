@@ -3,6 +3,7 @@
 // Copyright (c) 2026 stubenhuang
 
 import { NavLink } from 'react-router-dom';
+import { useI18n } from '../../i18n';
 
 /**
  * 手机端底部 tab 栏：伴奏 / 点歌 / 作品。
@@ -11,14 +12,15 @@ import { NavLink } from 'react-router-dom';
  * 由 MobileLayout 按路由决定挂不挂。
  */
 const TABS = [
-  { to: '/m', label: '伴奏', icon: '🎵' },
-  { to: '/m/discover', label: '点歌', icon: '🔍' },
-  { to: '/m/works', label: '作品', icon: '🎤' },
+  { to: '/m', labelKey: 'mobile.tab.tracks', icon: '🎵' },
+  { to: '/m/discover', labelKey: 'mobile.tab.discover', icon: '🔍' },
+  { to: '/m/works', labelKey: 'mobile.tab.works', icon: '🎤' },
 ] as const;
 
 export function MobileTabBar() {
+  const { t } = useI18n();
   return (
-    <nav className="m-tabbar" aria-label="手机端主导航">
+    <nav className="m-tabbar" aria-label={t('mobile.tabbar.aria')}>
       {TABS.map((tab) => (
         <NavLink
           key={tab.to}
@@ -29,7 +31,7 @@ export function MobileTabBar() {
           <span className="m-tab-icon" aria-hidden="true">
             {tab.icon}
           </span>
-          <span className="m-tab-label">{tab.label}</span>
+          <span className="m-tab-label">{t(tab.labelKey)}</span>
         </NavLink>
       ))}
     </nav>
