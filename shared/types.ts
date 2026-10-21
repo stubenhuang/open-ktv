@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 /**
  * 前后端共享的类型与常量。
  *

@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import assert from 'node:assert/strict';
 import type { Request, Response } from 'express';
 import { before, describe, it } from 'node:test';

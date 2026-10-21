@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 /**
  * 酷狗歌词源（默认歌词实现）。
  *

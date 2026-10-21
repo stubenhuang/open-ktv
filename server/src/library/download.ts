@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 /**
  * 从曲库源把文件拉回本地。
  *

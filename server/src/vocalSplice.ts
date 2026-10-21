@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import fs from 'node:fs';
 import path from 'node:path';
 import { RETAKE_LIMITS } from '../../shared/types.ts';

@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 /**
  * LRC 歌词解析与时间轴定位（纯函数，无 IO、无浏览器/Node 依赖）。
  *

@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import type { MixParams, PreviewParams, WorkLevels } from '../../../shared/types';
 import {
   EQ_BANDS,

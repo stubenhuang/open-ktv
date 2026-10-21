@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 /**
  * 零依赖的开发启动器：并行跑 Vite 前端和 Node 后端，带前缀着色输出。
  * 用法：npm run dev

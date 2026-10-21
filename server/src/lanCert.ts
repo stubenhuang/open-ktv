@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';

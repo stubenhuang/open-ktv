@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 /**
  * 曲库源注册表：把配置解析成 provider 列表，并负责「多源并发搜索 + 聚合」。
  *

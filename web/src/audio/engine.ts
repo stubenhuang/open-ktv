@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { concatFloat32, encodeWavBlob } from '../../../shared/wav';
 import { log } from '../log';
 import { errorMessage } from '../utils';

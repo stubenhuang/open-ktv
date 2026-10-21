@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { useEffect, useRef, useState } from 'react';
 import {
   DEFAULT_MIX_PARAMS,

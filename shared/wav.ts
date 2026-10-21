@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 /**
  * 把录音过程中攒下来的 Float32 PCM 编码成 16bit 单声道 WAV。
  *

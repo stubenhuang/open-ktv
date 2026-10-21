@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { Router } from 'express';
 import { getTrack } from '../db.ts';
 import { sendMedia } from '../media.ts';

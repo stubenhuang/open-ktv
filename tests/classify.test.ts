@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { classifyProbe, type FfprobeResult, type FfprobeStream } from '../server/src/classify.ts';

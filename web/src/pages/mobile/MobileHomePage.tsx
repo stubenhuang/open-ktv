@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { TrackListItem } from '../../api';

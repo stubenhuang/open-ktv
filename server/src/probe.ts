@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { FFPROBE_BIN } from './config.ts';

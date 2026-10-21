@@ -1,12 +1,58 @@
 {
   "name": "open-ktv",
-  "private": true,
   "version": "0.1.0",
-  "description": "简易版全民K歌（Web）：上传伴奏 → 带耳返演唱 → 服务端 ffmpeg 合成 MP3",
+  "description": "简易版全民K歌（Web）：上传伴奏 → 带耳返演唱 → 服务端 ffmpeg 合成 MP3 / A self-hosted web karaoke: upload backing tracks, sing with monitoring, mix MP3s server-side.",
+  "keywords": [
+    "karaoke",
+    "ktv",
+    "singing",
+    "audio",
+    "ffmpeg",
+    "react",
+    "express",
+    "i18n",
+    "webaudio",
+    "self-hosted"
+  ],
+  "license": "MIT",
+  "author": "stubenhuang",
+  "homepage": "https://github.com/stubenhuang/open-ktv#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stubenhuang/open-ktv.git"
+  },
+  "bugs": {
+    "url": "https://github.com/stubenhuang/open-ktv/issues"
+  },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/stubenhuang"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.6"
   },
+  "files": [
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "server/",
+    "shared/",
+    "web/index.html",
+    "web/public/",
+    "web/src/",
+    "scripts/",
+    "openktv.sh",
+    "vite.config.ts",
+    "tsconfig.json",
+    "tsconfig.server.json"
+  ],
+  "sideEffects": [
+    "web/src/styles.css",
+    "web/src/mobile.css"
+  ],
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite",
@@ -16,7 +62,8 @@
     "serve": "npm run build && npm start",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json",
     "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts",
-    "test:e2e": "node scripts/e2e-browser.mjs"
+    "test:e2e": "node scripts/e2e-browser.mjs",
+    "check:license": "node scripts/check-license-headers.mjs"
   },
   "dependencies": {
     "express": "^5.2.1",

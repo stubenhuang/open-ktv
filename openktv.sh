@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 #
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 stubenhuang
+
+#
 # Open KTV 服务管理脚本
 #
 #   ./openktv.sh start            启动（生产模式：单进程，先自动构建前端）

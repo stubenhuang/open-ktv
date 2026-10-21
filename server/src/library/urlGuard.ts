@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { LIBRARY_BLOCK_PRIVATE_NET } from '../config.ts';

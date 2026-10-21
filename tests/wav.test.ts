@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { concatFloat32, encodeWavBytes } from '../shared/wav.ts';

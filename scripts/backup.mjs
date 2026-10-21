@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 /**
  * 备份 Open KTV 的数据目录。
  *

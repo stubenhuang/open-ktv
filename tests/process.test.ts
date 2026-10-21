@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { killRunningChildren, runningChildCount, runProcess } from '../server/src/process.ts';

@@ -1,3 +1,7 @@
+#
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 stubenhuang
+
 name: CI
 
 on:
@@ -34,3 +38,8 @@ jobs:
       # 不跑 test:e2e —— 那个要真实 Chrome 和显示环境。
       - name: 单元测试
         run: npm test
+
+      # 每个源文件都带 SPDX 许可头（MIT）。新增文件别忘了加 ——
+      # 见 scripts/check-license-headers.mjs。
+      - name: 许可头检查
+        run: npm run check:license

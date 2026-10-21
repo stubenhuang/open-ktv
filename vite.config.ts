@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { ensureLanCert } from './server/src/lanCert.ts';

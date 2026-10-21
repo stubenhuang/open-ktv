@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 /**
  * 极简结构化日志：级别 + 时间戳 + 作用域 + key=value meta，单行输出，方便 tail / grep。
  *

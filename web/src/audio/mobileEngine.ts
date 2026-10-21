@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { concatFloat32, encodeWavBlob } from '../../../shared/wav';
 import { resolveRecordGapMs } from '../../../shared/mix';
 import { ensureWorklet, getAudioContext, type CaptureStats } from './engine';

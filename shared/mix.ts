@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 /**
  * 前后端共享的混音数学（纯函数，无 IO、无浏览器/Node 依赖）。
  *

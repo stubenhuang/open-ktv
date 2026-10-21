@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 /**
  * 前端极简日志：开发环境 debug 起，生产构建只留 warn/error。
  *

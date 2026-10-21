@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { AUDIO, FFMPEG_BIN } from './config.ts';
 import { createLogger } from './logger.ts';
 import { runProcess } from './process.ts';

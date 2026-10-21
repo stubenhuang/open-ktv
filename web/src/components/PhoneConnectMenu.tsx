@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, networkCertUrl, networkQrUrl, type NetworkInfo } from '../api';
 import { buildMobileUrls } from '../utils';

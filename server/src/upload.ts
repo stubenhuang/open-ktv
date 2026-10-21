@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import type { Request, Response } from 'express';

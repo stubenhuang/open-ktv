@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { Router } from 'express';

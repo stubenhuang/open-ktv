@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import type { MixParams } from '../../shared/types.ts';
 import { AUDIO } from './config.ts';
 import {

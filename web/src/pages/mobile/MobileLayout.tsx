@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { ConfirmHost } from '../../components/ConfirmDialog';
 import { ToastStack } from '../../components/ToastStack';

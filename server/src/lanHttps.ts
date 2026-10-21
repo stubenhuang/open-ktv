@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { createServer, type Server } from 'node:https';
 import type { Express } from 'express';
 import { HOST, HTTPS_PORT, LAN_HTTPS, DEV_MODE } from './config.ts';

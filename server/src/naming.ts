@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 /**
  * multipart 请求头里的 filename 默认按 latin1 解码（busboy 的历史行为），
  * 中文文件名会变成「æ´å¤©」这种乱码。这里还原成 UTF-8。

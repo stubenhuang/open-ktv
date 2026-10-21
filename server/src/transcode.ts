@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import path from 'node:path';
 import { AUDIO, JOB_TIMEOUT_MS, TRANSCODE } from './config.ts';
 import { MP3_OUTPUT_ARGS, PROGRESS_OUTPUT_ARGS, runFfmpeg } from './ffmpeg.ts';

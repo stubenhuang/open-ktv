@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 /**
  * 悬停说明：一个小图标挂在标签旁，鼠标移上去（或键盘聚焦）才展开解释文字。
  *

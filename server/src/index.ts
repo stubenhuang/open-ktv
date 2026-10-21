@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { HOST, PORT, SHUTDOWN_JOB_GRACE_MS } from './config.ts';
 import { createApp } from './app.ts';
 import { closeDb, initDb, recoverInterruptedJobs } from './db.ts';

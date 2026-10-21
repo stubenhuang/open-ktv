@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 /**
  * 歌名清洗与歌词候选打分（纯函数，无 IO）。
  *

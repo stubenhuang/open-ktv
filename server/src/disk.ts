@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import fs from 'node:fs';
 import { DATA_DIR } from './config.ts';
 import { createLogger } from './logger.ts';

@@ -1,3 +1,7 @@
+//
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 stubenhuang
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
